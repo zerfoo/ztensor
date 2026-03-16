@@ -194,15 +194,24 @@ type preTransposedNode[T tensor.Numeric] struct {
 	value *tensor.TensorNumeric[T]
 }
 
-func (n *preTransposedNode[T]) OpType() string                  { return "Parameter" }
-func (n *preTransposedNode[T]) Attributes() map[string]interface{} { return nil }
-func (n *preTransposedNode[T]) OutputShape() []int               { return n.value.Shape() }
-func (n *preTransposedNode[T]) Parameters() []*Parameter[T]      { return nil }
+// OpType returns "Parameter" since pre-transposed nodes act as constants.
+func (n *preTransposedNode[T]) OpType() string { return "Parameter" }
 
+// Attributes returns nil as pre-transposed nodes have no attributes.
+func (n *preTransposedNode[T]) Attributes() map[string]interface{} { return nil }
+
+// OutputShape returns the shape of the pre-transposed tensor.
+func (n *preTransposedNode[T]) OutputShape() []int { return n.value.Shape() }
+
+// Parameters returns nil as pre-transposed nodes have no trainable parameters.
+func (n *preTransposedNode[T]) Parameters() []*Parameter[T] { return nil }
+
+// Forward returns the pre-transposed constant tensor.
 func (n *preTransposedNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return n.value, nil
 }
 
+// Backward is a no-op for constant nodes.
 func (n *preTransposedNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
