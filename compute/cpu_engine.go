@@ -1153,6 +1153,7 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	return result, nil
 }
 
+// Transpose transposes the tensor along the given axes.
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Transpose", time.Now())
 	if a == nil {
