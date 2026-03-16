@@ -1751,22 +1751,27 @@ func (e *GPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], 
 	return e.cpu.UnaryOp(ctx, a, op, dst...)
 }
 
+// Add performs element-wise addition.
 func (e *GPUEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuAdd(ctx, a, b, dst...)
 }
 
+// Sub performs element-wise subtraction.
 func (e *GPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuSub(ctx, a, b, dst...)
 }
 
+// Mul performs element-wise multiplication.
 func (e *GPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuMul(ctx, a, b, dst...)
 }
 
+// Div performs element-wise division.
 func (e *GPUEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuDiv(ctx, a, b, dst...)
 }
 
+// Transpose transposes a tensor along the given axes.
 func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() {
 		return e.cpu.Transpose(ctx, a, axes, dst...)
@@ -1924,50 +1929,62 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	return makeGPUResult[T](e, outShape, devOut, total, dst...)
 }
 
+// Sum computes the sum of elements along an axis.
 func (e *GPUEngine[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuSum(ctx, a, axis, keepDims, dst...)
 }
 
+// Exp computes the element-wise exponential.
 func (e *GPUEngine[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuExp(ctx, a, dst...)
 }
 
+// Log computes the element-wise natural logarithm.
 func (e *GPUEngine[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuLog(ctx, a, dst...)
 }
 
+// Sin computes the element-wise sine.
 func (e *GPUEngine[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuSin(ctx, a, dst...)
 }
 
+// Cos computes the element-wise cosine.
 func (e *GPUEngine[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuCos(ctx, a, dst...)
 }
 
+// Tanh computes the element-wise hyperbolic tangent.
 func (e *GPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuTanh(ctx, a, dst...)
 }
 
+// TanhPrime computes the element-wise gradient of tanh.
 func (e *GPUEngine[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuTanhPrime(ctx, a, upstream, dst...)
 }
 
+// Pow raises each element to the given power.
 func (e *GPUEngine[T]) Pow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuPow(ctx, base, exponent, dst...)
 }
 
+// Zero sets all elements to zero.
 func (e *GPUEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	return e.cpu.Zero(ctx, a)
 }
 
+// Zeros fills the tensor with zeros.
 func (e *GPUEngine[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], shape []int) error {
 	return e.cpu.Zeros(ctx, a, shape)
 }
 
+// Copy copies data from source to destination tensor.
 func (e *GPUEngine[T]) Copy(ctx context.Context, dst, src *tensor.TensorNumeric[T]) error {
 	return e.cpu.Copy(ctx, dst, src)
 }
 
+// Gather performs an embedding-style gather.
 func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
 	if !isFloat32[T]() {
 		return e.cpu.Gather(ctx, params, indices, output)
@@ -2091,42 +2108,52 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 	return nil
 }
 
+// ScatterAdd performs a row-wise scatter-add for embeddings.
 func (e *GPUEngine[T]) ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
 	return e.cpu.ScatterAdd(ctx, dEmbeddingTable, indices, dOut)
 }
 
+// RandomUniform fills the tensor with uniform random values.
 func (e *GPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	return e.cpu.RandomUniform(ctx, t, minVal, maxVal)
 }
 
+// Fill fills the tensor with a scalar value.
 func (e *GPUEngine[T]) Fill(ctx context.Context, t *tensor.TensorNumeric[T], value T) error {
 	return e.gpuFill(ctx, t, value)
 }
 
+// MulScalar multiplies each element by a scalar.
 func (e *GPUEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuMulScalar(ctx, a, scalar, dst...)
 }
 
+// DivScalar divides each element by a scalar.
 func (e *GPUEngine[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuDivScalar(ctx, a, scalar, dst...)
 }
 
+// Softmax applies the softmax function along an axis.
 func (e *GPUEngine[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuSoftmax(ctx, a, axis, dst...)
 }
 
+// ReduceSum computes the sum of elements along an axis.
 func (e *GPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuReduceSum(ctx, a, axis, keepDims, dst...)
 }
 
+// AddScalar adds a scalar to each element.
 func (e *GPUEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuAddScalar(ctx, a, scalar, dst...)
 }
 
+// Sqrt computes the element-wise square root.
 func (e *GPUEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuSqrt(ctx, a, dst...)
 }
 
+// Split splits a tensor into multiple tensors along an axis.
 func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() {
 		return e.cpu.Split(ctx, a, numSplits, axis)
@@ -2145,6 +2172,7 @@ func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], nu
 	return e.cpu.Split(ctx, a, numSplits, axis)
 }
 
+// Concat concatenates tensors along an axis.
 func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() || len(tensors) == 0 {
 		return e.cpu.Concat(ctx, tensors, axis, dst...)
@@ -2176,6 +2204,7 @@ func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumer
 	return e.gpuConcat(ptrs, tensors, axis, dst...)
 }
 
+// Repeat repeats the tensor along an axis.
 func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() || a == nil {
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
@@ -2274,10 +2303,12 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)
 }
 
+// OneHot creates a one-hot encoding.
 func (e *GPUEngine[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.OneHot(ctx, input, depth, dst...)
 }
 
+// Reshape changes the shape without changing data.
 func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Resolve -1 dimension and verify size.
 	currentSize := a.Size()
@@ -2315,10 +2346,12 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 	return e.cpu.Reshape(ctx, a, shape, dst...)
 }
 
+// ReduceMean computes the mean of elements along an axis.
 func (e *GPUEngine[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuReduceMean(ctx, a, axis, keepDims, dst...)
 }
 
+// Rsqrt computes the element-wise reciprocal square root.
 func (e *GPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuRsqrt(ctx, a, dst...)
 }

@@ -50,10 +50,12 @@ func (p *EngineProxy[T]) record(opName string, inputs []*tensor.TensorNumeric[T]
 
 // --- Non-traced methods (delegate only) ---
 
+// Ops delegates to the underlying engine.
 func (p *EngineProxy[T]) Ops() numeric.Arithmetic[T] {
 	return p.real.Ops()
 }
 
+// UnaryOp delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.UnaryOp(ctx, a, op, dst...)
 	if err == nil && p.tracer != nil {
@@ -65,26 +67,32 @@ func (p *EngineProxy[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T]
 	return result, err
 }
 
+// Zero delegates to the underlying engine.
 func (p *EngineProxy[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	return p.real.Zero(ctx, a)
 }
 
+// Zeros delegates to the underlying engine.
 func (p *EngineProxy[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], shape []int) error {
 	return p.real.Zeros(ctx, a, shape)
 }
 
+// Copy delegates to the underlying engine.
 func (p *EngineProxy[T]) Copy(ctx context.Context, dst, src *tensor.TensorNumeric[T]) error {
 	return p.real.Copy(ctx, dst, src)
 }
 
+// Fill delegates to the underlying engine.
 func (p *EngineProxy[T]) Fill(ctx context.Context, t *tensor.TensorNumeric[T], value T) error {
 	return p.real.Fill(ctx, t, value)
 }
 
+// RandomUniform delegates to the underlying engine.
 func (p *EngineProxy[T]) RandomUniform(ctx context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	return p.real.RandomUniform(ctx, t, minVal, maxVal)
 }
 
+// Gather delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
 	err := p.real.Gather(ctx, params, indices, output)
 	if err == nil && p.tracer != nil {
@@ -93,20 +101,24 @@ func (p *EngineProxy[T]) Gather(ctx context.Context, params *tensor.TensorNumeri
 	return err
 }
 
+// ScatterAdd delegates to the underlying engine.
 func (p *EngineProxy[T]) ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
 	return p.real.ScatterAdd(ctx, dEmbeddingTable, indices, dOut)
 }
 
+// OneHot delegates to the underlying engine.
 func (p *EngineProxy[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return p.real.OneHot(ctx, input, depth, dst...)
 }
 
+// TanhPrime delegates to the underlying engine.
 func (p *EngineProxy[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return p.real.TanhPrime(ctx, a, upstream, dst...)
 }
 
 // --- Traced methods ---
 
+// Add delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Add(ctx, a, b, dst...)
 	if err == nil {
@@ -115,6 +127,7 @@ func (p *EngineProxy[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T],
 	return result, err
 }
 
+// Sub delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Sub(ctx, a, b, dst...)
 	if err == nil {
@@ -123,6 +136,7 @@ func (p *EngineProxy[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T],
 	return result, err
 }
 
+// Mul delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Mul(ctx, a, b, dst...)
 	if err == nil {
@@ -131,6 +145,7 @@ func (p *EngineProxy[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T],
 	return result, err
 }
 
+// Div delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Div(ctx, a, b, dst...)
 	if err == nil {
@@ -139,6 +154,7 @@ func (p *EngineProxy[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T],
 	return result, err
 }
 
+// Pow delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Pow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Pow(ctx, base, exponent, dst...)
 	if err == nil {
@@ -147,6 +163,7 @@ func (p *EngineProxy[T]) Pow(ctx context.Context, base, exponent *tensor.TensorN
 	return result, err
 }
 
+// MatMul delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.MatMul(ctx, a, b, dst...)
 	if err == nil {
@@ -155,6 +172,7 @@ func (p *EngineProxy[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[
 	return result, err
 }
 
+// Exp delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Exp(ctx, a, dst...)
 	if err == nil {
@@ -163,6 +181,7 @@ func (p *EngineProxy[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return result, err
 }
 
+// Log delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Log(ctx, a, dst...)
 	if err == nil {
@@ -171,6 +190,7 @@ func (p *EngineProxy[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return result, err
 }
 
+// Sin delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Sin(ctx, a, dst...)
 	if err == nil {
@@ -179,6 +199,7 @@ func (p *EngineProxy[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return result, err
 }
 
+// Cos delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Cos(ctx, a, dst...)
 	if err == nil {
@@ -187,6 +208,7 @@ func (p *EngineProxy[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return result, err
 }
 
+// Tanh delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Tanh(ctx, a, dst...)
 	if err == nil {
@@ -195,6 +217,7 @@ func (p *EngineProxy[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], d
 	return result, err
 }
 
+// Sqrt delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Sqrt(ctx, a, dst...)
 	if err == nil {
@@ -203,6 +226,7 @@ func (p *EngineProxy[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], d
 	return result, err
 }
 
+// Rsqrt delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Rsqrt(ctx, a, dst...)
 	if err == nil {
@@ -211,6 +235,7 @@ func (p *EngineProxy[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], 
 	return result, err
 }
 
+// MulScalar delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.MulScalar(ctx, a, scalar, dst...)
 	if err == nil {
@@ -219,6 +244,7 @@ func (p *EngineProxy[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// AddScalar delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.AddScalar(ctx, a, scalar, dst...)
 	if err == nil {
@@ -227,6 +253,7 @@ func (p *EngineProxy[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// DivScalar delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.DivScalar(ctx, a, scalar, dst...)
 	if err == nil {
@@ -235,6 +262,7 @@ func (p *EngineProxy[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// Softmax delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Softmax(ctx, a, axis, dst...)
 	if err == nil {
@@ -243,6 +271,7 @@ func (p *EngineProxy[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T]
 	return result, err
 }
 
+// ReduceSum delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.ReduceSum(ctx, a, axis, keepDims, dst...)
 	if err == nil {
@@ -251,6 +280,7 @@ func (p *EngineProxy[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// ReduceMean delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.ReduceMean(ctx, a, axis, keepDims, dst...)
 	if err == nil {
@@ -259,6 +289,7 @@ func (p *EngineProxy[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric
 	return result, err
 }
 
+// Reshape delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Reshape(ctx, a, shape, dst...)
 	if err == nil {
@@ -267,6 +298,7 @@ func (p *EngineProxy[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T]
 	return result, err
 }
 
+// Transpose delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Transpose(ctx, a, axes, dst...)
 	if err == nil {
@@ -275,6 +307,7 @@ func (p *EngineProxy[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// Concat delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Concat(ctx, tensors, axis, dst...)
 	if err == nil {
@@ -283,6 +316,7 @@ func (p *EngineProxy[T]) Concat(ctx context.Context, tensors []*tensor.TensorNum
 	return result, err
 }
 
+// Split delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
 	results, err := p.real.Split(ctx, a, numSplits, axis)
 	if err == nil && p.tracer != nil {
@@ -294,6 +328,7 @@ func (p *EngineProxy[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], 
 	return results, err
 }
 
+// Repeat delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Repeat(ctx, a, axis, repetitions, dst...)
 	if err == nil {
@@ -302,6 +337,7 @@ func (p *EngineProxy[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T],
 	return result, err
 }
 
+// Sum delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Sum(ctx, a, axis, keepDims, dst...)
 	if err == nil {

@@ -128,142 +128,177 @@ func (e *OpenCLEngine[T]) OOMFallbackCount() int64 {
 
 func (e *OpenCLEngine[T]) Ops() numeric.Arithmetic[T] { return e.cpu.Ops() }
 
+// UnaryOp UnaryOp.
 func (e *OpenCLEngine[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.UnaryOp(ctx, a, op, dst...)
 }
 
+// Add performs element-wise addition.
 func (e *OpenCLEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Add(ctx, a, b, dst...)
 }
 
+// Sub performs element-wise subtraction.
 func (e *OpenCLEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Sub(ctx, a, b, dst...)
 }
 
+// Mul performs element-wise multiplication.
 func (e *OpenCLEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Mul(ctx, a, b, dst...)
 }
 
+// Div performs element-wise division.
 func (e *OpenCLEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Div(ctx, a, b, dst...)
 }
 
+// MatMul performs matrix multiplication.
 func (e *OpenCLEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.MatMul(ctx, a, b, dst...)
 }
 
+// Transpose transposes a tensor along the given axes.
 func (e *OpenCLEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Transpose(ctx, a, axes, dst...)
 }
 
+// Sum computes the sum of elements along an axis.
 func (e *OpenCLEngine[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 }
 
+// Exp computes the element-wise exponential.
 func (e *OpenCLEngine[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Exp(ctx, a, dst...)
 }
 
+// Log computes the element-wise natural logarithm.
 func (e *OpenCLEngine[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Log(ctx, a, dst...)
 }
 
+// Sin computes the element-wise sine.
 func (e *OpenCLEngine[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Sin(ctx, a, dst...)
 }
 
+// Cos computes the element-wise cosine.
 func (e *OpenCLEngine[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Cos(ctx, a, dst...)
 }
 
+// Tanh computes the element-wise hyperbolic tangent.
 func (e *OpenCLEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Tanh(ctx, a, dst...)
 }
 
+// TanhPrime computes the element-wise gradient of tanh.
 func (e *OpenCLEngine[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.TanhPrime(ctx, a, upstream, dst...)
 }
 
+// Pow raises each element to the given power.
 func (e *OpenCLEngine[T]) Pow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Pow(ctx, base, exponent, dst...)
 }
 
+// Zero sets all elements to zero.
 func (e *OpenCLEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	return e.cpu.Zero(ctx, a)
 }
 
+// Zeros fills the tensor with zeros.
 func (e *OpenCLEngine[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], shape []int) error {
 	return e.cpu.Zeros(ctx, a, shape)
 }
 
+// Copy copies data from source to destination tensor.
 func (e *OpenCLEngine[T]) Copy(ctx context.Context, dst, src *tensor.TensorNumeric[T]) error {
 	return e.cpu.Copy(ctx, dst, src)
 }
 
+// Gather performs an embedding-style gather.
 func (e *OpenCLEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
 	return e.cpu.Gather(ctx, params, indices, output)
 }
 
+// ScatterAdd performs a row-wise scatter-add for embeddings.
 func (e *OpenCLEngine[T]) ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
 	return e.cpu.ScatterAdd(ctx, dEmbeddingTable, indices, dOut)
 }
 
+// RandomUniform fills the tensor with uniform random values.
 func (e *OpenCLEngine[T]) RandomUniform(ctx context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	return e.cpu.RandomUniform(ctx, t, minVal, maxVal)
 }
 
+// Fill fills the tensor with a scalar value.
 func (e *OpenCLEngine[T]) Fill(ctx context.Context, t *tensor.TensorNumeric[T], value T) error {
 	return e.cpu.Fill(ctx, t, value)
 }
 
+// MulScalar multiplies each element by a scalar.
 func (e *OpenCLEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.MulScalar(ctx, a, scalar, dst...)
 }
 
+// DivScalar divides each element by a scalar.
 func (e *OpenCLEngine[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.DivScalar(ctx, a, scalar, dst...)
 }
 
+// Softmax applies the softmax function along an axis.
 func (e *OpenCLEngine[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Softmax(ctx, a, axis, dst...)
 }
 
+// ReduceSum computes the sum of elements along an axis.
 func (e *OpenCLEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.ReduceSum(ctx, a, axis, keepDims, dst...)
 }
 
+// AddScalar adds a scalar to each element.
 func (e *OpenCLEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.AddScalar(ctx, a, scalar, dst...)
 }
 
+// Sqrt computes the element-wise square root.
 func (e *OpenCLEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Sqrt(ctx, a, dst...)
 }
 
+// Split splits a tensor into multiple tensors along an axis.
 func (e *OpenCLEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
 	return e.cpu.Split(ctx, a, numSplits, axis)
 }
 
+// Concat concatenates tensors along an axis.
 func (e *OpenCLEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Concat(ctx, tensors, axis, dst...)
 }
 
+// Repeat repeats the tensor along an axis.
 func (e *OpenCLEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 }
 
+// OneHot creates a one-hot encoding.
 func (e *OpenCLEngine[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.OneHot(ctx, input, depth, dst...)
 }
 
+// Reshape changes the shape without changing data.
 func (e *OpenCLEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Reshape(ctx, a, shape, dst...)
 }
 
+// ReduceMean computes the mean of elements along an axis.
 func (e *OpenCLEngine[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
 }
 
+// Rsqrt computes the element-wise reciprocal square root.
 func (e *OpenCLEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Rsqrt(ctx, a, dst...)
 }
