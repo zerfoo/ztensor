@@ -36,6 +36,15 @@ func NewFloat16StorageFromF32(src []float32) *Float16Storage {
 	return &Float16Storage{data: data, len: n}
 }
 
+// NewFloat16StorageFromRaw creates a Float16Storage from pre-encoded FP16 bytes.
+// The raw slice must contain numElems * 2 bytes in little-endian IEEE 754
+// half-precision format. A copy is made so the caller can reuse raw.
+func NewFloat16StorageFromRaw(raw []byte, numElems int) *Float16Storage {
+	data := make([]byte, len(raw))
+	copy(data, raw)
+	return &Float16Storage{data: data, len: numElems}
+}
+
 // Len returns the number of logical FP16 elements.
 func (s *Float16Storage) Len() int { return s.len }
 

@@ -240,3 +240,30 @@ func TestFloat16Storage_SetGPUByteSize(t *testing.T) {
 func TestFloat16Storage_InterfaceCompliance(t *testing.T) {
 	var _ Storage[float32] = (*Float16Storage)(nil)
 }
+
+func TestNewFloat16StorageFromRaw(t *testing.T) {
+	// Create reference FP16 data via the F32 constructor.
+	src := []float32{1.0, 2.0, 3.0, 4.0}
+	ref := NewFloat16StorageFromF32(src)
+	raw := ref.RawBytes()
+
+	// Construct from raw bytes.
+	s := NewFloat16StorageFromRaw(raw, len(src))
+
+	if s.Len() != len(src) {
+		t.Fatalf("Len() = %d, want %d", s.Len(), len(src))
+	}
+
+	// Verify it's a copy, not the same slice.
+	if &s.data[0] == &raw[0] {
+		t.Error("NewFloat16StorageFromRaw should copy data, not alias")
+	}
+
+	// Round-trip: decode back to float32 and compare.
+	got := s.Slice()
+	for i, want := range src {
+		if got[i] != want {
+			t.Errorf("[%d] got %g, want %g", i, got[i], want)
+		}
+	}
+}
