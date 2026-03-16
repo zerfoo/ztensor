@@ -179,8 +179,17 @@ func Nop() Logger {
 	return nopLogger{}
 }
 
+// Debug is a no-op.
 func (nopLogger) Debug(_ string, _ ...string) {}
-func (nopLogger) Info(_ string, _ ...string)  {}
-func (nopLogger) Warn(_ string, _ ...string)  {}
+
+// Info is a no-op.
+func (nopLogger) Info(_ string, _ ...string) {}
+
+// Warn is a no-op.
+func (nopLogger) Warn(_ string, _ ...string) {}
+
+// Error is a no-op.
 func (nopLogger) Error(_ string, _ ...string) {}
-func (nopLogger) WithLevel(_ Level) Logger    { return nopLogger{} }
+
+// WithLevel returns the same no-op logger regardless of level.
+func (nopLogger) WithLevel(_ Level) Logger { return nopLogger{} }

@@ -215,14 +215,24 @@ func Nop() Collector {
 	return nopCollector{}
 }
 
-func (nopCollector) Counter(_ string) CounterMetric                   { return nopMetric{} }
-func (nopCollector) Gauge(_ string) GaugeMetric                      { return nopMetric{} }
+// Counter returns a no-op counter.
+func (nopCollector) Counter(_ string) CounterMetric { return nopMetric{} }
+
+// Gauge returns a no-op gauge.
+func (nopCollector) Gauge(_ string) GaugeMetric { return nopMetric{} }
+
+// Histogram returns a no-op histogram.
 func (nopCollector) Histogram(_ string, _ []float64) HistogramMetric { return nopMetric{} }
 
 type nopMetric struct{}
 
-func (nopMetric) Inc()              {}
-func (nopMetric) Set(_ float64)     {}
+// Inc is a no-op.
+func (nopMetric) Inc() {}
+
+// Set is a no-op.
+func (nopMetric) Set(_ float64) {}
+
+// Observe is a no-op.
 func (nopMetric) Observe(_ float64) {}
 
 // --- float64 bit helpers ---

@@ -288,6 +288,7 @@ func (e *MockEngine[T]) Name() string {
 	return "mock"
 }
 
+// String returns a string representation of the mock engine.
 func (e *MockEngine[T]) String() string {
 	return e.Name()
 }
