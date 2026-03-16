@@ -121,10 +121,17 @@ func (q *Q4KStorage) Dequantize(dst []float32) {
 	}
 }
 
-func (q *Q4KStorage) Len() int                    { return q.len }
-func (q *Q4KStorage) Slice() []float32             { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
-func (q *Q4KStorage) Set(_ []float32)              { panic("Q4KStorage is immutable") }
-func (q *Q4KStorage) DeviceType() device.Type      { return device.CPU }
+// Len returns the number of logical float32 elements.
+func (q *Q4KStorage) Len() int { return q.len }
+
+// Slice dequantizes and returns all elements as a float32 slice.
+func (q *Q4KStorage) Slice() []float32 { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
+
+// Set panics because Q4KStorage is immutable.
+func (q *Q4KStorage) Set(_ []float32) { panic("Q4KStorage is immutable") }
+
+// DeviceType returns device.CPU.
+func (q *Q4KStorage) DeviceType() device.Type { return device.CPU }
 
 // RawBytes returns the raw Q4_K super-block data for GPU upload.
 // The layout is contiguous super-blocks, each 144 bytes.
@@ -220,6 +227,7 @@ func NewQ6KStorageFromRaw(raw []byte, numElements int) (*Q6KStorage, error) {
 	return &Q6KStorage{raw: data, len: numElements}, nil
 }
 
+// Dequantize unpacks all Q6_K super-blocks into dst.
 func (q *Q6KStorage) Dequantize(dst []float32) {
 	nBlocks := (q.len + q6KSuperBlockSize - 1) / q6KSuperBlockSize
 	for bi := range nBlocks {
@@ -236,9 +244,16 @@ func (q *Q6KStorage) Dequantize(dst []float32) {
 	}
 }
 
-func (q *Q6KStorage) Len() int               { return q.len }
-func (q *Q6KStorage) Slice() []float32        { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
-func (q *Q6KStorage) Set(_ []float32)         { panic("Q6KStorage is immutable") }
+// Len returns the number of logical float32 elements.
+func (q *Q6KStorage) Len() int { return q.len }
+
+// Slice dequantizes and returns all elements as a float32 slice.
+func (q *Q6KStorage) Slice() []float32 { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
+
+// Set panics because Q6KStorage is immutable.
+func (q *Q6KStorage) Set(_ []float32) { panic("Q6KStorage is immutable") }
+
+// DeviceType returns device.CPU.
 func (q *Q6KStorage) DeviceType() device.Type { return device.CPU }
 
 var _ Storage[float32] = (*Q6KStorage)(nil)
@@ -326,6 +341,7 @@ func NewQ5KStorageFromRaw(raw []byte, numElements int) (*Q5KStorage, error) {
 	return &Q5KStorage{raw: data, len: numElements}, nil
 }
 
+// Dequantize unpacks all Q5_K super-blocks into dst.
 func (q *Q5KStorage) Dequantize(dst []float32) {
 	nBlocks := (q.len + q5KSuperBlockSize - 1) / q5KSuperBlockSize
 	for bi := range nBlocks {
@@ -342,9 +358,16 @@ func (q *Q5KStorage) Dequantize(dst []float32) {
 	}
 }
 
-func (q *Q5KStorage) Len() int               { return q.len }
-func (q *Q5KStorage) Slice() []float32        { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
-func (q *Q5KStorage) Set(_ []float32)         { panic("Q5KStorage is immutable") }
+// Len returns the number of logical float32 elements.
+func (q *Q5KStorage) Len() int { return q.len }
+
+// Slice dequantizes and returns all elements as a float32 slice.
+func (q *Q5KStorage) Slice() []float32 { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
+
+// Set panics because Q5KStorage is immutable.
+func (q *Q5KStorage) Set(_ []float32) { panic("Q5KStorage is immutable") }
+
+// DeviceType returns device.CPU.
 func (q *Q5KStorage) DeviceType() device.Type { return device.CPU }
 
 var _ Storage[float32] = (*Q5KStorage)(nil)
