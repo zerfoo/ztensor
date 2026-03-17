@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
@@ -245,19 +244,6 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 				p.slots[idx] = cpuT
 			}
 			continue
-		}
-		// Skip quantized storage types that have already been uploaded to GPU
-		// via UploadWeights. These have GPUPtr set and will be dispatched to
-		// fused GEMV kernels by the GPU engine. Do NOT call tensor.ToGPU on
-		// them — that would dequantize to float32, losing the quantized format
-		// and causing a massive throughput regression.
-		type gpuPtrHolder interface {
-			GPUPtr() (unsafe.Pointer, int, int)
-		}
-		if gph, ok := any(t.GetStorage()).(gpuPtrHolder); ok {
-			if ptr, _, _ := gph.GPUPtr(); ptr != nil {
-				continue // already uploaded to GPU in quantized form
-			}
 		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
 		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
