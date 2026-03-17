@@ -482,26 +482,6 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if n == 0 {
 			continue
 		}
-		// For quantized weight tensors (Q4, Q4K, etc.), upload as BFloat16 instead
-		// of float32. BF16 (2 bytes/weight) halves GPU memory bandwidth and uses
-		// cublasGemmEx mixed-precision GEMM with tensor cores. Small tensors (norms,
-		// embedding table) stay as float32 — they're tiny and some ops need F32.
-		if n > 1024 {
-			bf16 := tensor.NewBFloat16Storage(data)
-			rawBytes := bf16.RawBytes()
-			devPtr, err := e.allocWeight(len(rawBytes))
-			if err != nil {
-				return fmt.Errorf("alloc BF16 GPU (shape %v): %w", t.Shape(), err)
-			}
-			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("upload BF16 (shape %v): %w", t.Shape(), err)
-			}
-			bf16.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
-			t.SetStorage(bf16)
-			uploaded++
-			continue
-		}
 		byteSize := n * f32Size
 		devPtr, err := e.allocWeight(byteSize)
 		if err != nil {
@@ -512,6 +492,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload f32 (shape %v): %w", t.Shape(), err)
 		}
+		// F32 weights (norm gains, embedding table) stay as GPUStorage[float32].
+		// Norm weights are tiny (model_dim elements) so FP16 savings are negligible.
+		// The per-op FP16 compute paths (fp16FusedAddRMSNorm, etc.) handle F32->FP16
+		// conversion on the fly. The Gather output FP16 conversion is the entry point
+		// for FP16 activations in the forward pass.
 		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
 		if err != nil {
 			_ = e.runtime.Free(devPtr)
