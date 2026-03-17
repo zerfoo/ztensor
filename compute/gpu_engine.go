@@ -601,35 +601,10 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return nil, fmt.Errorf("MatMul: input tensors must not be nil")
 	}
 
-	// Check for Q6_K quantized storage on A.
-	if qs, ok := any(a.GetStorage()).(*tensor.Q6KStorage); ok {
-		return e.matMulQ6K(ctx, qs, a, b, dst...)
-	}
-
-	// Check for Q6_K quantized storage on B (virtual-transposed weights).
-	if qs, ok := any(b.GetStorage()).(*tensor.Q6KStorage); ok {
-		return e.matMulQ6KBWeight(ctx, a, qs, b, dst...)
-	}
-
-	// Check for Q5_K quantized storage on A.
-	if qs, ok := any(a.GetStorage()).(*tensor.Q5KStorage); ok {
-		return e.matMulQ5K(ctx, qs, a, b, dst...)
-	}
-
-	// Check for Q5_K quantized storage on B (virtual-transposed weights).
-	if qs, ok := any(b.GetStorage()).(*tensor.Q5KStorage); ok {
-		return e.matMulQ5KBWeight(ctx, a, qs, b, dst...)
-	}
-
-	// Check for Q5_0 quantized storage on A.
-	if qs, ok := any(a.GetStorage()).(*tensor.Q5_0Storage); ok {
-		return e.matMulQ5_0(ctx, qs, a, b, dst...)
-	}
-
-	// Check for Q5_0 quantized storage on B (virtual-transposed weights).
-	if qs, ok := any(b.GetStorage()).(*tensor.Q5_0Storage); ok {
-		return e.matMulQ5_0BWeight(ctx, a, qs, b, dst...)
-	}
+	// Quantized MatMul dispatch chain. Order matters for performance:
+	// check the most common quantization types first to minimize failing
+	// type assertions on the hot path. Q4_K and Q4 are checked first
+	// because GGUF Q4_K_M models (the primary benchmark target) use these.
 
 	// Check for Q4_K quantized storage on A.
 	if qs, ok := any(a.GetStorage()).(*tensor.Q4KStorage); ok {
@@ -660,6 +635,38 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for Q8 quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q8Storage); ok {
 		return e.matMulQ8BWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Less common quantization types checked after the fast path.
+
+	// Check for Q6_K quantized storage on A.
+	if qs, ok := any(a.GetStorage()).(*tensor.Q6KStorage); ok {
+		return e.matMulQ6K(ctx, qs, a, b, dst...)
+	}
+
+	// Check for Q6_K quantized storage on B (virtual-transposed weights).
+	if qs, ok := any(b.GetStorage()).(*tensor.Q6KStorage); ok {
+		return e.matMulQ6KBWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for Q5_K quantized storage on A.
+	if qs, ok := any(a.GetStorage()).(*tensor.Q5KStorage); ok {
+		return e.matMulQ5K(ctx, qs, a, b, dst...)
+	}
+
+	// Check for Q5_K quantized storage on B (virtual-transposed weights).
+	if qs, ok := any(b.GetStorage()).(*tensor.Q5KStorage); ok {
+		return e.matMulQ5KBWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for Q5_0 quantized storage on A.
+	if qs, ok := any(a.GetStorage()).(*tensor.Q5_0Storage); ok {
+		return e.matMulQ5_0(ctx, qs, a, b, dst...)
+	}
+
+	// Check for Q5_0 quantized storage on B (virtual-transposed weights).
+	if qs, ok := any(b.GetStorage()).(*tensor.Q5_0Storage); ok {
+		return e.matMulQ5_0BWeight(ctx, a, qs, b, dst...)
 	}
 
 	// FP16/FP8/BF16 storage checks — skip entirely for F32 compute.
@@ -1097,7 +1104,7 @@ func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b 
 // For GEMV (M=1), A^T[K,1] is just A's data as a column, and C_temp[N,1]
 // can be reshaped to [1, N] without a physical transpose.
 func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNumeric[T], qs *tensor.Q4Storage, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if os.Getenv("ZERFOO_DEBUG_GPU") == "1" {
+	if debugGPU {
 		fmt.Fprintf(os.Stderr, "matMulQ4BWeight: aShape=%v bShape=%v GPUPtr=%v\n", a.Shape(), b.Shape(), func() bool { p, _, _ := qs.GPUPtr(); return p != nil }())
 	}
 	aShape := a.Shape()
@@ -2496,6 +2503,18 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
+	// Only use GPU path for GPU-resident tensors (Phase 6 behavior).
+	// CPU-backed tensors fall back to CPU transpose to avoid unexpected
+	// H2D copies that may interfere with CUDA graph capture/replay.
+	_, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
+	isFP16 := false
+	if e.dtype != DTypeF32 {
+		_, isFP16 = any(a.GetStorage()).(*tensor.Float16Storage)
+	}
+	if !isGPU && !isFP16 {
+		return e.cpu.Transpose(ctx, a, axes, dst...)
+	}
+
 	e.setDevice()
 
 	shape := a.Shape()
@@ -2552,20 +2571,18 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 				return t, nil
 			}
 		}
-		if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok {
-			viewGS := gs.View(gs.Len())
-			t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
-			if tErr != nil {
-				return nil, tErr
-			}
-			if len(dst) > 0 && dst[0] != nil {
-				dst[0].SetStorage(viewGS)
-				dst[0].SetShape(outShape)
-				return dst[0], nil
-			}
-			return t, nil
+		gs := a.GetStorage().(*tensor.GPUStorage[T])
+		viewGS := gs.View(gs.Len())
+		t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
+		if tErr != nil {
+			return nil, tErr
 		}
-		// CPUStorage: fall through to getDevicePtr + GPU kernel path.
+		if len(dst) > 0 && dst[0] != nil {
+			dst[0].SetStorage(viewGS)
+			dst[0].SetShape(outShape)
+			return dst[0], nil
+		}
+		return t, nil
 	}
 
 	// Compute total elements.
