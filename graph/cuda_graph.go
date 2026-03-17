@@ -380,9 +380,8 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 
 // replay launches the pre-captured graph with updated input.
 func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if g.replayReady {
-		return g.replayFast(ctx, inputs...)
-	}
+	// NOTE: replayFast disabled for Q4 GEMV investigation.
+	// Phase 6 used the full replay path and achieved 234 tok/s.
 
 	// First replay: full path that sets up slot state.
 	if err := g.plan.PrepareSlots(inputs...); err != nil {
