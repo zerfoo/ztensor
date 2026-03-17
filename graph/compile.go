@@ -251,21 +251,11 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 		// the quantized format and bypass the fused GEMV dispatch.
 		// NOTE: Q4Storage and Q8Storage are NOT skipped — they use the existing
 		// float32-on-GPU path through PreUploadFrozenWeights + cuBLAS SGEMM.
-		if _, ok := any(t.GetStorage()).(*tensor.Q6KStorage); ok {
-			continue
-		}
-		if _, ok := any(t.GetStorage()).(*tensor.Q5KStorage); ok {
-			continue
-		}
-		if _, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
-			continue
-		}
-		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
-			continue
-		}
-		if _, ok := any(t.GetStorage()).(*tensor.Q4KStorage); ok {
-			continue
-		}
+		// NOTE: Quantized storage types (Q4K, Q5K, Q6K, Q5_0, Q4) are NOT
+		// skipped here. ToGPU dequantizes them to float32 GPUStorage, which
+		// enables cuBLAS SGEMM — significantly faster than custom GEMV kernels
+		// on Blackwell (170 vs 50-89 tok/s). The custom GEMV dispatch still
+		// exists in gpu_engine.go for future optimization.
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
 		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
 		if total <= 1 {
