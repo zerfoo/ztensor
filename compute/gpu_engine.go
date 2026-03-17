@@ -428,53 +428,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[float32]); ok {
 			continue // already on GPU
 		}
-		// Upload Float16Storage raw bytes to GPU. FP16 weights (2 bytes/element)
-		// use cuBLAS FP16 GEMM with tensor cores for 2x bandwidth reduction.
-		if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
-			if ptr, _, _ := fs.GPUPtr(); ptr != nil {
-				continue // already on GPU
-			}
-			rawBytes := fs.RawBytes()
-			if len(rawBytes) == 0 {
-				continue
-			}
-			devPtr, err := e.allocWeight(len(rawBytes))
-			if err != nil {
-				return fmt.Errorf("alloc FP16 GPU (shape %v): %w", t.Shape(), err)
-			}
-			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("upload FP16 (shape %v): %w", t.Shape(), err)
-			}
-			fs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
-			uploaded++
-			continue
+		if _, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			continue // already converted to FP16 on GPU
 		}
-		// Q8 tensors: dequantize to float32 and upload (same as Q4 path).
-		// cuBLAS SGEMM on float32 is faster than the Q8 GEMM kernel on Blackwell.
-		if qs, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
-			if ptr, _, _ := qs.GPUPtr(); ptr != nil {
-				continue
-			}
-			f32 := make([]float32, qs.Len())
-			qs.Dequantize(f32)
-			byteSize := len(f32) * f32Size
-			devPtr, err := e.allocWeight(byteSize)
-			if err != nil {
-				return fmt.Errorf("alloc Q8→F32 GPU (shape %v): %w", t.Shape(), err)
-			}
-			src := unsafe.Slice((*byte)(unsafe.Pointer(&f32[0])), byteSize)
-			if err := e.uploadBytes(devPtr, src); err != nil {
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("upload Q8→F32 (shape %v): %w", t.Shape(), err)
-			}
-			gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, len(f32), e.deviceID)
-			if err != nil {
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("create Q8→F32 GPU storage (shape %v): %w", t.Shape(), err)
-			}
-			t.SetStorage(gs)
-			uploaded++
+		// Skip Q8 tensors -- they are uploaded as raw bytes in the Q8 loop below.
+		if _, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
 			continue
 		}
 		// Skip Q4Storage — already uploaded as raw Q4 bytes by the Q4 handler
