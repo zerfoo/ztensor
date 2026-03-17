@@ -179,12 +179,13 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 	}
 	log.Printf("cuda graph: capture region is instructions [%d, %d) of %d total", captureStart, captureEnd, n)
 
-	// NOTE: PreUploadFrozenWeights was removed. Phase 6 achieved 234 tok/s
-	// with CUDA graph capture WITHOUT pre-uploading frozen weights. Adding
-	// PreUploadFrozenWeights converted Q4Storage to float32 (8x bandwidth),
-	// regressing throughput from 234 to 188. The Q4 GEMV path with
-	// arena-based GPU allocation is capture-safe and faster.
-	// Weights are pre-uploaded by UploadWeights in inference/load_gguf.go.
+	// Upload frozen weights to GPU before any warmup runs or graph capture.
+	// This prevents getDevicePtr from issuing synchronous H2D copies on the
+	// capturing stream, which would cause cuda error 901.
+	if err := plan.PreUploadFrozenWeights(); err != nil {
+		log.Printf("cuda graph: frozen weight pre-upload failed: %v", err)
+		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
+	}
 
 	inputSlotIdx := 0
 	if len(plan.inputIdx) > 0 {
