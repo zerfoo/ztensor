@@ -220,7 +220,18 @@ func (g *CUDAGraphExecutor[T]) Run(ctx context.Context, inputs ...*tensor.Tensor
 	}
 
 	// Phase 2: Capture on first post-warmup call.
+	// Only capture during decode (seqLen=1). Prefill inputs have larger
+	// sequence lengths and take different code paths inside composite nodes
+	// (e.g. GQA uses SDPA instead of FlashAttentionDecode), which may
+	// trigger allocations incompatible with CUDA stream capture.
 	if g.graphExec == nil {
+		if len(inputs) > 0 && inputs[0] != nil {
+			shape := inputs[0].Shape()
+			if len(shape) >= 2 && shape[len(shape)-1] > 1 {
+				// Prefill input (seqLen > 1): skip capture, run normally.
+				return g.plan.RunInstructions(ctx, inputs...)
+			}
+		}
 		return g.captureAndRun(ctx, inputs...)
 	}
 
