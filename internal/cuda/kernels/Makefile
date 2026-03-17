@@ -11,7 +11,7 @@ ifeq ($(CUDA_ARCH),sm_121)
 NVCC_FLAGS += -DFLASH_BLOCK_SIZE=64
 endif
 
-SRCS = counter.cu dequant_q4k.cu elementwise.cu elementwise_fp16.cu flash_attention.cu fp8_ops.cu fused_add_rmsnorm.cu fused_norm_add.cu fused_qk_norm_rope.cu fused_rope.cu fused_swiglu.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu gemm_q8.cu gemv_q4k.cu offset_memcpy.cu rope_select.cu scaled_softmax.cu sgemv_m1.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
+SRCS = counter.cu dequant_q4k.cu elementwise.cu elementwise_fp16.cu flash_attention.cu fp8_ops.cu fused_add_rmsnorm.cu fused_norm_add.cu fused_qk_norm_rope.cu fused_rope.cu fused_swiglu.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu gemm_q8.cu gemv_q4k.cu gemv_q5k.cu gemv_q5_0.cu gemv_q6k.cu offset_memcpy.cu rope_select.cu scaled_softmax.cu sgemv_m1.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
 OBJS = $(SRCS:.cu=.o)
 PIC_OBJS = $(SRCS:.cu=.pic.o)
 LIB  = libkernels.a
@@ -39,6 +39,27 @@ gemv_q4k.o: gemv_q4k.cu
 	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
 
 gemv_q4k.pic.o: gemv_q4k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
+
+# Monitor register pressure for Q5K GEMV.
+gemv_q5k.o: gemv_q5k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
+
+gemv_q5k.pic.o: gemv_q5k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
+
+# Monitor register pressure for Q5_0 GEMV.
+gemv_q5_0.o: gemv_q5_0.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
+
+gemv_q5_0.pic.o: gemv_q5_0.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
+
+# Monitor register pressure for Q6K GEMV.
+gemv_q6k.o: gemv_q6k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
+
+gemv_q6k.pic.o: gemv_q6k.cu
 	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
 
 gemm_q4.o: gemm_q4.cu

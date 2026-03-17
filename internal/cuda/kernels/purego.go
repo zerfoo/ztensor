@@ -53,6 +53,15 @@ type KernelLib struct {
 	// gemv_q4k (fused dequant+GEMV for Q4_K_M)
 	launchGemvQ4KF32 uintptr
 
+	// gemv_q5k (fused dequant+GEMV for Q5_K_M)
+	launchGemvQ5KF32 uintptr
+
+	// gemv_q6k (fused dequant+GEMV for Q6_K)
+	launchGemvQ6KF32 uintptr
+
+	// gemv_q5_0 (fused dequant+GEMV for Q5_0)
+	launchGemvQ5_0F32 uintptr
+
 	// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
 	launchDequantQ4KF32 uintptr
 
@@ -190,6 +199,12 @@ func openKernelLib() (*KernelLib, error) {
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
 			// gemv_q4k (fused dequant+GEMV for Q4_K_M)
 			{"gemv_q4k_f32", &k.launchGemvQ4KF32},
+			// gemv_q5k (fused dequant+GEMV for Q5_K_M)
+			{"gemv_q5k_f32", &k.launchGemvQ5KF32},
+			// gemv_q6k (fused dequant+GEMV for Q6_K)
+			{"gemv_q6k_f32", &k.launchGemvQ6KF32},
+			// gemv_q5_0 (fused dequant+GEMV for Q5_0)
+			{"gemv_q5_0_f32", &k.launchGemvQ5_0F32},
 			// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
 			{"dequant_q4k_f32", &k.launchDequantQ4KF32},
 			// gemm_q8
@@ -241,6 +256,9 @@ func openKernelLib() (*KernelLib, error) {
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
+			"gemv_q5k_f32":                    true,
+			"gemv_q6k_f32":                    true,
+			"gemv_q5_0_f32":                   true,
 			"flash_attention_decode_f32":      true,
 			"launch_f32_to_fp16":              true,
 			"launch_fp16_to_f32":              true,

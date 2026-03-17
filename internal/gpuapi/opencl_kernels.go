@@ -124,6 +124,18 @@ func (k *OpenCLKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, _ Stream
 	return fmt.Errorf("GemvQ4KF32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) GemvQ5KF32(wQ5K, x, y unsafe.Pointer, M, K int, _ Stream) error {
+	return fmt.Errorf("GemvQ5KF32: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) GemvQ6KF32(wQ6K, x, y unsafe.Pointer, M, K int, _ Stream) error {
+	return fmt.Errorf("GemvQ6KF32: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K int, _ Stream) error {
+	return fmt.Errorf("GemvQ5_0F32: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) DequantQ4KF32(src, dst unsafe.Pointer, rows, K int, _ Stream) error {
 	return fmt.Errorf("DequantQ4KF32: not implemented for OpenCL")
 }
