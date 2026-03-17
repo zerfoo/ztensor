@@ -81,6 +81,175 @@ func TestArenaPool_FallbackOnExhaustion(t *testing.T) {
 	arena.Free(0, ptr, 256)
 }
 
+func TestArenaFreeList(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
+	tests := []struct {
+		name string
+		fn   func(t *testing.T, arena *ArenaPool)
+	}{
+		{
+			name: "free_then_reuse_smaller",
+			fn: func(t *testing.T, arena *ArenaPool) {
+				// Alloc A (100 bytes -> 256 aligned), Alloc B (200 bytes -> 256 aligned),
+				// Free A, Alloc C (80 bytes -> 256 aligned) — C should reuse A's slot.
+				ptrA, err := arena.Alloc(0, 100)
+				if err != nil {
+					t.Fatalf("Alloc A: %v", err)
+				}
+				_, err = arena.Alloc(0, 200)
+				if err != nil {
+					t.Fatalf("Alloc B: %v", err)
+				}
+				arena.FreeArena(ptrA, 100)
+				if arena.FreeListLen() != 1 {
+					t.Fatalf("free list len = %d, want 1", arena.FreeListLen())
+				}
+				ptrC, err := arena.Alloc(0, 80)
+				if err != nil {
+					t.Fatalf("Alloc C: %v", err)
+				}
+				// C should reuse A's slot (same base pointer).
+				if ptrC != ptrA {
+					t.Errorf("ptrC = %p, want %p (reuse of A)", ptrC, ptrA)
+				}
+				if arena.ReuseStats() != 1 {
+					t.Errorf("reuses = %d, want 1", arena.ReuseStats())
+				}
+			},
+		},
+		{
+			name: "free_then_alloc_larger_bumps",
+			fn: func(t *testing.T, arena *ArenaPool) {
+				// Alloc A (256 bytes), Free A, Alloc B (512 bytes) — B should NOT
+				// reuse A's slot because B is larger. B bumps the offset.
+				ptrA, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc A: %v", err)
+				}
+				arena.FreeArena(ptrA, 256)
+				ptrB, err := arena.Alloc(0, 512)
+				if err != nil {
+					t.Fatalf("Alloc B: %v", err)
+				}
+				// B should be a different pointer (bumped past A).
+				if ptrB == ptrA {
+					t.Errorf("ptrB = %p, should not reuse A's slot (too small)", ptrB)
+				}
+				if arena.ReuseStats() != 0 {
+					t.Errorf("reuses = %d, want 0", arena.ReuseStats())
+				}
+				// A's block should still be in the free list.
+				if arena.FreeListLen() != 1 {
+					t.Errorf("free list len = %d, want 1", arena.FreeListLen())
+				}
+			},
+		},
+		{
+			name: "free_both_reuse_order",
+			fn: func(t *testing.T, arena *ArenaPool) {
+				// Alloc A (256 bytes), Alloc B (256 bytes), Free B, Free A.
+				// Next alloc (256 bytes) should reuse one of the freed slots.
+				ptrA, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc A: %v", err)
+				}
+				ptrB, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc B: %v", err)
+				}
+				arena.FreeArena(ptrB, 256)
+				arena.FreeArena(ptrA, 256)
+				// After freeing both adjacent blocks, they should merge.
+				if arena.FreeListLen() != 1 {
+					t.Errorf("free list len = %d, want 1 (merged)", arena.FreeListLen())
+				}
+				ptrC, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc C: %v", err)
+				}
+				// C should reuse A's offset (start of the merged block).
+				if ptrC != ptrA {
+					t.Errorf("ptrC = %p, want %p (reuse of merged block starting at A)", ptrC, ptrA)
+				}
+				if arena.ReuseStats() != 1 {
+					t.Errorf("reuses = %d, want 1", arena.ReuseStats())
+				}
+			},
+		},
+		{
+			name: "reset_clears_free_list",
+			fn: func(t *testing.T, arena *ArenaPool) {
+				// Alloc, Free, verify free list, Reset, verify free list is empty.
+				ptr, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc: %v", err)
+				}
+				arena.FreeArena(ptr, 256)
+				if arena.FreeListLen() != 1 {
+					t.Fatalf("free list len = %d, want 1", arena.FreeListLen())
+				}
+				arena.Reset()
+				if arena.FreeListLen() != 0 {
+					t.Errorf("free list len after Reset = %d, want 0", arena.FreeListLen())
+				}
+				if arena.UsedBytes() != 0 {
+					t.Errorf("UsedBytes after Reset = %d, want 0", arena.UsedBytes())
+				}
+			},
+		},
+		{
+			name: "block_splitting",
+			fn: func(t *testing.T, arena *ArenaPool) {
+				// Alloc 512 bytes, free it, then alloc 256 bytes.
+				// The remainder (256 bytes) should stay in the free list.
+				ptr, err := arena.Alloc(0, 512)
+				if err != nil {
+					t.Fatalf("Alloc: %v", err)
+				}
+				arena.FreeArena(ptr, 512)
+				ptrSmall, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc small: %v", err)
+				}
+				if ptrSmall != ptr {
+					t.Errorf("ptrSmall = %p, want %p (reuse)", ptrSmall, ptr)
+				}
+				// Remainder should be in free list.
+				if arena.FreeListLen() != 1 {
+					t.Errorf("free list len = %d, want 1 (remainder)", arena.FreeListLen())
+				}
+				// Alloc the remainder.
+				ptrRem, err := arena.Alloc(0, 256)
+				if err != nil {
+					t.Fatalf("Alloc remainder: %v", err)
+				}
+				expectedRem := unsafe.Add(ptr, 256)
+				if ptrRem != expectedRem {
+					t.Errorf("ptrRem = %p, want %p (remainder of split)", ptrRem, expectedRem)
+				}
+				if arena.FreeListLen() != 0 {
+					t.Errorf("free list len = %d, want 0", arena.FreeListLen())
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fallback := NewMemPool()
+			arena, err := NewArenaPool(0, 4096, fallback)
+			if err != nil {
+				t.Fatalf("NewArenaPool: %v", err)
+			}
+			defer func() { _ = arena.Drain() }()
+			tc.fn(t, arena)
+		})
+	}
+}
+
 func TestArenaPool_IsManaged(t *testing.T) {
 	if !Available() {
 		t.Skip("CUDA not available")
