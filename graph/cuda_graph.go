@@ -124,6 +124,15 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// returns the correct result.
 	capturedSlots []*tensor.TensorNumeric[T] // indexed by slot number, nil for non-captured slots
 
+	// Embedding replay optimization: after the first replay, cache the GPU
+	// tensor for the EmbeddingLookup output slot. On subsequent replays
+	// (replayFast), copy just the embedding vector into the cached GPU
+	// buffer via CopyFromHost and set the scratch slot directly, skipping
+	// the full EnsureSlotsGPU scan over all slots.
+	embeddingCached  bool
+	embeddingSlotIdx int                      // output slot of EmbeddingLookup
+	embeddingGPUPtr  *tensor.TensorNumeric[T] // cached GPU tensor from first replay
+
 	// onCaptured is called after successful capture, allowing the caller
 	// to protect arena allocations from being reclaimed by Reset.
 	onCaptured func()
@@ -404,6 +413,11 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 		}
 	}
 
+	// Cache the EmbeddingLookup output GPU tensor for fast replay.
+	// After EnsureSlotsGPU, the embedding slot has a GPU tensor that we can
+	// reuse on subsequent replays via targeted CopyFromHost.
+	g.initEmbeddingCache()
+
 	// All slots are now GPU-resident and capturedSlots are in place.
 	// Subsequent replays can use the fast path.
 	g.replayReady = true
@@ -429,6 +443,13 @@ func (g *CUDAGraphExecutor[T]) replayFast(ctx context.Context, inputs ...*tensor
 		}
 	}
 
+	// Targeted GPU upload for the EmbeddingLookup output slot. Instead of
+	// scanning all slots via EnsureSlotsGPU, copy just the embedding vector
+	// into the cached GPU buffer. This avoids iterating ~185 slots.
+	if g.embeddingCached {
+		g.uploadEmbeddingToGPU()
+	}
+
 	// Launch the captured graph — slots are already GPU-resident and
 	// capturedSlots tensors are still in place from the previous replay.
 	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
@@ -446,6 +467,44 @@ func (g *CUDAGraphExecutor[T]) replayFast(ctx context.Context, inputs ...*tensor
 	}
 
 	return g.plan.OutputTensor(), nil
+}
+
+// initEmbeddingCache identifies the EmbeddingLookup pre-capture instruction
+// and caches its GPU tensor from gpuSlotCache. Called once after the first
+// replay when EnsureSlotsGPU has populated the cache.
+func (g *CUDAGraphExecutor[T]) initEmbeddingCache() {
+	for i := 0; i < g.captureStart; i++ {
+		if g.plan.InstructionOpName(i) == "EmbeddingLookup" {
+			slotIdx := g.plan.InstructionOutputIdx(i)
+			if cached, ok := g.gpuSlotCache[slotIdx]; ok {
+				g.embeddingCached = true
+				g.embeddingSlotIdx = slotIdx
+				g.embeddingGPUPtr = cached
+			}
+			break
+		}
+	}
+}
+
+// uploadEmbeddingToGPU copies the CPU embedding result from the pre-capture
+// EmbeddingLookup instruction into the cached GPU tensor and sets the scratch
+// slot. This replaces the full EnsureSlotsGPU scan with a single CopyFromHost.
+func (g *CUDAGraphExecutor[T]) uploadEmbeddingToGPU() {
+	cpuResult := g.plan.ScratchSlot(g.embeddingSlotIdx)
+	if cpuResult == nil {
+		return
+	}
+	// If already GPU-resident (shouldn't happen, but safe), skip.
+	if _, ok := cpuResult.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return
+	}
+	gs, ok := g.embeddingGPUPtr.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return
+	}
+	if err := gs.CopyFromHost(cpuResult.Data(), 0); err == nil {
+		g.plan.SetScratchSlot(g.embeddingSlotIdx, g.embeddingGPUPtr)
+	}
 }
 
 // Destroy releases the CUDA graph resources.
