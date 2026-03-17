@@ -325,6 +325,12 @@ func (p *ExecutionPlan[T]) EnsureCaptureInputsGPU(start, end int, gpuSlotCache m
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 			continue
 		}
+		// Skip Q4Storage — Q4 weights have GPUPtr set by UploadWeights and use
+		// the fused Q4 GEMV kernel. Converting to F32 here would override the
+		// Q4 GEMV capture with cuBLAS SGEMM (8x more bandwidth, 33% slower).
+		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+			continue
+		}
 		if cached, ok := gpuSlotCache[idx]; ok {
 			if gs, ok := cached.GetStorage().(*tensor.GPUStorage[T]); ok {
 				data := t.Data()
