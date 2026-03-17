@@ -235,7 +235,6 @@ __global__ void gemv_q4k_dp4a_kernel(
             int base_q = group * 32;
 
             float sum_x_lo = 0.0f, sum_x_hi = 0.0f;
-            int dp4a_acc_lo = 0, dp4a_acc_hi = 0;
 
             #pragma unroll
             for (int l = 0; l < 32; l += 4) {
