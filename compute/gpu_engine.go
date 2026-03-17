@@ -428,8 +428,27 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[float32]); ok {
 			continue // already on GPU
 		}
-		if _, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
-			continue // already converted to FP16 on GPU
+		// Upload Float16Storage raw bytes to GPU. FP16 weights (2 bytes/element)
+		// use cuBLAS FP16 GEMM with tensor cores for 2x bandwidth reduction.
+		if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			if ptr, _, _ := fs.GPUPtr(); ptr != nil {
+				continue // already on GPU
+			}
+			rawBytes := fs.RawBytes()
+			if len(rawBytes) == 0 {
+				continue
+			}
+			devPtr, err := e.allocWeight(len(rawBytes))
+			if err != nil {
+				return fmt.Errorf("alloc FP16 GPU (shape %v): %w", t.Shape(), err)
+			}
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return fmt.Errorf("upload FP16 (shape %v): %w", t.Shape(), err)
+			}
+			fs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			uploaded++
+			continue
 		}
 		// Q8 tensors: dequantize to float32 and upload (same as Q4 path).
 		// cuBLAS SGEMM on float32 is faster than the Q8 GEMM kernel on Blackwell.
