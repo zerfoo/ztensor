@@ -489,3 +489,92 @@ func TestCompileEmbeddedFrozen(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeLastUse(t *testing.T) {
+	noop := func(_ context.Context, inputs []*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+		return inputs[0], nil
+	}
+
+	tests := []struct {
+		name         string
+		instructions []Instruction[float32]
+		numSlots     int
+		inputIdx     []int
+		frozenIdx    []int
+		outputIdx    int
+		wantLastUse  []int // expected lastUse per slot
+	}{
+		{
+			name: "linear_chain",
+			// input(0) -> double(1) -> add10(2)
+			instructions: []Instruction[float32]{
+				{Forward: noop, InputIdx: []int{0}, OutputIdx: 1, OpName: "Double"},
+				{Forward: noop, InputIdx: []int{1}, OutputIdx: 2, OpName: "Add10"},
+			},
+			numSlots:    3,
+			inputIdx:    []int{0},
+			outputIdx:   2,
+			wantLastUse: []int{-1, 1, -1}, // 0=input(protected), 1=last used by inst 1, 2=output(protected)
+		},
+		{
+			name: "diamond",
+			// input(0) -> mul2(1), input(0) -> mul3(2), add(1,2) -> 3
+			instructions: []Instruction[float32]{
+				{Forward: noop, InputIdx: []int{0}, OutputIdx: 1, OpName: "Mul2"},
+				{Forward: noop, InputIdx: []int{0}, OutputIdx: 2, OpName: "Mul3"},
+				{Forward: noop, InputIdx: []int{1, 2}, OutputIdx: 3, OpName: "Add"},
+			},
+			numSlots:    4,
+			inputIdx:    []int{0},
+			outputIdx:   3,
+			wantLastUse: []int{-1, 2, 2, -1}, // 0=input, 1&2 last used by Add(inst 2), 3=output
+		},
+		{
+			name: "frozen_not_freed",
+			// frozen(0), input(1) -> mul(0,1) -> 2
+			instructions: []Instruction[float32]{
+				{Forward: noop, InputIdx: []int{0, 1}, OutputIdx: 2, OpName: "Mul"},
+			},
+			numSlots:    3,
+			inputIdx:    []int{1},
+			frozenIdx:   []int{0},
+			outputIdx:   2,
+			wantLastUse: []int{-1, -1, -1}, // 0=frozen, 1=input, 2=output
+		},
+		{
+			name: "reused_intermediate",
+			// input(0) -> A(1) -> B(2) -> C(1 reused as input, 2) -> 3
+			instructions: []Instruction[float32]{
+				{Forward: noop, InputIdx: []int{0}, OutputIdx: 1, OpName: "A"},
+				{Forward: noop, InputIdx: []int{1}, OutputIdx: 2, OpName: "B"},
+				{Forward: noop, InputIdx: []int{1, 2}, OutputIdx: 3, OpName: "C"},
+			},
+			numSlots:    4,
+			inputIdx:    []int{0},
+			outputIdx:   3,
+			wantLastUse: []int{-1, 2, 2, -1}, // 0=input, 1 last used by C(inst 2), 2 last used by C(inst 2), 3=output
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := &ExecutionPlan[float32]{
+				instructions: tc.instructions,
+				slots:        make([]*tensor.TensorNumeric[float32], tc.numSlots),
+				inputIdx:     tc.inputIdx,
+				frozenIdx:    tc.frozenIdx,
+				outputIdx:    tc.outputIdx,
+			}
+			plan.ComputeLastUse()
+			if !plan.HasLastUse() {
+				t.Fatal("HasLastUse() = false after ComputeLastUse()")
+			}
+			for i, want := range tc.wantLastUse {
+				got := plan.LastUse(i)
+				if got != want {
+					t.Errorf("LastUse(%d) = %d, want %d", i, got, want)
+				}
+			}
+		})
+	}
+}

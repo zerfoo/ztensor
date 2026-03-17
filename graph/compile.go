@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
@@ -46,6 +47,18 @@ type ExecutionPlan[T tensor.Numeric] struct {
 	// Pre-allocated fixed buffer layout for CUDA graph capture.
 	bufferLayout *BufferLayout
 	preallocated []*tensor.TensorNumeric[T] // pre-allocated tensors with fixed backing memory
+
+	// lastUse maps each slot index to the last instruction index that reads
+	// from it (as an input). Slots not in this map are either frozen or graph
+	// inputs/outputs. Used by intra-pass buffer reuse to free intermediates
+	// after their last consumer executes.
+	lastUse []int // indexed by slot; -1 means not tracked (frozen/input/output)
+
+	// arenaFreeFn is an optional callback invoked when an intermediate tensor
+	// reaches its last use. The callback receives the GPU pointer and byte
+	// size so it can return the memory to the arena free-list. Set via
+	// SetArenaFreeFn by the CUDAGraphExecutor or caller.
+	arenaFreeFn func(ptr unsafe.Pointer, byteSize int)
 }
 
 // InstructionMeta is the exported metadata for a single compiled instruction.
@@ -177,6 +190,22 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 			return fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
 		}
 		p.scratchSlots[inst.OutputIdx] = result
+
+		// Intra-pass buffer reuse: free intermediate tensors at their last use.
+		if p.lastUse != nil && p.arenaFreeFn != nil {
+			for _, idx := range inst.InputIdx {
+				if p.lastUse[idx] == i {
+					if t := p.scratchSlots[idx]; t != nil {
+						if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+							if devPtr := gs.Ptr(); devPtr != nil {
+								byteSize := gs.Len() * int(unsafe.Sizeof(T(0)))
+								p.arenaFreeFn(devPtr, byteSize)
+							}
+						}
+					}
+				}
+			}
+		}
 
 		// Debug dump: print first N values at key checkpoints.
 		if debugDumpEnabled && debugDumpCheckpoints[inst.OpName] {
@@ -345,6 +374,62 @@ func (p *ExecutionPlan[T]) EnsureCaptureInputsGPU(start, end int, gpuSlotCache m
 			p.scratchSlots[idx] = gpuT
 		}
 	}
+}
+
+// ComputeLastUse performs lifetime analysis on the execution plan. For each
+// slot, it records the index of the last instruction that reads from it.
+// Frozen slots, input slots, and the output slot are marked -1 (not freeable).
+// This must be called after Compile/CompileTraced before intra-pass reuse.
+func (p *ExecutionPlan[T]) ComputeLastUse() {
+	n := len(p.slots)
+	if n == 0 {
+		return
+	}
+	p.lastUse = make([]int, n)
+	for i := range p.lastUse {
+		p.lastUse[i] = -1
+	}
+
+	// Mark frozen and input slots as not freeable.
+	protected := make(map[int]bool, len(p.frozenIdx)+len(p.inputIdx)+1)
+	for _, idx := range p.frozenIdx {
+		protected[idx] = true
+	}
+	for _, idx := range p.inputIdx {
+		protected[idx] = true
+	}
+	protected[p.outputIdx] = true
+
+	// For each instruction, record the last instruction index that uses
+	// each slot as an input.
+	for i, inst := range p.instructions {
+		for _, idx := range inst.InputIdx {
+			if !protected[idx] {
+				p.lastUse[idx] = i
+			}
+		}
+	}
+}
+
+// LastUse returns the last-use instruction index for a slot, or -1 if the
+// slot is not tracked (frozen, input, output, or never used).
+func (p *ExecutionPlan[T]) LastUse(slotIdx int) int {
+	if p.lastUse == nil || slotIdx < 0 || slotIdx >= len(p.lastUse) {
+		return -1
+	}
+	return p.lastUse[slotIdx]
+}
+
+// HasLastUse returns true if lifetime analysis has been computed.
+func (p *ExecutionPlan[T]) HasLastUse() bool {
+	return p.lastUse != nil
+}
+
+// SetArenaFreeFn sets the callback used to return intermediate tensor memory
+// to the arena free-list when a slot reaches its last use. The callback
+// receives the GPU device pointer and byte size of the allocation.
+func (p *ExecutionPlan[T]) SetArenaFreeFn(fn func(ptr unsafe.Pointer, byteSize int)) {
+	p.arenaFreeFn = fn
 }
 
 // SlotCount returns the number of slots in the plan.

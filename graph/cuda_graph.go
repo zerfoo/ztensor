@@ -192,6 +192,16 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		inputSlotIdx = plan.inputIdx[0]
 	}
 
+	// Compute tensor lifetime analysis for intra-pass buffer reuse.
+	// This annotates each slot with the last instruction that reads from it,
+	// enabling the arena free-list to reclaim intermediates mid-pass.
+	plan.ComputeLastUse()
+	if arena := cuda.DefaultArenaPool(); arena != nil {
+		plan.SetArenaFreeFn(func(ptr unsafe.Pointer, byteSize int) {
+			arena.FreeArena(ptr, byteSize)
+		})
+	}
+
 	return &CUDAGraphExecutor[T]{
 		plan:            plan,
 		stream:          cuda.StreamFromPtr(streamPtr),
