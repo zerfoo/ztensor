@@ -336,6 +336,11 @@ func (p *ExecutionPlan[T]) EnsureCaptureInputsGPU(start, end int, gpuSlotCache m
 	}
 }
 
+// SlotCount returns the number of slots in the plan.
+func (p *ExecutionPlan[T]) SlotCount() int {
+	return len(p.slots)
+}
+
 // InstructionCount returns the number of instructions in the plan.
 func (p *ExecutionPlan[T]) InstructionCount() int {
 	return len(p.instructions)
