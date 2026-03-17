@@ -110,6 +110,9 @@ func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n, dataOffset i
 }
 
 func (k *CUDAKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, s Stream) error {
+	if kernels.GemvQ4KDp4aF32Available() {
+		return kernels.GemvQ4KDp4aF32(wQ4K, x, y, M, K, streamPtr(s))
+	}
 	return kernels.GemvQ4KF32(wQ4K, x, y, M, K, streamPtr(s))
 }
 

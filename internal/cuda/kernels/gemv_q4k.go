@@ -33,3 +33,25 @@ func GemvQ4KF32(
 	}
 	return nil
 }
+
+// GemvQ4KDp4aF32Available reports whether the dp4a INT8 Q4_K GEMV kernel is available.
+// Always true in CGo builds since it is statically linked.
+func GemvQ4KDp4aF32Available() bool { return true }
+
+// GemvQ4KDp4aF32 performs Q4_K fused dequant-GEMV using dp4a INT8 dot-product.
+func GemvQ4KDp4aF32(
+	W_q4k, x, y unsafe.Pointer,
+	M, K int,
+	stream unsafe.Pointer,
+) error {
+	err := C.gemv_q4k_dp4a_f32(
+		W_q4k, (*C.float)(x), (*C.float)(y),
+		C.int(M), C.int(K),
+		C.cudaStream_t(stream),
+	)
+	if err != C.cudaSuccess {
+		return fmt.Errorf("gemv_q4k_dp4a_f32: %s",
+			C.GoString(C.cudaGetErrorString(err)))
+	}
+	return nil
+}

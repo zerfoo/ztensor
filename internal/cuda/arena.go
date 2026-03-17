@@ -3,10 +3,17 @@ package cuda
 import (
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 )
+
+// freeBlock represents a freed region within the arena that can be reused.
+type freeBlock struct {
+	offset int // byte offset from arena base
+	size   int // aligned size in bytes
+}
 
 var defaultArenaInst *ArenaPool
 
@@ -46,6 +53,11 @@ type ArenaPool struct {
 	hits       atomic.Int64
 	misses     atomic.Int64 // only incremented if arena is full and falls back
 	resets     atomic.Int64
+	reuses     atomic.Int64 // incremented when Alloc reuses a free-list block
+
+	// freeList holds freed blocks sorted by offset, available for reuse.
+	// Alloc checks for a best-fit block before bumping the offset.
+	freeList []freeBlock
 
 	// fallback is the MemPool used when the arena is exhausted.
 	fallback *MemPool
@@ -96,13 +108,31 @@ func (a *ArenaPool) IsManaged() bool {
 }
 
 // Alloc returns a device pointer of at least byteSize bytes from the arena.
-// Allocations are 256-byte aligned for GPU coalescing. If the arena is full,
-// falls back to the MemPool.
+// Allocations are 256-byte aligned for GPU coalescing. Alloc first checks
+// the free-list for a best-fit reusable block. If none is found, it bumps
+// the offset. If the arena is full, falls back to the MemPool.
 func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 	// Align to 256 bytes for GPU memory access patterns.
 	aligned := (byteSize + 255) &^ 255
 
 	a.mu.Lock()
+
+	// Check free-list for a best-fit block (smallest block >= aligned).
+	if bestIdx := a.findBestFit(aligned); bestIdx >= 0 {
+		blk := a.freeList[bestIdx]
+		// Remove the block from the free-list.
+		a.freeList = append(a.freeList[:bestIdx], a.freeList[bestIdx+1:]...)
+		// If the block is larger than needed, return the remainder to the free-list.
+		if remainder := blk.size - aligned; remainder >= 256 {
+			a.insertFreeBlock(freeBlock{offset: blk.offset + aligned, size: remainder})
+		}
+		ptr := unsafe.Add(a.base, blk.offset)
+		a.mu.Unlock()
+		a.hits.Add(1)
+		a.reuses.Add(1)
+		return ptr, nil
+	}
+
 	if a.offset+aligned <= a.capacity {
 		ptr := unsafe.Add(a.base, a.offset)
 		a.offset += aligned
@@ -124,7 +154,48 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 	return ptr, nil
 }
 
-// Free is a no-op for arena pointers (reclaimed in bulk via Reset).
+// findBestFit returns the index of the smallest free-list block that is
+// >= needed bytes, or -1 if no block fits. Caller must hold a.mu.
+func (a *ArenaPool) findBestFit(needed int) int {
+	bestIdx := -1
+	bestSize := int(^uint(0) >> 1) // max int
+	for i, blk := range a.freeList {
+		if blk.size >= needed && blk.size < bestSize {
+			bestIdx = i
+			bestSize = blk.size
+			if blk.size == needed {
+				break // exact fit
+			}
+		}
+	}
+	return bestIdx
+}
+
+// insertFreeBlock adds a block to the free-list, maintaining sort order by
+// offset and merging with adjacent blocks. Caller must hold a.mu.
+func (a *ArenaPool) insertFreeBlock(blk freeBlock) {
+	// Find insertion point (sorted by offset).
+	pos := sort.Search(len(a.freeList), func(i int) bool {
+		return a.freeList[i].offset >= blk.offset
+	})
+	// Insert at pos.
+	a.freeList = append(a.freeList, freeBlock{})
+	copy(a.freeList[pos+1:], a.freeList[pos:])
+	a.freeList[pos] = blk
+
+	// Merge with next block if adjacent.
+	if pos+1 < len(a.freeList) && a.freeList[pos].offset+a.freeList[pos].size == a.freeList[pos+1].offset {
+		a.freeList[pos].size += a.freeList[pos+1].size
+		a.freeList = append(a.freeList[:pos+1], a.freeList[pos+2:]...)
+	}
+	// Merge with previous block if adjacent.
+	if pos > 0 && a.freeList[pos-1].offset+a.freeList[pos-1].size == a.freeList[pos].offset {
+		a.freeList[pos-1].size += a.freeList[pos].size
+		a.freeList = append(a.freeList[:pos], a.freeList[pos+1:]...)
+	}
+}
+
+// Free returns an arena pointer to the free-list for intra-pass reuse.
 // Fallback pointers are returned to the MemPool.
 func (a *ArenaPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 	a.mu.Lock()
@@ -135,7 +206,28 @@ func (a *ArenaPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 		return
 	}
 	a.mu.Unlock()
-	// Arena pointer: no-op, reclaimed by Reset.
+
+	// Arena pointer: add to free-list for intra-pass reuse.
+	a.FreeArena(ptr, byteSize)
+}
+
+// FreeArena returns an arena allocation to the free-list. The pointer must
+// have been returned by a previous Alloc from this arena (not from fallback).
+// The byteSize must match the original allocation request (it will be aligned
+// to 256 bytes internally). This enables intra-pass buffer reuse: freed
+// regions can be reclaimed by subsequent Alloc calls before the next Reset.
+func (a *ArenaPool) FreeArena(ptr unsafe.Pointer, byteSize int) {
+	if ptr == nil || byteSize <= 0 {
+		return
+	}
+	aligned := (byteSize + 255) &^ 255
+	offset := int(uintptr(ptr) - uintptr(a.base))
+	if offset < 0 || offset+aligned > a.capacity {
+		return // not an arena pointer
+	}
+	a.mu.Lock()
+	a.insertFreeBlock(freeBlock{offset: offset, size: aligned})
+	a.mu.Unlock()
 }
 
 // AllocManaged delegates to the fallback MemPool (arena is device-only).
@@ -150,10 +242,12 @@ func (a *ArenaPool) FreeManaged(deviceID int, ptr unsafe.Pointer, byteSize int) 
 
 // Reset rewinds the arena offset to the reset floor (default 0), reclaiming
 // per-pass allocations while preserving buffers below the floor (e.g. CUDA
-// graph captured buffers).
+// graph captured buffers). The free-list is also cleared since all arena
+// memory above the floor is reclaimed.
 func (a *ArenaPool) Reset() {
 	a.mu.Lock()
 	a.offset = a.resetFloor
+	a.freeList = a.freeList[:0]
 	a.mu.Unlock()
 	a.resets.Add(1)
 }
@@ -183,6 +277,7 @@ func (a *ArenaPool) Drain() error {
 		a.base = nil
 		a.offset = 0
 		a.capacity = 0
+		a.freeList = nil
 	}
 
 	if err := a.fallback.Drain(); err != nil && firstErr == nil {
@@ -200,9 +295,22 @@ func (a *ArenaPool) Stats() (allocations int, totalBytes int) {
 	return 1 + fbAllocs, arenaUsed + fbBytes
 }
 
-// HitMissStats returns arena hits, fallback misses, and reset count.
+// HitMissStats returns arena hits, fallback misses, reset count, and
+// free-list reuse count.
 func (a *ArenaPool) HitMissStats() (hits, misses, resets int64) {
 	return a.hits.Load(), a.misses.Load(), a.resets.Load()
+}
+
+// ReuseStats returns the number of allocations served from the free-list.
+func (a *ArenaPool) ReuseStats() int64 {
+	return a.reuses.Load()
+}
+
+// FreeListLen returns the current number of blocks in the free-list.
+func (a *ArenaPool) FreeListLen() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.freeList)
 }
 
 // UsedBytes returns the current arena offset (bytes in use).

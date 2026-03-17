@@ -35,6 +35,17 @@ cudaError_t gemv_q4k_f32(
     int M, int K,
     cudaStream_t stream);
 
+/* gemv_q4k_dp4a_f32 performs Q4_K fused dequant-GEMV using dp4a INT8 dot-product:
+ *   y[m] = sum_k( dequant(W_q4k[m,k]) * x[k] )
+ *
+ * Same interface as gemv_q4k_f32. Uses __dp4a intrinsic for 4 MACs/instruction
+ * by pre-quantizing x to INT8 and accumulating in INT32. Requires SM >= 6.1.
+ */
+cudaError_t gemv_q4k_dp4a_f32(
+    const void* W_q4k, const float* x, float* y,
+    int M, int K,
+    cudaStream_t stream);
+
 #ifdef __cplusplus
 }
 #endif
