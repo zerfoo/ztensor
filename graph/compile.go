@@ -245,6 +245,21 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 			}
 			continue
 		}
+		// Skip quantized K-quant storage types that have been pre-uploaded to GPU
+		// via UploadWeights. These use fused GEMV kernels that read quantized
+		// blocks directly. Converting them to float32 via ToGPU would destroy
+		// the quantized format and bypass the fused GEMV dispatch.
+		// NOTE: Q4Storage and Q8Storage are NOT skipped — they use the existing
+		// float32-on-GPU path through PreUploadFrozenWeights + cuBLAS SGEMM.
+		if _, ok := any(t.GetStorage()).(*tensor.Q6KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
+			continue
+		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
 		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
 		if total <= 1 {
