@@ -166,63 +166,23 @@ extern "C" cudaError_t gemv_q4k_f32(
  *
  * Uses __dp4a(a, b, c) = c + dot4(a_int8, b_int8) for 4 MACs/instruction.
  *
- * Strategy:
- *   1. Load x into shared memory as FP32.
- *   2. Each warp handles one row. For each super-block:
- *      a. Decode sub-block scales/mins (same as FP32 kernel).
- *      b. For each group of 64 elements, dequantize Q4 weights to INT8
- *         (subtract offset, keep in range [-8,7] for low nibble, [-8,7] for high).
- *      c. Quantize 4 consecutive x values to INT8 using per-sub-block scale.
- *      d. Pack 4 INT8 weights and 4 INT8 x values into int32, use __dp4a.
- *      e. Rescale accumulated INT32 by (weight_scale * x_scale) per sub-block.
- *   3. Warp shuffle reduction for final result.
+ * Reformulation for Q4_K + dp4a:
+ *   dequant(q) * x = scale * nibble * x - min * x
+ *   sum(dequant(q[i]) * x[i]) = scale * sum(nibble[i] * x[i]) - min * sum(x[i])
  *
- * The Q4_K values after dequant are: val = scale * nibble - min.
- * For dp4a we reformulate: val * x = scale * nibble * x - min * x.
- * We handle the nibble*x part with dp4a and the min*x correction separately.
+ * The nibble*x dot product uses dp4a: quantize 4 consecutive x values to INT8
+ * on the fly (per 4-element group), pack nibbles and q8_x into int32, dp4a.
+ * The min*sum(x) correction uses FP32 accumulation of x from shared memory.
  *
- * Specifically, per sub-block:
- *   sum(val[i] * x[i]) = scale * sum(nibble[i] * x[i]) - min * sum(x[i])
- *
- * For dp4a on the nibble*x term: quantize x to Q8 (INT8), compute
- * dp4a(packed_nibbles, packed_q8_x), accumulate in int32, then rescale.
+ * Key: no large INT8 arrays — quantize x 4 elements at a time to minimize
+ * register pressure. The x quantization scale is per 4-element group.
  */
 
-/* Per-sub-block quantize x values to INT8 and return scale.
- * Finds max(|x[i]|) over the sub-block, scales to fit [-127,127]. */
-__device__ __forceinline__ float quantize_x_to_q8(
-    const float* __restrict__ sx,
-    int base, int count,
-    int8_t* __restrict__ q8_out)
+/* Pack 4 byte values into one int32 for dp4a (little-endian). */
+__device__ __forceinline__ int pack4_i8(int a, int b, int c, int d)
 {
-    float amax = 0.0f;
-    #pragma unroll
-    for (int i = 0; i < count; i++) {
-        float v = fabsf(sx[base + i]);
-        amax = fmaxf(amax, v);
-    }
-    if (amax == 0.0f) {
-        #pragma unroll
-        for (int i = 0; i < count; i++) q8_out[i] = 0;
-        return 0.0f;
-    }
-    float scale = 127.0f / amax;
-    #pragma unroll
-    for (int i = 0; i < count; i++) {
-        q8_out[i] = (int8_t)__float2int_rn(sx[base + i] * scale);
-    }
-    return amax / 127.0f; /* inverse scale for reconstruction */
-}
-
-/* Pack 4 int8 values into one int32 for dp4a. */
-__device__ __forceinline__ int pack4_i8(int8_t a, int8_t b, int8_t c, int8_t d)
-{
-    /* dp4a expects little-endian byte layout: a is lowest byte. */
-    unsigned int ua = (unsigned char)a;
-    unsigned int ub = (unsigned char)b;
-    unsigned int uc = (unsigned char)c;
-    unsigned int ud = (unsigned char)d;
-    return (int)(ua | (ub << 8) | (uc << 16) | (ud << 24));
+    return (int)((unsigned)(a & 0xFF) | ((unsigned)(b & 0xFF) << 8) |
+                 ((unsigned)(c & 0xFF) << 16) | ((unsigned)(d & 0xFF) << 24));
 }
 
 __global__ void gemv_q4k_dp4a_kernel(
@@ -251,15 +211,12 @@ __global__ void gemv_q4k_dp4a_kernel(
 
     float acc = 0.0f;
 
-    /* Each lane handles a strided subset of super-blocks. */
     for (int bi = lane_id; bi < blocks_per_row; bi += Q4K_WARP_SIZE) {
         const uint8_t* blk = row_data + bi * Q4K_BLOCK_BYTES;
 
-        /* Read fp16 d and dmin. */
         float d    = __half2float(__ldg((const __half*)(blk)));
         float dmin = __half2float(__ldg((const __half*)(blk + 2)));
 
-        /* Decode sub-block scales and mins. */
         float sub_scales[Q4K_NUM_SUB_BLOCKS];
         float sub_mins[Q4K_NUM_SUB_BLOCKS];
         decode_scales_mins(blk + 4, d, dmin, sub_scales, sub_mins);
@@ -267,31 +224,18 @@ __global__ void gemv_q4k_dp4a_kernel(
         const uint8_t* qdata = blk + 16;
         int k_base = bi * Q4K_SUPER_BLOCK_SIZE;
 
-        /* Process 4 groups of 64 elements each. */
         #pragma unroll
         for (int group = 0; group < 4; group++) {
-            int sb0 = group * 2;
-            int sb1 = group * 2 + 1;
-            float sc0 = sub_scales[sb0];
-            float mn0 = sub_mins[sb0];
-            float sc1 = sub_scales[sb1];
-            float mn1 = sub_mins[sb1];
+            float sc0 = sub_scales[group * 2];
+            float mn0 = sub_mins[group * 2];
+            float sc1 = sub_scales[group * 2 + 1];
+            float mn1 = sub_mins[group * 2 + 1];
 
             int base_out = k_base + group * 64;
             int base_q = group * 32;
 
-            /* Quantize the 32 x values for sub-block 0 (lo nibble positions)
-             * and the 32 x values for sub-block 1 (hi nibble positions). */
-            int8_t q8_lo[32], q8_hi[32];
-            float x_scale_lo = quantize_x_to_q8(sx, base_out, 32, q8_lo);
-            float x_scale_hi = quantize_x_to_q8(sx, base_out + 32, 32, q8_hi);
-
-            /* dp4a accumulation for lo nibble * x and hi nibble * x.
-             * Also accumulate sum(x) for the min correction. */
-            int dp4a_acc_lo = 0;
-            int dp4a_acc_hi = 0;
-            float sum_x_lo = 0.0f;
-            float sum_x_hi = 0.0f;
+            float sum_x_lo = 0.0f, sum_x_hi = 0.0f;
+            int dp4a_acc_lo = 0, dp4a_acc_hi = 0;
 
             #pragma unroll
             for (int l = 0; l < 32; l += 4) {
@@ -300,30 +244,49 @@ __global__ void gemv_q4k_dp4a_kernel(
                 uint8_t q2 = __ldg(&qdata[base_q + l + 2]);
                 uint8_t q3 = __ldg(&qdata[base_q + l + 3]);
 
-                /* Low nibbles (sub-block 0): 4-bit values 0..15 */
-                int w_lo = pack4_i8((int8_t)(q0 & 0xF), (int8_t)(q1 & 0xF),
-                                    (int8_t)(q2 & 0xF), (int8_t)(q3 & 0xF));
-                int x_lo = pack4_i8(q8_lo[l], q8_lo[l+1], q8_lo[l+2], q8_lo[l+3]);
-                dp4a_acc_lo = __dp4a(w_lo, x_lo, dp4a_acc_lo);
+                /* Load 4 x values for lo nibble (sub-block 0). */
+                float v0 = sx[base_out + l];
+                float v1 = sx[base_out + l + 1];
+                float v2 = sx[base_out + l + 2];
+                float v3 = sx[base_out + l + 3];
+                sum_x_lo += v0 + v1 + v2 + v3;
 
-                /* High nibbles (sub-block 1): 4-bit values 0..15 */
-                int w_hi = pack4_i8((int8_t)(q0 >> 4), (int8_t)(q1 >> 4),
-                                    (int8_t)(q2 >> 4), (int8_t)(q3 >> 4));
-                int x_hi = pack4_i8(q8_hi[l], q8_hi[l+1], q8_hi[l+2], q8_hi[l+3]);
-                dp4a_acc_hi = __dp4a(w_hi, x_hi, dp4a_acc_hi);
+                /* Quantize x[4] to INT8 inline (per-group-of-4 scale). */
+                float amax_lo = fmaxf(fmaxf(fabsf(v0), fabsf(v1)),
+                                      fmaxf(fabsf(v2), fabsf(v3)));
+                float qscale_lo = (amax_lo > 0.0f) ? 127.0f / amax_lo : 0.0f;
+                int x_lo = pack4_i8(__float2int_rn(v0 * qscale_lo),
+                                    __float2int_rn(v1 * qscale_lo),
+                                    __float2int_rn(v2 * qscale_lo),
+                                    __float2int_rn(v3 * qscale_lo));
+                float x_inv_lo = (amax_lo > 0.0f) ? amax_lo / 127.0f : 0.0f;
 
-                /* Sum x for min correction (use original FP32 values). */
-                sum_x_lo += sx[base_out + l] + sx[base_out + l + 1] +
-                            sx[base_out + l + 2] + sx[base_out + l + 3];
-                sum_x_hi += sx[base_out + 32 + l] + sx[base_out + 32 + l + 1] +
-                            sx[base_out + 32 + l + 2] + sx[base_out + 32 + l + 3];
+                int w_lo = pack4_i8(q0 & 0xF, q1 & 0xF, q2 & 0xF, q3 & 0xF);
+                int dp_lo = __dp4a(w_lo, x_lo, 0);
+                acc += sc0 * x_inv_lo * (float)dp_lo;
+
+                /* Load 4 x values for hi nibble (sub-block 1). */
+                float v4 = sx[base_out + 32 + l];
+                float v5 = sx[base_out + 32 + l + 1];
+                float v6 = sx[base_out + 32 + l + 2];
+                float v7 = sx[base_out + 32 + l + 3];
+                sum_x_hi += v4 + v5 + v6 + v7;
+
+                float amax_hi = fmaxf(fmaxf(fabsf(v4), fabsf(v5)),
+                                      fmaxf(fabsf(v6), fabsf(v7)));
+                float qscale_hi = (amax_hi > 0.0f) ? 127.0f / amax_hi : 0.0f;
+                int x_hi = pack4_i8(__float2int_rn(v4 * qscale_hi),
+                                    __float2int_rn(v5 * qscale_hi),
+                                    __float2int_rn(v6 * qscale_hi),
+                                    __float2int_rn(v7 * qscale_hi));
+                float x_inv_hi = (amax_hi > 0.0f) ? amax_hi / 127.0f : 0.0f;
+
+                int w_hi = pack4_i8(q0 >> 4, q1 >> 4, q2 >> 4, q3 >> 4);
+                int dp_hi = __dp4a(w_hi, x_hi, 0);
+                acc += sc1 * x_inv_hi * (float)dp_hi;
             }
 
-            /* Reconstruct FP32 partial dot products:
-             * sum(scale * nibble * x) = scale * x_inv_scale * dp4a_acc
-             * sum(min * x) = min * sum_x */
-            acc += sc0 * x_scale_lo * (float)dp4a_acc_lo - mn0 * sum_x_lo;
-            acc += sc1 * x_scale_hi * (float)dp4a_acc_hi - mn1 * sum_x_hi;
+            acc -= mn0 * sum_x_lo + mn1 * sum_x_hi;
         }
     }
 
