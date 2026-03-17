@@ -261,10 +261,12 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 		if _, ok := any(t.GetStorage()).(*tensor.BFloat16Storage); ok {
 			continue
 		}
-		// NOTE: Q4Storage is NOT skipped. PreUploadFrozenWeights converts Q4 to
-		// float32 for the cuBLAS SGEMM path. While Phase 6 used Q4 GEMV (234 tok/s),
-		// the current session path requires PreUploadFrozenWeights for correct CUDA
-		// graph capture. Restoring Q4 GEMV requires fixing capture without PreUpload.
+		// Skip Q4Storage — Q4 weights are uploaded as raw bytes by UploadWeights
+		// and dispatched to fused Q4 GEMV kernel (0.5 bytes/weight). Converting
+		// to F32 (4 bytes/weight) would 8x bandwidth. Phase 6: 234 tok/s with Q4 GEMV.
+		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+			continue
+		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
 		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
 		if total <= 1 {

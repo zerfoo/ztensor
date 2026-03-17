@@ -477,29 +477,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			uploaded++
 			continue
 		}
-		// Q4 weight matrices: upload as BFloat16 for 2x bandwidth reduction.
-		// BF16 uses cublasGemmEx mixed-precision (BF16 weights x F32 activations
-		// -> F32 output) with tensor cores. Only Q4Storage gets this treatment —
-		// other tensors (norms, embeddings, CPUStorage) stay F32.
+		// Skip Q4Storage — already uploaded as raw bytes by the Q4 handler above.
+		// The Q4 GEMV kernel reads quantized data directly (0.5 bytes/weight),
+		// 8x less bandwidth than F32. Phase 6 achieved 234 tok/s this way.
 		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
-			data := t.Data()
-			n := len(data)
-			if n > 0 {
-				bf16 := tensor.NewBFloat16Storage(data)
-				rawBytes := bf16.RawBytes()
-				devPtr, err := e.allocWeight(len(rawBytes))
-				if err != nil {
-					return fmt.Errorf("alloc Q4→BF16 GPU (shape %v): %w", t.Shape(), err)
-				}
-				if err := e.uploadBytes(devPtr, rawBytes); err != nil {
-					_ = e.runtime.Free(devPtr)
-					return fmt.Errorf("upload Q4→BF16 (shape %v): %w", t.Shape(), err)
-				}
-				bf16.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
-				t.SetStorage(bf16)
-				uploaded++
-				continue
-			}
+			continue
 		}
 		data := t.Data()
 		n := len(data)
