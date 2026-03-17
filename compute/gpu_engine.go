@@ -477,9 +477,8 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			uploaded++
 			continue
 		}
-		// Skip Q4Storage — already uploaded as raw bytes by the Q4 handler above.
-		// The Q4 GEMV kernel reads quantized data directly (0.5 bytes/weight),
-		// 8x less bandwidth than F32. Phase 6 achieved 234 tok/s this way.
+		// Skip Q4Storage — already uploaded as raw Q4 bytes by the Q4 handler
+		// above (line ~272). Q4 GEMV reads quantized data directly (0.5 bytes/weight).
 		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
 			continue
 		}
