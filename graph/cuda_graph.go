@@ -97,6 +97,17 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	captureStart int
 	captureEnd   int
 
+	// replayReady is set after the first successful replay. When true,
+	// replay() uses a fast path that skips PrepareSlots and EnsureSlotsGPU.
+	replayReady bool
+
+	// inputSlotIdx is the scratch slot index for the first graph input,
+	// cached from plan.inputIdx[0] to avoid per-replay slice access.
+	inputSlotIdx int
+
+	// hasPostCapture is true when there are instructions after captureEnd.
+	hasPostCapture bool
+
 	// Fixed device buffer for the input token.
 	inputDevPtr unsafe.Pointer
 
@@ -111,7 +122,7 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// restored into scratchSlots after PrepareSlots (which resets them)
 	// so that GraphLaunch writes to the same buffers and OutputTensor()
 	// returns the correct result.
-	capturedSlots map[int]*tensor.TensorNumeric[T]
+	capturedSlots []*tensor.TensorNumeric[T] // indexed by slot number, nil for non-captured slots
 
 	// onCaptured is called after successful capture, allowing the caller
 	// to protect arena allocations from being reclaimed by Reset.
@@ -167,12 +178,19 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
 	}
 
+	inputSlotIdx := 0
+	if len(plan.inputIdx) > 0 {
+		inputSlotIdx = plan.inputIdx[0]
+	}
+
 	return &CUDAGraphExecutor[T]{
 		plan:            plan,
 		stream:          cuda.StreamFromPtr(streamPtr),
 		warmups:         warmups,
 		captureStart:    captureStart,
 		captureEnd:      captureEnd,
+		inputSlotIdx:    inputSlotIdx,
+		hasPostCapture:  captureEnd < plan.InstructionCount(),
 		gpuSlotCache:    make(map[int]*tensor.TensorNumeric[T]),
 		onCaptured:    onCaptured,
 		snapshotCache: snapshotCache,
@@ -309,7 +327,7 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// Save all scratch slots written by captured instructions. These tensors
 	// hold the GPU buffers that the captured graph writes to. During replay,
 	// we must restore them after PrepareSlots (which resets scratchSlots).
-	g.capturedSlots = make(map[int]*tensor.TensorNumeric[T])
+	g.capturedSlots = make([]*tensor.TensorNumeric[T], g.plan.SlotCount())
 	for i := g.captureStart; i < g.captureEnd; i++ {
 		outSlot := g.plan.InstructionOutputIdx(i)
 		if t := g.plan.ScratchSlot(outSlot); t != nil {
@@ -342,7 +360,11 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 
 // replay launches the pre-captured graph with updated input.
 func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// Prepare slots with new inputs.
+	if g.replayReady {
+		return g.replayFast(ctx, inputs...)
+	}
+
+	// First replay: full path that sets up slot state.
 	if err := g.plan.PrepareSlots(inputs...); err != nil {
 		return nil, fmt.Errorf("cuda graph replay: prepare slots: %w", err)
 	}
@@ -362,7 +384,9 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 	// graph writes to those GPU buffers, so we must restore the tensor
 	// pointers so that OutputTensor() returns the correct result.
 	for idx, t := range g.capturedSlots {
-		g.plan.SetScratchSlot(idx, t)
+		if t != nil {
+			g.plan.SetScratchSlot(idx, t)
+		}
 	}
 
 	// Replay the captured graph.
@@ -374,7 +398,48 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 	}
 
 	// Run post-capture instructions if any.
-	if g.captureEnd < g.plan.InstructionCount() {
+	if g.hasPostCapture {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: post-capture: %w", err)
+		}
+	}
+
+	// All slots are now GPU-resident and capturedSlots are in place.
+	// Subsequent replays can use the fast path.
+	g.replayReady = true
+
+	return g.plan.OutputTensor(), nil
+}
+
+// replayFast is the O(1) Go-work replay path used after the first successful
+// replay. It skips PrepareSlots (which copies ~185 slot pointers),
+// EnsureSlotsGPU (which iterates all slots checking residency), and
+// capturedSlots restoration (already in place from previous replay).
+// Only the input slot is updated and pre-capture instructions re-run.
+func (g *CUDAGraphExecutor[T]) replayFast(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	// Set only the input slot — all other scratch slots are already correct
+	// from the previous replay.
+	g.plan.SetScratchSlot(g.inputSlotIdx, inputs[0])
+
+	// Pre-capture instructions (e.g. EmbeddingLookup) must still run because
+	// the input token changes each step.
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
+		}
+	}
+
+	// Launch the captured graph — slots are already GPU-resident and
+	// capturedSlots tensors are still in place from the previous replay.
+	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
+		return nil, fmt.Errorf("cuda graph: launch failed: %w", err)
+	}
+	if err := g.stream.Synchronize(); err != nil {
+		return nil, fmt.Errorf("cuda graph: sync failed: %w", err)
+	}
+
+	// Run post-capture instructions if any.
+	if g.hasPostCapture {
 		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
 			return nil, fmt.Errorf("cuda graph replay: post-capture: %w", err)
 		}
