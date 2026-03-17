@@ -52,6 +52,21 @@ type KernelRunner interface {
 	// y is [M] float32. K must be a multiple of 256. Batch=1 only.
 	GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, stream Stream) error
 
+	// GemvQ5KF32 performs Q5_K fused dequant-GEMV: y = dequant(W_q5k) * x.
+	// W_q5k is raw Q5_K super-blocks for matrix [M, K]. x is [K] float32.
+	// y is [M] float32. K must be a multiple of 256. Batch=1 only.
+	GemvQ5KF32(wQ5K, x, y unsafe.Pointer, M, K int, stream Stream) error
+
+	// GemvQ6KF32 performs Q6_K fused dequant-GEMV: y = dequant(W_q6k) * x.
+	// W_q6k is raw Q6_K super-blocks for matrix [M, K]. x is [K] float32.
+	// y is [M] float32. K must be a multiple of 256. Batch=1 only.
+	GemvQ6KF32(wQ6K, x, y unsafe.Pointer, M, K int, stream Stream) error
+
+	// GemvQ5_0F32 performs Q5_0 fused dequant-GEMV: y = dequant(W_q5_0) * x.
+	// W_q5_0 is raw Q5_0 blocks for matrix [M, K]. x is [K] float32.
+	// y is [M] float32. K must be a multiple of 32. Batch=1 only.
+	GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K int, stream Stream) error
+
 	// DequantQ4KF32 dequantizes Q4_K super-blocks to FP32 in global memory.
 	// src is raw Q4_K super-blocks for matrix [rows, K]. dst is [rows, K] float32.
 	// K must be a multiple of 256. Used for non-GEMV cuBLAS path.

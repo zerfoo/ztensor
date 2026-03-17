@@ -143,6 +143,15 @@ func (stubKernelRunner) GemmQ4F32(_, _, _ unsafe.Pointer, _, _, _, _ int, _ gpua
 func (stubKernelRunner) GemvQ4KF32(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) GemvQ5KF32(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) GemvQ6KF32(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) GemvQ5_0F32(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) DequantQ4KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }

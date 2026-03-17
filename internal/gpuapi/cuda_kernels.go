@@ -113,6 +113,18 @@ func (k *CUDAKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, s Stream) 
 	return kernels.GemvQ4KF32(wQ4K, x, y, M, K, streamPtr(s))
 }
 
+func (k *CUDAKernels) GemvQ5KF32(wQ5K, x, y unsafe.Pointer, M, K int, s Stream) error {
+	return kernels.GemvQ5KF32(wQ5K, x, y, M, K, streamPtr(s))
+}
+
+func (k *CUDAKernels) GemvQ6KF32(wQ6K, x, y unsafe.Pointer, M, K int, s Stream) error {
+	return kernels.GemvQ6KF32(wQ6K, x, y, M, K, streamPtr(s))
+}
+
+func (k *CUDAKernels) GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K int, s Stream) error {
+	return kernels.GemvQ5_0F32(wQ5_0, x, y, M, K, streamPtr(s))
+}
+
 func (k *CUDAKernels) DequantQ4KF32(src, dst unsafe.Pointer, rows, K int, s Stream) error {
 	return kernels.DequantQ4KF32(src, dst, rows, K, streamPtr(s))
 }

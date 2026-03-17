@@ -208,8 +208,14 @@ func DequantizeQ6K(raw []byte, dst []float32) {
 
 // Q6KStorage holds Q6_K quantized tensor data on CPU.
 type Q6KStorage struct {
-	raw []byte
-	len int
+	raw []byte // raw super-block data
+	len int    // number of logical float32 elements
+
+	// GPU-resident copy of the raw bytes (optional).
+	// Set by GPUEngine.UploadWeights to avoid per-op H2D copies.
+	gpuPtr      unsafe.Pointer
+	gpuByteSize int
+	gpuDeviceID int
 }
 
 // NewQ6KStorageFromRaw creates Q6KStorage from raw super-block data.
@@ -255,6 +261,26 @@ func (q *Q6KStorage) Set(_ []float32) { panic("Q6KStorage is immutable") }
 
 // DeviceType returns device.CPU.
 func (q *Q6KStorage) DeviceType() device.Type { return device.CPU }
+
+// RawBytes returns the underlying Q6_K super-block data.
+func (q *Q6KStorage) RawBytes() []byte { return q.raw }
+
+// NumBlocks returns the number of Q6_K super-blocks.
+func (q *Q6KStorage) NumBlocks() int {
+	return (q.len + q6KSuperBlockSize - 1) / q6KSuperBlockSize
+}
+
+// SetGPUPtr stores a GPU-resident copy pointer for avoiding per-op H2D copies.
+func (q *Q6KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	q.gpuPtr = ptr
+	q.gpuByteSize = byteSize
+	q.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the GPU-resident copy pointer, byte size, and device ID.
+func (q *Q6KStorage) GPUPtr() (unsafe.Pointer, int, int) {
+	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
+}
 
 var _ Storage[float32] = (*Q6KStorage)(nil)
 
@@ -322,8 +348,14 @@ func DequantizeQ5K(raw []byte, dst []float32) {
 
 // Q5KStorage holds Q5_K quantized tensor data on CPU.
 type Q5KStorage struct {
-	raw []byte
-	len int
+	raw []byte // raw super-block data
+	len int    // number of logical float32 elements
+
+	// GPU-resident copy of the raw bytes (optional).
+	// Set by GPUEngine.UploadWeights to avoid per-op H2D copies.
+	gpuPtr      unsafe.Pointer
+	gpuByteSize int
+	gpuDeviceID int
 }
 
 // NewQ5KStorageFromRaw creates Q5KStorage from raw super-block data.
@@ -369,5 +401,27 @@ func (q *Q5KStorage) Set(_ []float32) { panic("Q5KStorage is immutable") }
 
 // DeviceType returns device.CPU.
 func (q *Q5KStorage) DeviceType() device.Type { return device.CPU }
+
+// RawBytes returns the raw Q5_K super-block data for GPU upload.
+// The layout is contiguous super-blocks, each 176 bytes.
+func (q *Q5KStorage) RawBytes() []byte { return q.raw }
+
+// NumBlocks returns the number of Q5_K super-blocks.
+func (q *Q5KStorage) NumBlocks() int {
+	return (q.len + q5KSuperBlockSize - 1) / q5KSuperBlockSize
+}
+
+// SetGPUPtr stores a pre-uploaded GPU device pointer for the raw bytes.
+func (q *Q5KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	q.gpuPtr = ptr
+	q.gpuByteSize = byteSize
+	q.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the cached GPU device pointer, byte size, and device ID.
+// Returns nil if no GPU copy exists.
+func (q *Q5KStorage) GPUPtr() (unsafe.Pointer, int, int) {
+	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
+}
 
 var _ Storage[float32] = (*Q5KStorage)(nil)
