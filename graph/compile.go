@@ -251,10 +251,14 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 		// the quantized format and bypass the fused GEMV dispatch.
 		// NOTE: Q4Storage and Q8Storage are NOT skipped — they use the existing
 		// float32-on-GPU path through PreUploadFrozenWeights + cuBLAS SGEMM.
-		// Skip Float16Storage — FP16 weights are uploaded by UploadWeights and
-		// dispatched to cuBLAS FP16 GEMM via fp16MatMulNative. Converting them
-		// to float32 via ToGPU would double bandwidth and lose tensor core perf.
+		// Skip Float16Storage and BFloat16Storage — these are uploaded by
+		// UploadWeights and dispatched to cuBLAS mixed-precision GEMM with
+		// tensor cores. Converting them to float32 via ToGPU would double
+		// bandwidth and lose tensor core performance.
 		if _, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.BFloat16Storage); ok {
 			continue
 		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
