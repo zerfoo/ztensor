@@ -41,6 +41,13 @@ gemv_q4k.o: gemv_q4k.cu
 gemv_q4k.pic.o: gemv_q4k.cu
 	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
 
+# Monitor register pressure for Q5K GEMV.
+gemv_q5k.o: gemv_q5k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
+
+gemv_q5k.pic.o: gemv_q5k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
+
 # Monitor register pressure for Q6K GEMV.
 gemv_q6k.o: gemv_q6k.cu
 	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@

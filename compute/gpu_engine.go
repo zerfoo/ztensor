@@ -351,6 +351,25 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
+		// Upload Q5_0 raw bytes to GPU for fused GEMV kernel.
+		// Q5_0 blocks (22 bytes per 32 values) are uploaded contiguously.
+		if qs, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
+			if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+				continue // already on GPU
+			}
+			rawBytes := qs.RawBytes()
+			devPtr, err := e.runtime.Malloc(len(rawBytes))
+			if err != nil {
+				return fmt.Errorf("alloc Q5_0 GPU (shape %v): %w", t.Shape(), err)
+			}
+			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return fmt.Errorf("upload Q5_0 (shape %v): %w", t.Shape(), err)
+			}
+			qs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			q4Uploaded++
+			continue
+		}
 		// Upload FP8 E4M3 raw bytes to GPU and cache the pointer.
 		// FP8 weights (1 byte/element) are used with cublasLtMatmul for
 		// mixed-precision MatMul (FP8 weights × FP16 activations → FP32 output).
