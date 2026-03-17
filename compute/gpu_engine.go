@@ -1139,6 +1139,9 @@ func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b 
 // For GEMV (M=1), A^T[K,1] is just A's data as a column, and C_temp[N,1]
 // can be reshaped to [1, N] without a physical transpose.
 func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNumeric[T], qs *tensor.Q4Storage, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if os.Getenv("ZERFOO_DEBUG_GPU") == "1" {
+		fmt.Fprintf(os.Stderr, "matMulQ4BWeight: aShape=%v bShape=%v GPUPtr=%v\n", a.Shape(), b.Shape(), func() bool { p, _, _ := qs.GPUPtr(); return p != nil }())
+	}
 	aShape := a.Shape()
 	bShape := b.Shape()
 
