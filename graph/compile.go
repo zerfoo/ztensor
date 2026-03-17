@@ -260,6 +260,12 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 		if _, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
 			continue
 		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q4KStorage); ok {
+			continue
+		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
 		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
 		if total <= 1 {
