@@ -679,3 +679,186 @@ func NewNVFloat4Storage(src []float32, shape []int) *NVFloat4Storage {
 
 // Ensure NVFloat4Storage implements Storage[float32].
 var _ Storage[float32] = (*NVFloat4Storage)(nil)
+
+// --- NF4 Quantization (QLoRA double quantization) ---
+
+const (
+	nf4BlockSize     = 64
+	nf4MetaBlockSize = 256
+)
+
+// nf4Codebook is the fixed 16-level normal float 4-bit quantization codebook.
+// Values are sorted and optimized for normally distributed weights (Dettmers et al., 2023).
+var nf4Codebook = [16]float32{
+	-1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
+	-0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
+	0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
+	0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0,
+}
+
+// NF4Storage stores float32 data quantized to 4-bit normal floats with
+// double quantization: block scales (one per nf4BlockSize elements) are
+// themselves stored quantized using meta-blocks of nf4MetaBlockSize blocks.
+type NF4Storage struct {
+	Data       []byte    // packed: 2 NF4 indices per byte (lo nibble = first, hi nibble = second)
+	Scales     []float32 // one absmax scale per block of nf4BlockSize elements
+	MetaScales []float32 // one absmax scale per meta-block of nf4MetaBlockSize blocks
+	Shape      []int
+	n          int // number of elements
+}
+
+// NewNF4Storage quantizes src into NF4 format.
+func NewNF4Storage(src []float32, shape []int) *NF4Storage {
+	s := &NF4Storage{Shape: shape}
+	_ = s.Quantize(src)
+	return s
+}
+
+// Quantize encodes src into NF4 with double quantization.
+func (s *NF4Storage) Quantize(src []float32) error {
+	if len(src) == 0 {
+		s.n = 0
+		s.Data = nil
+		s.Scales = nil
+		s.MetaScales = nil
+		return nil
+	}
+	n := len(src)
+	s.n = n
+	nBlocks := (n + nf4BlockSize - 1) / nf4BlockSize
+	nMeta := (nBlocks + nf4MetaBlockSize - 1) / nf4MetaBlockSize
+
+	scales := make([]float32, nBlocks)
+	for b := 0; b < nBlocks; b++ {
+		start := b * nf4BlockSize
+		end := start + nf4BlockSize
+		if end > n {
+			end = n
+		}
+		var absMax float32
+		for _, v := range src[start:end] {
+			if v < 0 {
+				v = -v
+			}
+			if v > absMax {
+				absMax = v
+			}
+		}
+		scales[b] = absMax
+	}
+
+	// Double-quantize the scales.
+	metaScales := make([]float32, nMeta)
+	for m := 0; m < nMeta; m++ {
+		start := m * nf4MetaBlockSize
+		end := start + nf4MetaBlockSize
+		if end > nBlocks {
+			end = nBlocks
+		}
+		var absMax float32
+		for _, v := range scales[start:end] {
+			if v > absMax {
+				absMax = v
+			}
+		}
+		metaScales[m] = absMax
+	}
+
+	// Encode each element.
+	packed := make([]byte, (n+1)/2)
+	for b := 0; b < nBlocks; b++ {
+		start := b * nf4BlockSize
+		end := start + nf4BlockSize
+		if end > n {
+			end = n
+		}
+		scale := scales[b]
+		for i := start; i < end; i++ {
+			var normalized float32
+			if scale > 0 {
+				normalized = src[i] / scale
+			}
+			idx := nf4FindNearest(normalized)
+			byteIdx := i / 2
+			if i%2 == 0 {
+				packed[byteIdx] = byte(idx & 0xF)
+			} else {
+				packed[byteIdx] |= byte((idx & 0xF) << 4)
+			}
+		}
+	}
+
+	s.Data = packed
+	s.Scales = scales
+	s.MetaScales = metaScales
+	return nil
+}
+
+// Dequantize decodes NF4 data back to float32.
+func (s *NF4Storage) Dequantize() []float32 {
+	if s.n == 0 {
+		return nil
+	}
+	out := make([]float32, s.n)
+	nBlocks := len(s.Scales)
+	for b := 0; b < nBlocks; b++ {
+		start := b * nf4BlockSize
+		end := start + nf4BlockSize
+		if end > s.n {
+			end = s.n
+		}
+		scale := s.Scales[b]
+		for i := start; i < end; i++ {
+			byteIdx := i / 2
+			var nibble byte
+			if i%2 == 0 {
+				nibble = s.Data[byteIdx] & 0xF
+			} else {
+				nibble = (s.Data[byteIdx] >> 4) & 0xF
+			}
+			out[i] = nf4Codebook[nibble] * scale
+		}
+	}
+	return out
+}
+
+// nf4FindNearest returns the codebook index closest to v via binary search on midpoints.
+func nf4FindNearest(v float32) int {
+	lo, hi := 0, 15
+	for lo < hi {
+		mid := (lo + hi) / 2
+		midpoint := (nf4Codebook[mid] + nf4Codebook[mid+1]) / 2
+		if v <= midpoint {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	return lo
+}
+
+// Len returns the number of elements.
+func (s *NF4Storage) Len() int { return s.n }
+
+// NumBlocks returns the number of NF4 blocks.
+func (s *NF4Storage) NumBlocks() int { return len(s.Scales) }
+
+// ByteSize returns the raw byte size of packed NF4 data plus scales.
+func (s *NF4Storage) ByteSize() int64 {
+	return int64(len(s.Data)) + int64(len(s.Scales)*4) + int64(len(s.MetaScales)*4)
+}
+
+// Slice dequantizes and returns a CPU float32 slice.
+func (s *NF4Storage) Slice() []float32 { return s.Dequantize() }
+
+// Set re-quantizes from a new float32 slice.
+func (s *NF4Storage) Set(data []float32) {
+	s.n = len(data)
+	_ = s.Quantize(data)
+}
+
+// DeviceType returns device.CPU.
+func (s *NF4Storage) DeviceType() device.Type { return device.CPU }
+
+// Ensure NF4Storage implements Storage[float32].
+var _ Storage[float32] = (*NF4Storage)(nil)
