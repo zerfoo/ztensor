@@ -485,6 +485,153 @@ func gemmF32Q6KNTParallel(n int, a []float32, b *tensor.Q6KStorage, c []float32,
 	wg.Wait()
 }
 
+// w8a8GemvParallelThreshold is the minimum N*K for M=1 W8A8 GEMV parallelization.
+const w8a8GemvParallelThreshold = 256 * 256
+
+// GemmW8A8F32 computes C = A * B where A is W8A8 quantized and B, C are float32.
+// A has logical shape (m, k), B has shape (k, n), C has shape (m, n).
+// Dequantizes A per-block and uses FP32 accumulation.
+func GemmW8A8F32(m, n, k int, a *tensor.W8A8Storage, b, c []float32) {
+	const groupSize = 32
+	blocksPerRow := k / groupSize
+
+	// Zero output.
+	for i := range c {
+		c[i] = 0
+	}
+
+	var buf [groupSize]float32
+	for i := range m {
+		cRow := c[i*n : (i+1)*n]
+		for bi := range blocksPerRow {
+			blkIdx := i*blocksPerRow + bi
+			a.DequantizeBlock(blkIdx, &buf)
+			kBase := bi * groupSize
+			for p := range groupSize {
+				if aVal := buf[p]; aVal != 0 {
+					sgemmAccRow(unsafe.Pointer(&cRow[0]), unsafe.Pointer(&b[(kBase+p)*n]), aVal, n)
+				}
+			}
+		}
+	}
+}
+
+// GemmF32W8A8NT computes C = A * B^T where A is float32 [M,K] and B is W8A8 [N,K].
+// B is stored in row-major W8A8 format. The "NT" suffix means B is not transposed
+// in memory — the caller passes B in its original [N,K] layout.
+// K must be a multiple of 32.
+func GemmF32W8A8NT(m, n, k int, a []float32, b *tensor.W8A8Storage, c []float32) {
+	const groupSize = 32
+
+	if k%groupSize != 0 {
+		// Fallback: dequantize fully, then SGEMM.
+		bf32 := b.Slice()
+		for i := range m {
+			for j := range n {
+				var sum float32
+				for p := range k {
+					sum += a[i*k+p] * bf32[j*k+p]
+				}
+				c[i*n+j] = sum
+			}
+		}
+		return
+	}
+
+	blocksPerRow := k / groupSize
+
+	// M=1 GEMV: parallelize across N when beneficial.
+	if m == 1 && n*k >= w8a8GemvParallelThreshold {
+		nCores := runtime.NumCPU()
+		nCores = min(nCores, n/4)
+		if nCores > 1 {
+			gemmF32W8A8NTParallel(n, a, b, c, blocksPerRow, nCores)
+			return
+		}
+	}
+
+	var buf [groupSize]float32
+	for i := range m {
+		aRow := a[i*k:]
+		for j := range n {
+			var sum float32
+			for bi := range blocksPerRow {
+				blkIdx := j*blocksPerRow + bi
+				b.DequantizeBlock(blkIdx, &buf)
+				kBase := bi * groupSize
+				for p := range groupSize {
+					sum += aRow[kBase+p] * buf[p]
+				}
+			}
+			c[i*n+j] = sum
+		}
+	}
+}
+
+// gemmF32W8A8NTParallel splits M=1 W8A8 GEMV across nCores workers along N.
+func gemmF32W8A8NTParallel(n int, a []float32, b *tensor.W8A8Storage, c []float32, blocksPerRow, nCores int) {
+	const groupSize = 32
+	chunkSize := (n + nCores - 1) / nCores
+	if defaultPool != nil {
+		tasks := make([]func(), 0, nCores)
+		for t := range nCores {
+			jStart := t * chunkSize
+			jEnd := min(jStart+chunkSize, n)
+			if jStart >= n {
+				break
+			}
+			tasks = append(tasks, func() {
+				var buf [groupSize]float32
+				for j := jStart; j < jEnd; j++ {
+					var sum float32
+					for bi := range blocksPerRow {
+						blkIdx := j*blocksPerRow + bi
+						b.DequantizeBlock(blkIdx, &buf)
+						kBase := bi * groupSize
+						for p := range groupSize {
+							sum += a[kBase+p] * buf[p]
+						}
+					}
+					c[j] = sum
+				}
+			})
+		}
+		defaultPool.Submit(tasks)
+		return
+	}
+	var wg sync.WaitGroup
+	for t := range nCores {
+		jStart := t * chunkSize
+		jEnd := min(jStart+chunkSize, n)
+		if jStart >= n {
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buf [groupSize]float32
+			for j := jStart; j < jEnd; j++ {
+				var sum float32
+				for bi := range blocksPerRow {
+					blkIdx := j*blocksPerRow + bi
+					b.DequantizeBlock(blkIdx, &buf)
+					kBase := bi * groupSize
+					for p := range groupSize {
+						sum += a[kBase+p] * buf[p]
+					}
+				}
+				c[j] = sum
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// GemmW8A8NT computes C = A * B^T where both A [M,K] and B [N,K] are W8A8.
+// INT8×INT8 dot product with FP32 accumulation. K must be a multiple of 32.
+func GemmW8A8NT(m, n, k int, a, b *tensor.W8A8Storage, c []float32) {
+	tensor.GemmW8A8NT(m, n, k, a, b, c)
+}
 // dequantQ4Block unpacks 16 packed bytes into 32 float32 values.
 // GGML Q4_0 split format: low nibbles → positions 0-15, high nibbles → positions 16-31.
 func dequantQ4Block(data *byte, scale float32, buf *[32]float32) {
