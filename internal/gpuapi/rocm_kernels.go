@@ -250,6 +250,14 @@ func (k *ROCmKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int
 	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) FP8Gemm(_, _, _ unsafe.Pointer, _, _, _ int, _, _ float32, _ Stream) error {
+	return fmt.Errorf("FP8Gemm: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) IsFP8GemmSupported() bool {
+	return false
+}
+
 func (k *ROCmKernels) IncrementCounter(_ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("IncrementCounter: not implemented for ROCm")
 }

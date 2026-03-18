@@ -135,6 +135,9 @@ type KernelLib struct {
 
 	// paged_attention
 	launchPagedAttentionF32 uintptr
+
+	// ragged_attention
+	launchRaggedAttentionF32 uintptr
 }
 
 var (
@@ -270,6 +273,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_selective_scan_forward", &k.launchSelectiveScanForward},
 		// paged_attention
 		{"paged_attention_forward_f32", &k.launchPagedAttentionF32},
+		// ragged_attention
+		{"ragged_attention_forward_f32", &k.launchRaggedAttentionF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -293,6 +298,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_sgemv_m1":                 true,
 			"launch_selective_scan_forward":   true,
 			"paged_attention_forward_f32":     true,
+			"ragged_attention_forward_f32":    true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)

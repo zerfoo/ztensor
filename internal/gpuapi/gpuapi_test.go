@@ -251,6 +251,10 @@ func (stubKernelRunner) FP16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FP8Gemm(_, _, _ unsafe.Pointer, _, _, _ int, _, _ float32, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) IsFP8GemmSupported() bool { return false }
 func (stubKernelRunner) IncrementCounter(_ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }

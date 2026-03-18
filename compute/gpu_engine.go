@@ -678,14 +678,21 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 			return fp16MatMulNative(e, ctx, a, b, aFP16, bFP16, aIsFP16, bIsFP16, dst...)
 		}
 
+		// Check for FP8 E4M3 storage on both A and B (both-FP8 native GEMM).
+		fsA, aIsFP8 := any(a.GetStorage()).(*tensor.FP8E4M3Storage)
+		fsB, bIsFP8 := any(b.GetStorage()).(*tensor.FP8E4M3Storage)
+		if aIsFP8 && bIsFP8 {
+			return e.matMulFP8Both(ctx, fsA, fsB, a, b, dst...)
+		}
+
 		// Check for FP8 E4M3 storage on A (FP8 weights × FP32 activations).
-		if fs, ok := any(a.GetStorage()).(*tensor.FP8E4M3Storage); ok {
-			return e.matMulFP8(ctx, fs, a, b, dst...)
+		if aIsFP8 {
+			return e.matMulFP8(ctx, fsA, a, b, dst...)
 		}
 
 		// Check for FP8 E4M3 storage on B (FP8 weights as B operand).
-		if fs, ok := any(b.GetStorage()).(*tensor.FP8E4M3Storage); ok {
-			return e.matMulFP8BWeight(ctx, a, fs, b, dst...)
+		if bIsFP8 {
+			return e.matMulFP8BWeight(ctx, a, fsB, b, dst...)
 		}
 
 		// Check for BFloat16Storage on A (BF16 weights × FP32 activations).

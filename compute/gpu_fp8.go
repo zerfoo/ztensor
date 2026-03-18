@@ -161,6 +161,111 @@ func (e *GPUEngine[T]) getLtHandle() (*cublas.LtHandle, error) {
 	return h, nil
 }
 
+// matMulFP8Both handles MatMul where both A and B have FP8E4M3Storage.
+// Uses the native FP8Gemm kernel (sm_89+) which computes C = (scaleA * scaleB) * (A @ B)
+// with FP16 output. The FP16 result is converted to F32 for the output tensor.
+// Falls back to the single-FP8 path (matMulFP8) if the native kernel is unavailable.
+func (e *GPUEngine[T]) matMulFP8Both(
+	ctx context.Context,
+	fsA *tensor.FP8E4M3Storage,
+	fsB *tensor.FP8E4M3Storage,
+	a, b *tensor.TensorNumeric[T],
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	if !e.kernels.IsFP8GemmSupported() {
+		// Fall back to single-FP8 path (dequant one side to FP16).
+		return e.matMulFP8(ctx, fsA, a, b, dst...)
+	}
+
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	if len(aShape) > 2 || len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	e.setDevice()
+
+	m := aShape[0]
+	k := aShape[1]
+	n := bShape[1]
+
+	// Get FP8 device pointer for A.
+	var devA unsafe.Pointer
+	var freeA func()
+	if ptr, _, _ := fsA.GPUPtr(); ptr != nil {
+		devA = ptr
+		freeA = func() {}
+	} else {
+		aBytes := fsA.RawBytes()
+		var err error
+		devA, err = e.pool.Alloc(e.deviceID, len(aBytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeA = func() { e.pool.Free(e.deviceID, devA, len(aBytes)) }
+		if err := e.runtime.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeA()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeA()
+
+	// Get FP8 device pointer for B.
+	var devB unsafe.Pointer
+	var freeB func()
+	if ptr, _, _ := fsB.GPUPtr(); ptr != nil {
+		devB = ptr
+		freeB = func() {}
+	} else {
+		bBytes := fsB.RawBytes()
+		var err error
+		devB, err = e.pool.Alloc(e.deviceID, len(bBytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeB = func() { e.pool.Free(e.deviceID, devB, len(bBytes)) }
+		if err := e.runtime.Memcpy(devB, unsafe.Pointer(&bBytes[0]), len(bBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeB()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeB()
+
+	// Allocate FP16 output buffer for FP8Gemm result.
+	cElems := m * n
+	fp16CSize := cElems * fp16Size
+	devFP16C, err := e.pool.Alloc(e.deviceID, fp16CSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8Both: alloc fp16 output: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, devFP16C, fp16CSize)
+
+	// Launch FP8 GEMM: both inputs FP8 E4M3, output FP16.
+	scaleA := fsA.Scale()
+	scaleB := fsB.Scale()
+	if err := e.kernels.FP8Gemm(devA, devB, devFP16C, m, k, n, scaleA, scaleB, e.stream); err != nil {
+		return nil, fmt.Errorf("matMulFP8Both: FP8Gemm: %w", err)
+	}
+
+	// Convert FP16 output to F32.
+	f32CSize := cElems * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, f32CSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8Both: alloc f32 output: %w", err)
+	}
+
+	if err := e.kernels.FP16ToF32(devFP16C, devC, cElems, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devC, f32CSize)
+		return nil, fmt.Errorf("matMulFP8Both: fp16->f32: %w", err)
+	}
+
+	return makeGPUResult[T](e, []int{m, n}, devC, cElems, dst...)
+}
+
 // matMulFP8 handles MatMul where A has FP8E4M3Storage (FP8 weights as A).
 // A is [M, K] in FP8 E4M3, B is [K, N] in FP32 -> C is [M, N] in FP32.
 // Tries cublasLtMatmul with per-tensor scaling first; if unavailable (e.g. SM < 8.9),

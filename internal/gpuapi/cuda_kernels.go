@@ -252,6 +252,14 @@ func (k *CUDAKernels) DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale f
 	return kernels.DequantFP8E4M3ToFP16(input, output, scale, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) FP8Gemm(a, b, c unsafe.Pointer, m, kk, n int, scaleA, scaleB float32, s Stream) error {
+	return kernels.FP8Gemm(a, b, c, m, kk, n, scaleA, scaleB, streamPtr(s))
+}
+
+func (k *CUDAKernels) IsFP8GemmSupported() bool {
+	return kernels.IsFP8GemmSupported()
+}
+
 func (k *CUDAKernels) IncrementCounter(counter unsafe.Pointer, delta int, s Stream) error {
 	return kernels.IncrementCounter(counter, delta, streamPtr(s))
 }
