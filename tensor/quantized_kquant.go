@@ -270,6 +270,13 @@ func (q *Q6KStorage) NumBlocks() int {
 	return (q.len + q6KSuperBlockSize - 1) / q6KSuperBlockSize
 }
 
+// BlockRaw returns the raw bytes for the given super-block index.
+// The caller must not modify the returned slice.
+func (q *Q6KStorage) BlockRaw(blockIdx int) []byte {
+	off := blockIdx * q6KBlockBytes
+	return q.raw[off : off+q6KBlockBytes]
+}
+
 // SetGPUPtr stores a GPU-resident copy pointer for avoiding per-op H2D copies.
 func (q *Q6KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
 	q.gpuPtr = ptr

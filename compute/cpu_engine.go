@@ -2069,6 +2069,21 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 			}
 		}
 		return true
+	case *tensor.Q6KStorage:
+		// Q6_K on B: direct dequant+GEMV without re-quantizing to Q4_0.
+		// This avoids the lossy Q6_K→Q4_0 intermediate and reduces memory traffic.
+		aF := any(a.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			xblas.GemmF32Q6KNT(m, n, k, aF, qsB, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.GemmF32Q6KNT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	default:
 		return false
 	}

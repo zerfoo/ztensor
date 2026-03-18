@@ -374,6 +374,117 @@ func gemmF32Q5KNTParallel(n int, a []float32, b *tensor.Q5KStorage, c []float32,
 	wg.Wait()
 }
 
+// q6kGemvParallelThreshold is the minimum N*K for M=1 Q6_K GEMV parallelization.
+const q6kGemvParallelThreshold = 256 * 256
+
+// GemmF32Q6KNT computes C = A * B^T where A is float32 [M,K] and B is Q6_K [N,K].
+// B is stored in the Q6_K super-block layout (210 bytes per 256 values, [N,K] row-major).
+// Direct decode: no re-quantization intermediate, avoiding quality loss and
+// extra memory traffic. K must be a multiple of 256 (Q6_K super-block size).
+func GemmF32Q6KNT(m, n, k int, a []float32, b *tensor.Q6KStorage, c []float32) {
+	if k%256 != 0 {
+		// Fallback: dequantize fully, then SGEMM.
+		bf32 := b.Slice() // [N*K] in [N,K] order
+		for i := range m {
+			for j := range n {
+				var sum float32
+				for p := range k {
+					sum += a[i*k+p] * bf32[j*k+p]
+				}
+				c[i*n+j] = sum
+			}
+		}
+		return
+	}
+
+	blocksPerRow := k / 256
+
+	// M=1 GEMV: parallelize across N (rows of B) when beneficial.
+	if m == 1 && n*k >= q6kGemvParallelThreshold {
+		nCores := runtime.NumCPU()
+		nCores = min(nCores, n/4)
+		if nCores > 1 {
+			gemmF32Q6KNTParallel(n, a, b, c, blocksPerRow, nCores)
+			return
+		}
+	}
+
+	var buf [256]float32
+	for i := range m {
+		aRow := a[i*k:]
+		for j := range n {
+			var sum float32
+			for bi := range blocksPerRow {
+				blkIdx := j*blocksPerRow + bi
+				tensor.DequantizeQ6K(b.BlockRaw(blkIdx), buf[:])
+				kBase := bi * 256
+				for p := range 256 {
+					sum += aRow[kBase+p] * buf[p]
+				}
+			}
+			c[i*n+j] = sum
+		}
+	}
+}
+
+// gemmF32Q6KNTParallel splits M=1 Q6_K GEMV across nCores workers along N.
+func gemmF32Q6KNTParallel(n int, a []float32, b *tensor.Q6KStorage, c []float32, blocksPerRow, nCores int) {
+	chunkSize := (n + nCores - 1) / nCores
+	if defaultPool != nil {
+		tasks := make([]func(), 0, nCores)
+		for t := range nCores {
+			jStart := t * chunkSize
+			jEnd := min(jStart+chunkSize, n)
+			if jStart >= n {
+				break
+			}
+			tasks = append(tasks, func() {
+				var buf [256]float32
+				for j := jStart; j < jEnd; j++ {
+					var sum float32
+					for bi := range blocksPerRow {
+						blkIdx := j*blocksPerRow + bi
+						tensor.DequantizeQ6K(b.BlockRaw(blkIdx), buf[:])
+						kBase := bi * 256
+						for p := range 256 {
+							sum += a[kBase+p] * buf[p]
+						}
+					}
+					c[j] = sum
+				}
+			})
+		}
+		defaultPool.Submit(tasks)
+		return
+	}
+	var wg sync.WaitGroup
+	for t := range nCores {
+		jStart := t * chunkSize
+		jEnd := min(jStart+chunkSize, n)
+		if jStart >= n {
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buf [256]float32
+			for j := jStart; j < jEnd; j++ {
+				var sum float32
+				for bi := range blocksPerRow {
+					blkIdx := j*blocksPerRow + bi
+					tensor.DequantizeQ6K(b.BlockRaw(blkIdx), buf[:])
+					kBase := bi * 256
+					for p := range 256 {
+						sum += a[kBase+p] * buf[p]
+					}
+				}
+				c[j] = sum
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // dequantQ4Block unpacks 16 packed bytes into 32 float32 values.
 // GGML Q4_0 split format: low nibbles → positions 0-15, high nibbles → positions 16-31.
 func dequantQ4Block(data *byte, scale float32, buf *[32]float32) {

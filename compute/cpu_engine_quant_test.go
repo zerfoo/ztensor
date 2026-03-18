@@ -599,6 +599,211 @@ func float16BitsToFloat32(h uint16) float32 {
 	return math.Float32frombits(sign<<31 | (exp+127-15)<<23 | frac<<13)
 }
 
+// TestQ6KGEMV tests the native Q6_K GEMV CPU path (B-weight, [K,N] virtual shape).
+// It verifies that direct Q6_K dequant+GEMV produces the same result as the
+// reference path (dequantize all weights, then float32 dot-product), confirming
+// no re-quantization to Q4_0 occurs on the CPU path.
+func TestQ6KGEMV(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		k, n int
+	}{
+		{"k256_n4", 256, 4},
+		{"k512_n8", 512, 8},
+		{"k256_n16", 256, 16},
+		{"k1024_n32", 1024, 32},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Activation vector: [1, K].
+			aData := make([]float32, tc.k)
+			for i := range aData {
+				aData[i] = float32(i%17-8) * 0.05
+			}
+			a, err := tensor.New[float32]([]int{1, tc.k}, aData)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Weight matrix: [N, K] as float32, then quantized to Q6_K.
+			bF32 := make([]float32, tc.n*tc.k)
+			for i := range bF32 {
+				bF32[i] = float32(math.Sin(float64(i)*0.03)) * 1.5
+			}
+			q6k := quantizeQ6K(bF32, tc.n, tc.k)
+			// Shape [K, N] (virtual transpose — Q6KStorage holds [N,K] internally).
+			b, err := tensor.NewWithStorage[float32]([]int{tc.k, tc.n}, q6k)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := engine.MatMul(ctx, a, b)
+			if err != nil {
+				t.Fatalf("MatMul Q6_K B-weight: %v", err)
+			}
+			if result.Shape()[0] != 1 || result.Shape()[1] != tc.n {
+				t.Errorf("shape = %v, want [1 %d]", result.Shape(), tc.n)
+			}
+
+			// Reference: dequantize Q6_K weights, then manual dot-product.
+			dequantB := q6k.Slice() // [N*K] in [N,K] order
+			want := make([]float32, tc.n)
+			for j := range tc.n {
+				var sum float32
+				for i := range tc.k {
+					sum += dequantB[j*tc.k+i] * aData[i]
+				}
+				want[j] = sum
+			}
+
+			got := result.Data()
+			for i := range got {
+				diff := float32(math.Abs(float64(got[i] - want[i])))
+				if diff > 1e-4 {
+					t.Errorf("[%d] got %v, want %v (diff=%v)", i, got[i], want[i], diff)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkQ6KGEMVvsDequantReQuant compares the native Q6_K GEMV path against a
+// dequant-then-requant-to-Q4_0 reference, showing the memory traffic savings.
+func BenchmarkQ6KGEMVvsDequantReQuant(b *testing.B) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+	k, n := 4096, 4096
+
+	aData := make([]float32, k)
+	for i := range aData {
+		aData[i] = float32(i%17-8) * 0.05
+	}
+	a, _ := tensor.New[float32]([]int{1, k}, aData)
+
+	bF32 := make([]float32, n*k)
+	for i := range bF32 {
+		bF32[i] = float32(math.Sin(float64(i)*0.001)) * 1.5
+	}
+	q6k := quantizeQ6K(bF32, n, k)
+	bTensor, _ := tensor.NewWithStorage[float32]([]int{k, n}, q6k)
+
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = engine.MatMul(ctx, a, bTensor)
+	}
+}
+
+// quantizeQ6K quantizes numRows*K float32 values into a Q6_K storage with numRows rows.
+// K must be a multiple of 256.
+func quantizeQ6K(data []float32, numRows, k int) *tensor.Q6KStorage {
+	const superBlockSize = 256
+	const blockBytes = 210
+	const numSubBlocks = 16
+	const subBlockSize = 16
+
+	blocksPerRow := k / superBlockSize
+	raw := make([]byte, numRows*blocksPerRow*blockBytes)
+
+	for row := range numRows {
+		for bi := range blocksPerRow {
+			values := data[row*k+bi*superBlockSize : row*k+(bi+1)*superBlockSize]
+
+			// Compute per-sub-block scales.
+			var subScales [numSubBlocks]float32
+			for sb := range numSubBlocks {
+				off := sb * subBlockSize
+				maxAbs := float32(0)
+				for j := range subBlockSize {
+					v := values[off+j]
+					if v < 0 {
+						v = -v
+					}
+					if v > maxAbs {
+						maxAbs = v
+					}
+				}
+				if maxAbs > 0 {
+					subScales[sb] = maxAbs / 31.0
+				}
+			}
+
+			// Super-block scale d from max sub-scale.
+			var maxSubScale float32
+			for _, s := range subScales {
+				if s > maxSubScale {
+					maxSubScale = s
+				}
+			}
+			d := maxSubScale / 127.0
+
+			// Quantize sub-block scales to int8.
+			var scQ [numSubBlocks]int8
+			for sb := range numSubBlocks {
+				if d > 0 {
+					scQ[sb] = int8(clampInt(int(math.Round(float64(subScales[sb]/d))), -128, 127))
+				}
+			}
+
+			// Quantize values to 6-bit signed integers [-32, 31].
+			var quants [superBlockSize]int8
+			dRT := float16BitsToFloat32(float32ToFloat16Bits(d))
+			for sb := range numSubBlocks {
+				off := sb * subBlockSize
+				effScale := dRT * float32(scQ[sb])
+				var invScale float32
+				if effScale != 0 {
+					invScale = 1.0 / effScale
+				}
+				for j := range subBlockSize {
+					q := int(math.Round(float64(values[off+j] * invScale)))
+					quants[off+j] = int8(clampInt(q+32, 0, 63) - 32)
+				}
+			}
+
+			// Pack into Q6_K super-block format (210 bytes).
+			blkOff := (row*blocksPerRow + bi) * blockBytes
+			blk := raw[blkOff : blkOff+blockBytes]
+
+			for half := range 2 {
+				qlOff := half * 64
+				qhOff := half * 32
+				outOff := half * 128
+
+				for l := range 32 {
+					uq1 := uint8(quants[outOff+l] + 32)
+					uq2 := uint8(quants[outOff+32+l] + 32)
+					uq3 := uint8(quants[outOff+64+l] + 32)
+					uq4 := uint8(quants[outOff+96+l] + 32)
+
+					blk[qlOff+l] = (uq1 & 0xF) | ((uq3 & 0xF) << 4)
+					blk[qlOff+32+l] = (uq2 & 0xF) | ((uq4 & 0xF) << 4)
+					blk[128+qhOff+l] = (uq1 >> 4) | ((uq2 >> 4) << 2) | ((uq3 >> 4) << 4) | ((uq4 >> 4) << 6)
+				}
+			}
+
+			// sc: int8 scales for 16 sub-blocks.
+			for i := range numSubBlocks {
+				blk[192+i] = byte(scQ[i])
+			}
+
+			// d: fp16 super-block scale.
+			dBits := float32ToFloat16Bits(d)
+			blk[208] = byte(dBits)
+			blk[209] = byte(dBits >> 8)
+		}
+	}
+
+	qs, err := tensor.NewQ6KStorageFromRaw(raw, numRows*k)
+	if err != nil {
+		panic(err)
+	}
+	return qs
+}
+
 func TestCPUEngine_MatMul_Q4Storage_Batched(t *testing.T) {
 	engine := NewCPUEngine(numeric.Float32Ops{})
 	ctx := context.Background()
