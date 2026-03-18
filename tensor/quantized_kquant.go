@@ -411,6 +411,13 @@ func (q *Q5KStorage) NumBlocks() int {
 	return (q.len + q5KSuperBlockSize - 1) / q5KSuperBlockSize
 }
 
+// BlockRaw returns the raw bytes for the given super-block index.
+// The caller must not modify the returned slice.
+func (q *Q5KStorage) BlockRaw(blockIdx int) []byte {
+	off := blockIdx * q5KBlockBytes
+	return q.raw[off : off+q5KBlockBytes]
+}
+
 // SetGPUPtr stores a pre-uploaded GPU device pointer for the raw bytes.
 func (q *Q5KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
 	q.gpuPtr = ptr

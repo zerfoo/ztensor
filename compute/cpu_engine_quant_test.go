@@ -311,6 +311,243 @@ func quantizeQ4K(data []float32) *tensor.Q4KStorage {
 	return q4k
 }
 
+// TestQ5KGEMV tests the native Q5_K GEMV CPU path (B-weight, [K,N] virtual shape).
+// It verifies that direct Q5_K dequant+GEMV produces the same result as the
+// reference path (dequantize all weights, then float32 dot-product), confirming
+// no re-quantization to Q4_0 occurs on the CPU path.
+func TestQ5KGEMV(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		k, n int
+	}{
+		{"k256_n4", 256, 4},
+		{"k512_n8", 512, 8},
+		{"k256_n16", 256, 16},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Activation vector: [1, K].
+			aData := make([]float32, tc.k)
+			for i := range aData {
+				aData[i] = float32(i%17-8) * 0.05
+			}
+			a, err := tensor.New[float32]([]int{1, tc.k}, aData)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Weight matrix: [N, K] as float32, then quantized to Q5_K.
+			bF32 := make([]float32, tc.n*tc.k)
+			for i := range bF32 {
+				bF32[i] = float32(math.Sin(float64(i)*0.03)) * 1.5
+			}
+			q5k := quantizeQ5K(bF32, tc.n, tc.k)
+			// Shape [K, N] (virtual transpose — Q5KStorage holds [N,K] internally).
+			b, err := tensor.NewWithStorage[float32]([]int{tc.k, tc.n}, q5k)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := engine.MatMul(ctx, a, b)
+			if err != nil {
+				t.Fatalf("MatMul Q5_K B-weight: %v", err)
+			}
+			if result.Shape()[0] != 1 || result.Shape()[1] != tc.n {
+				t.Errorf("shape = %v, want [1 %d]", result.Shape(), tc.n)
+			}
+
+			// Reference: dequantize Q5_K weights, then manual dot-product.
+			dequantB := q5k.Slice() // [N*K] in [N,K] order
+			want := make([]float32, tc.n)
+			for j := range tc.n {
+				var sum float32
+				for i := range tc.k {
+					sum += dequantB[j*tc.k+i] * aData[i]
+				}
+				want[j] = sum
+			}
+
+			got := result.Data()
+			for i := range got {
+				diff := float32(math.Abs(float64(got[i] - want[i])))
+				if diff > 1e-4 {
+					t.Errorf("[%d] got %v, want %v (diff=%v)", i, got[i], want[i], diff)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkQ5KGEMVvsDequantReQuant compares the native Q5_K GEMV path against a
+// dequant-then-requant-to-Q4_0 reference, showing the memory traffic savings.
+// This is a placeholder; actual DGX benchmark is deferred to GPU hardware.
+func BenchmarkQ5KGEMVvsDequantReQuant(b *testing.B) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+	k, n := 4096, 4096
+
+	aData := make([]float32, k)
+	for i := range aData {
+		aData[i] = float32(i%17-8) * 0.05
+	}
+	a, _ := tensor.New[float32]([]int{1, k}, aData)
+
+	bF32 := make([]float32, n*k)
+	for i := range bF32 {
+		bF32[i] = float32(math.Sin(float64(i)*0.001)) * 1.5
+	}
+	q5k := quantizeQ5K(bF32, n, k)
+	bTensor, _ := tensor.NewWithStorage[float32]([]int{k, n}, q5k)
+
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = engine.MatMul(ctx, a, bTensor)
+	}
+}
+
+// quantizeQ5K quantizes numRows*K float32 values into a Q5_K storage with numRows rows.
+// K must be a multiple of 256. Uses the same algorithm as buildQ5KBlockFromValues in
+// the kernels package test helper.
+func quantizeQ5K(data []float32, numRows, k int) *tensor.Q5KStorage {
+	const superBlockSize = 256
+	const blockBytes = 176
+	const numSubBlocks = 8
+	const subBlockSize = 32
+
+	blocksPerRow := k / superBlockSize
+	raw := make([]byte, numRows*blocksPerRow*blockBytes)
+
+	for row := range numRows {
+		for bi := range blocksPerRow {
+			values := data[row*k+bi*superBlockSize : row*k+(bi+1)*superBlockSize]
+
+			subScales := make([]float32, numSubBlocks)
+			subMins := make([]float32, numSubBlocks)
+			for sb := range numSubBlocks {
+				off := sb * subBlockSize
+				minVal := values[off]
+				maxVal := values[off]
+				for j := 1; j < subBlockSize; j++ {
+					v := values[off+j]
+					if v < minVal {
+						minVal = v
+					}
+					if v > maxVal {
+						maxVal = v
+					}
+				}
+				if minVal > 0 {
+					minVal = 0
+				}
+				subScales[sb] = (maxVal - minVal) / 31.0
+				subMins[sb] = -minVal
+			}
+
+			var maxScale, maxMin float32
+			for sb := range numSubBlocks {
+				if subScales[sb] > maxScale {
+					maxScale = subScales[sb]
+				}
+				if subMins[sb] > maxMin {
+					maxMin = subMins[sb]
+				}
+			}
+
+			d := maxScale / 63.0
+			dmin := maxMin / 63.0
+
+			scalesQ := make([]uint8, numSubBlocks)
+			minsQ := make([]uint8, numSubBlocks)
+			for sb := range numSubBlocks {
+				if d > 0 {
+					scalesQ[sb] = uint8(math.Round(float64(subScales[sb] / d)))
+					if scalesQ[sb] > 63 {
+						scalesQ[sb] = 63
+					}
+				}
+				if dmin > 0 {
+					minsQ[sb] = uint8(math.Round(float64(subMins[sb] / dmin)))
+					if minsQ[sb] > 63 {
+						minsQ[sb] = 63
+					}
+				}
+			}
+
+			blkOff := (row*blocksPerRow + bi) * blockBytes
+			blk := raw[blkOff : blkOff+blockBytes]
+
+			dBits := float32ToFloat16Bits(d)
+			dminBits := float32ToFloat16Bits(dmin)
+			blk[0] = byte(dBits)
+			blk[1] = byte(dBits >> 8)
+			blk[2] = byte(dminBits)
+			blk[3] = byte(dminBits >> 8)
+
+			// Pack 6-bit scales and mins (same as Q4_K).
+			for i := range 4 {
+				blk[4+i] = (scalesQ[i] & 63) | ((scalesQ[4+i] >> 4) << 6)
+				blk[8+i] = (minsQ[i] & 63) | ((minsQ[4+i] >> 4) << 6)
+			}
+			for i := range 4 {
+				blk[12+i] = (scalesQ[4+i] & 0xF) | ((minsQ[4+i] & 0xF) << 4)
+			}
+
+			// Round-trip d/dmin through fp16 for accurate quantization.
+			dRT := float16BitsToFloat32(dBits)
+			dminRT := float16BitsToFloat32(dminBits)
+
+			// Quantize to 5-bit: low 4 bits in ql, high bit in qh.
+			for group := range 4 {
+				sb0 := group * 2
+				sb1 := group*2 + 1
+				sc0 := dRT * float32(scalesQ[sb0])
+				mn0 := dminRT * float32(minsQ[sb0])
+				sc1 := dRT * float32(scalesQ[sb1])
+				mn1 := dminRT * float32(minsQ[sb1])
+
+				var invScale0, invScale1 float32
+				if sc0 > 0 {
+					invScale0 = 1.0 / sc0
+				}
+				if sc1 > 0 {
+					invScale1 = 1.0 / sc1
+				}
+
+				u1 := uint8(1 << (2 * group))
+				u2 := uint8(2 << (2 * group))
+
+				baseOut := group * 64
+				baseQ := group * 32
+				for l := range 32 {
+					v0 := values[baseOut+l]
+					v1 := values[baseOut+l+32]
+					q0 := clampInt(int(math.Round(float64((v0+mn0)*invScale0))), 0, 31)
+					q1 := clampInt(int(math.Round(float64((v1+mn1)*invScale1))), 0, 31)
+
+					blk[16+baseQ+l] = byte(q0&0xF) | (byte(q1&0xF) << 4)
+
+					if q0&16 != 0 {
+						blk[144+l] |= u1
+					}
+					if q1&16 != 0 {
+						blk[144+l] |= u2
+					}
+				}
+			}
+		}
+	}
+
+	qs, err := tensor.NewQ5KStorageFromRaw(raw, numRows*k)
+	if err != nil {
+		panic(err)
+	}
+	return qs
+}
+
 func clampInt(v, lo, hi int) int {
 	if v < lo {
 		return lo
