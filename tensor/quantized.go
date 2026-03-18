@@ -486,3 +486,196 @@ func clampInt(v, lo, hi int) int {
 	}
 	return v
 }
+
+// ---------------------------------------------------------------------------
+// NVFP4 E2M1 format: 4-bit float with block scaling.
+// Each value: 1 sign bit, 2 exponent bits (bias=1), 1 mantissa bit.
+// Block size 16: one float16 scale per 16 values.
+// Two FP4 values packed per byte (little-endian: low nibble = even index).
+// ---------------------------------------------------------------------------
+
+const nvfp4BlockSize = 16
+
+// nvfp4RepresentableValues lists all 8 non-negative E2M1 values (sign excluded).
+// Exponent bias = 1.
+//
+//	exp=0, mant=0 → 0.0 (zero)
+//	exp=0, mant=1 → 0.5 (subnormal: 2^(1-1) * 0.5 = 0.5)
+//	exp=1, mant=0 → 1.0 (2^(1-1) * 1.0)
+//	exp=1, mant=1 → 1.5 (2^(1-1) * 1.5)
+//	exp=2, mant=0 → 2.0 (2^(2-1) * 1.0)
+//	exp=2, mant=1 → 3.0 (2^(2-1) * 1.5)
+//	exp=3, mant=0 → 4.0 (2^(3-1) * 1.0)
+//	exp=3, mant=1 → 6.0 (2^(3-1) * 1.5)
+var nvfp4RepresentableValues = [8]float32{0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0}
+
+// NVFloat4Storage holds NVFP4 E2M1 quantized tensor data on CPU.
+// Two FP4 values are packed per byte (little-endian nibble order).
+// One float16 scale factor per block of 16 values.
+type NVFloat4Storage struct {
+	Data   []byte            // packed 2 FP4 per byte, len = ceil(n/2)
+	Scales []float16.Float16 // one scale per block of 16
+	Shape  []int
+	len    int // number of logical float32 elements
+}
+
+// encodeE2M1 converts a non-negative float32 to a 4-bit E2M1 code (0-7).
+// The sign bit is handled separately by the caller.
+func encodeE2M1(absVal float32) byte {
+	// Find nearest representable value by linear search (only 8 values).
+	best := byte(0)
+	bestDist := absVal // distance to 0.0
+	for i := byte(1); i < 8; i++ {
+		dist := absVal - nvfp4RepresentableValues[i]
+		if dist < 0 {
+			dist = -dist
+		}
+		if dist < bestDist {
+			bestDist = dist
+			best = i
+		}
+	}
+	return best
+}
+
+// decodeE2M1 converts a 4-bit E2M1 code (unsigned magnitude, 0-7) to float32.
+func decodeE2M1(code byte) float32 {
+	return nvfp4RepresentableValues[code&0x07]
+}
+
+// Quantize encodes float32 data into NVFP4 E2M1 format with block scaling.
+func (s *NVFloat4Storage) Quantize(data []float32) error {
+	n := len(data)
+	if n == 0 {
+		s.Data = nil
+		s.Scales = nil
+		s.len = 0
+		return nil
+	}
+
+	nBlocks := (n + nvfp4BlockSize - 1) / nvfp4BlockSize
+	s.Scales = make([]float16.Float16, nBlocks)
+	s.Data = make([]byte, (n+1)/2)
+	s.len = n
+
+	for bi := range nBlocks {
+		offset := bi * nvfp4BlockSize
+
+		// Find absmax for this block.
+		var absMax float32
+		for j := range nvfp4BlockSize {
+			idx := offset + j
+			if idx >= n {
+				break
+			}
+			v := data[idx]
+			if v < 0 {
+				v = -v
+			}
+			if v > absMax {
+				absMax = v
+			}
+		}
+
+		// Scale maps [0, absMax] to [0, 6.0] (max E2M1 magnitude).
+		var scale float32
+		if absMax > 0 {
+			scale = absMax / 6.0
+		}
+		s.Scales[bi] = float16.FromFloat32(scale)
+
+		var invScale float32
+		if scale > 0 {
+			invScale = 1.0 / scale
+		}
+
+		// Quantize each value to a 4-bit E2M1 code with sign bit.
+		for j := range nvfp4BlockSize {
+			idx := offset + j
+			if idx >= n {
+				break
+			}
+			v := data[idx]
+			var sign byte
+			if v < 0 {
+				sign = 1
+				v = -v
+			}
+			code := encodeE2M1(v * invScale)
+			fp4 := (sign << 3) | code // bit 3 = sign, bits 2:0 = magnitude
+
+			// Pack into byte: even index → low nibble, odd index → high nibble.
+			byteIdx := idx / 2
+			if idx%2 == 0 {
+				s.Data[byteIdx] = (s.Data[byteIdx] & 0xF0) | fp4
+			} else {
+				s.Data[byteIdx] = (s.Data[byteIdx] & 0x0F) | (fp4 << 4)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Dequantize unpacks NVFP4 E2M1 data to float32.
+func (s *NVFloat4Storage) Dequantize() []float32 {
+	if s.len == 0 {
+		return nil
+	}
+	dst := make([]float32, s.len)
+	for bi, scaleFP16 := range s.Scales {
+		scale := scaleFP16.ToFloat32()
+		offset := bi * nvfp4BlockSize
+		for j := range nvfp4BlockSize {
+			idx := offset + j
+			if idx >= s.len {
+				break
+			}
+			byteIdx := idx / 2
+			var fp4 byte
+			if idx%2 == 0 {
+				fp4 = s.Data[byteIdx] & 0x0F
+			} else {
+				fp4 = s.Data[byteIdx] >> 4
+			}
+			sign := fp4 >> 3
+			mag := decodeE2M1(fp4 & 0x07)
+			val := mag * scale
+			if sign != 0 {
+				val = -val
+			}
+			dst[idx] = val
+		}
+	}
+	return dst
+}
+
+// Len returns the number of logical float32 elements.
+func (s *NVFloat4Storage) Len() int { return s.len }
+
+// Slice returns a dequantized float32 view of the data.
+func (s *NVFloat4Storage) Slice() []float32 { return s.Dequantize() }
+
+// Set re-quantizes from float32 data.
+func (s *NVFloat4Storage) Set(data []float32) { _ = s.Quantize(data) }
+
+// DeviceType returns device.CPU.
+func (s *NVFloat4Storage) DeviceType() device.Type { return device.CPU }
+
+// ByteSize returns the total byte size of packed data + scales.
+func (s *NVFloat4Storage) ByteSize() int {
+	return len(s.Data) + len(s.Scales)*2
+}
+
+// NumBlocks returns the number of NVFP4 blocks.
+func (s *NVFloat4Storage) NumBlocks() int { return len(s.Scales) }
+
+// NewNVFloat4Storage creates an NVFloat4Storage by quantizing float32 data.
+func NewNVFloat4Storage(src []float32, shape []int) *NVFloat4Storage {
+	s := &NVFloat4Storage{Shape: shape}
+	_ = s.Quantize(src)
+	return s
+}
+
+// Ensure NVFloat4Storage implements Storage[float32].
+var _ Storage[float32] = (*NVFloat4Storage)(nil)
