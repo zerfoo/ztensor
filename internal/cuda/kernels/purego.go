@@ -51,8 +51,10 @@ type KernelLib struct {
 	launchGemmQ4F32 uintptr
 
 	// gemv_q4k (fused dequant+GEMV for Q4_K_M)
-	launchGemvQ4KF32     uintptr
-	launchGemvQ4KDp4aF32 uintptr
+	launchGemvQ4KF32      uintptr
+	launchGemvQ4KDp4aF32  uintptr
+	launchGemvQ4KSm121F32 uintptr // sm_121 optimized path (Blackwell GB10)
+	checkGemvQ4KSm121     uintptr // capability probe
 
 	// gemv_q5k (fused dequant+GEMV for Q5_K_M)
 	launchGemvQ5KF32 uintptr
@@ -216,6 +218,9 @@ func openKernelLib() (*KernelLib, error) {
 			// gemv_q4k (fused dequant+GEMV for Q4_K_M)
 			{"gemv_q4k_f32", &k.launchGemvQ4KF32},
 			{"gemv_q4k_dp4a_f32", &k.launchGemvQ4KDp4aF32},
+			// gemv_q4k sm_121 optimized path (Blackwell GB10 / DGX Spark)
+			{"gemv_q4k_sm121_f32", &k.launchGemvQ4KSm121F32},
+			{"gemv_q4k_check_sm121", &k.checkGemvQ4KSm121},
 			// gemv_q5k (fused dequant+GEMV for Q5_K_M)
 			{"gemv_q5k_f32", &k.launchGemvQ5KF32},
 			// gemv_q6k (fused dequant+GEMV for Q6_K)
@@ -284,6 +289,8 @@ func openKernelLib() (*KernelLib, error) {
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
 			"gemv_q4k_dp4a_f32":              true,
+			"gemv_q4k_sm121_f32":             true, // sm_121 optimized; requires Blackwell
+			"gemv_q4k_check_sm121":           true, // capability probe; may be absent on older builds
 			"gemv_q5k_f32":                    true,
 			"gemv_q6k_f32":                    true,
 			"gemv_q5_0_f32":                   true,
