@@ -113,6 +113,9 @@ type KernelLib struct {
 	launchFP8Mul               uintptr
 	launchFP8RMSNorm           uintptr
 
+	// FP8 GEMM (cublasLt, sm_89+)
+	launchFP8Gemm uintptr
+
 	// counter
 	launchIncrementCounter uintptr
 	launchResetCounter     uintptr
@@ -245,6 +248,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_fp8_add", &k.launchFP8Add},
 		{"launch_fp8_mul", &k.launchFP8Mul},
 		{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
+		// FP8 GEMM (cublasLt, sm_89+)
+		{"launch_fp8_gemm", &k.launchFP8Gemm},
 		// counter
 		{"launch_increment_counter", &k.launchIncrementCounter},
 		{"launch_reset_counter", &k.launchResetCounter},
@@ -269,6 +274,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_fp8_add":                  true,
 			"launch_fp8_mul":                  true,
 			"launch_fp8_rmsnorm":              true,
+			"launch_fp8_gemm":                true,
 			"launch_increment_counter":        true,
 			"launch_reset_counter":            true,
 			"launch_offset_memcpy":            true,
