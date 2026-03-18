@@ -12,6 +12,7 @@ func TestQuantRegistryInitRegistrations(t *testing.T) {
 		"AWQ_4",
 		"FP8_E4M3", "FP8_E5M2",
 		"Q4_0", "Q4_K", "Q5_0", "Q5_K", "Q6_K", "Q8_0",
+		"W8A8",
 	}
 	got := ListQuantTypes()
 	if len(got) != len(want) {
@@ -325,6 +326,7 @@ func TestDequantizerBlockSizeAndBits(t *testing.T) {
 		{"Q5_0", 32, 5},
 		{"FP8_E4M3", 1, 8},
 		{"FP8_E5M2", 1, 8},
+		{"W8A8", 32, 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

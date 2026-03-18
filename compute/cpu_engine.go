@@ -2001,6 +2001,25 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 			}
 		}
 		return true
+	case *tensor.W8A8Storage:
+		bF := any(b.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			xblas.GemmW8A8F32(m, n, k, qs, bF, rF)
+		} else {
+			af32 := qs.Slice()
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				bOff := 0
+				if len(aShape) == len(bShape) {
+					bOff = i * k * n
+				}
+				batchA := tensor.QuantizeW8A8(af32[aOff : aOff+m*k])
+				xblas.GemmW8A8F32(m, n, k, batchA, bF[bOff:bOff+k*n], rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	default:
 		// Not handled on A; fall through to check B.
 	}
@@ -2081,6 +2100,20 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 				aOff := i * m * k
 				cOff := i * m * n
 				xblas.GemmF32Q6KNT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
+			}
+		}
+		return true
+	case *tensor.W8A8Storage:
+		// W8A8 on B: dequant+GEMV with FP32 accumulation.
+		aF := any(a.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			xblas.GemmF32W8A8NT(m, n, k, aF, qsB, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.GemmF32W8A8NT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
 			}
 		}
 		return true

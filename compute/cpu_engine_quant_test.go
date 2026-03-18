@@ -839,3 +839,161 @@ func TestCPUEngine_MatMul_Q4Storage_Batched(t *testing.T) {
 		t.Errorf("output shape = %v, want [%d %d %d]", shape, batch, m, n)
 	}
 }
+
+// TestW8A8 tests the W8A8 mixed-precision dispatch path through the CPUEngine.
+func TestW8A8(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+
+	t.Run("A-side", func(t *testing.T) {
+		m, k, n := 2, 32, 3
+
+		aF32 := make([]float32, m*k)
+		for i := range aF32 {
+			aF32[i] = float32(i%7-3) * 0.1
+		}
+		bData := make([]float32, k*n)
+		for i := range bData {
+			bData[i] = float32(i%5-2) * 0.1
+		}
+		b, err := tensor.New[float32]([]int{k, n}, bData)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		w8a8 := tensor.QuantizeW8A8(aF32)
+		a, err := tensor.NewWithStorage([]int{m, k}, w8a8)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := engine.MatMul(ctx, a, b)
+		if err != nil {
+			t.Fatalf("MatMul with W8A8 A-side failed: %v", err)
+		}
+
+		if result.Shape()[0] != m || result.Shape()[1] != n {
+			t.Errorf("shape = %v, want [%d %d]", result.Shape(), m, n)
+		}
+
+		// Reference: dequantize W8A8 then float32 GEMM.
+		refA, _ := tensor.New[float32]([]int{m, k}, w8a8.Slice())
+		refResult, err := engine.MatMul(ctx, refA, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got := result.Data()
+		want := refResult.Data()
+		for i := range got {
+			diff := float32(math.Abs(float64(got[i] - want[i])))
+			if diff > 0.02 {
+				t.Errorf("index %d: got %v, want %v (diff=%v)", i, got[i], want[i], diff)
+			}
+		}
+	})
+
+	t.Run("B-side GEMV", func(t *testing.T) {
+		k, n := 32, 4
+
+		aData := make([]float32, k)
+		for i := range aData {
+			aData[i] = float32(i%17-8) * 0.05
+		}
+		a, err := tensor.New[float32]([]int{1, k}, aData)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		bF32 := make([]float32, n*k)
+		for i := range bF32 {
+			bF32[i] = float32(math.Sin(float64(i)*0.03)) * 1.5
+		}
+		w8a8B := tensor.QuantizeW8A8(bF32)
+		b, err := tensor.NewWithStorage([]int{k, n}, w8a8B)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := engine.MatMul(ctx, a, b)
+		if err != nil {
+			t.Fatalf("MatMul with W8A8 B-weight failed: %v", err)
+		}
+
+		if result.Shape()[0] != 1 || result.Shape()[1] != n {
+			t.Errorf("shape = %v, want [1 %d]", result.Shape(), n)
+		}
+
+		// Reference: dequantize W8A8, then manual dot-product.
+		dequantB := w8a8B.Slice()
+		want := make([]float32, n)
+		for j := range n {
+			var sum float32
+			for i := range k {
+				sum += dequantB[j*k+i] * aData[i]
+			}
+			want[j] = sum
+		}
+
+		got := result.Data()
+		for i := range got {
+			diff := float32(math.Abs(float64(got[i] - want[i])))
+			if diff > 0.5 {
+				t.Errorf("index %d: got %v, want %v (diff=%v)", i, got[i], want[i], diff)
+			}
+		}
+	})
+
+	t.Run("B-side GEMM", func(t *testing.T) {
+		m, k, n := 2, 64, 3
+
+		aData := make([]float32, m*k)
+		for i := range aData {
+			aData[i] = float32(i%11-5) * 0.1
+		}
+		a, err := tensor.New[float32]([]int{m, k}, aData)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		bF32 := make([]float32, n*k)
+		for i := range bF32 {
+			bF32[i] = float32(i%7-3) * 0.2
+		}
+		w8a8B := tensor.QuantizeW8A8(bF32)
+		b, err := tensor.NewWithStorage([]int{k, n}, w8a8B)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := engine.MatMul(ctx, a, b)
+		if err != nil {
+			t.Fatalf("MatMul with W8A8 B-weight GEMM failed: %v", err)
+		}
+
+		if result.Shape()[0] != m || result.Shape()[1] != n {
+			t.Errorf("shape = %v, want [%d %d]", result.Shape(), m, n)
+		}
+
+		// Reference: dequantize W8A8, then manual matmul.
+		dequantB := w8a8B.Slice()
+		want := make([]float32, m*n)
+		for i := range m {
+			for j := range n {
+				var sum float32
+				for p := range k {
+					sum += aData[i*k+p] * dequantB[j*k+p]
+				}
+				want[i*n+j] = sum
+			}
+		}
+
+		got := result.Data()
+		for i := range got {
+			diff := float32(math.Abs(float64(got[i] - want[i])))
+			if diff > 0.5 {
+				t.Errorf("index %d: got %v, want %v (diff=%v)", i, got[i], want[i], diff)
+			}
+		}
+	})
+}
