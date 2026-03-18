@@ -260,6 +260,14 @@ func (k *OpenCLKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ i
 	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) FP8Gemm(_, _, _ unsafe.Pointer, _, _, _ int, _, _ float32, _ Stream) error {
+	return fmt.Errorf("FP8Gemm: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) IsFP8GemmSupported() bool {
+	return false
+}
+
 func (k *OpenCLKernels) IncrementCounter(_ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("IncrementCounter: not implemented for OpenCL")
 }

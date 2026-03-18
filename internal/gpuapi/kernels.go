@@ -166,6 +166,15 @@ type KernelRunner interface {
 	// output[i] = fp8_to_fp16(input[i]) * scale.
 	DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, stream Stream) error
 
+	// FP8Gemm performs FP8 E4M3 GEMM using cublasLt.
+	// A: [M, K] FP8 E4M3, B: [K, N] FP8 E4M3, C: [M, N] FP16 output.
+	// scaleA and scaleB are per-tensor dequantization scales.
+	// Returns false for supported if the GPU does not support FP8 GEMM (sm_89+).
+	FP8Gemm(a, b, c unsafe.Pointer, m, k, n int, scaleA, scaleB float32, stream Stream) error
+
+	// IsFP8GemmSupported returns true if the GPU supports native FP8 GEMM (sm_89+).
+	IsFP8GemmSupported() bool
+
 	// GPU-resident counter operations for CUDA graph position tracking.
 	IncrementCounter(counter unsafe.Pointer, delta int, stream Stream) error
 	ResetCounter(counter unsafe.Pointer, value int, stream Stream) error

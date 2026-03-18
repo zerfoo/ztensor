@@ -50,6 +50,144 @@ func (p *fakeMemPool) Stats() (int, int)       { return len(p.live), 0 }
 
 var _ gpuapi.MemPool = (*fakeMemPool)(nil)
 
+// TestFP8MatMul tests the both-FP8 dispatch path where both A and B have
+// FP8E4M3Storage. Verifies output against FP32 CPU reference with cosine
+// similarity and that existing FP32/FP16 paths are not regressed.
+func TestFP8MatMul(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		m, k, n int
+	}{
+		{"2x2", 2, 2, 2},
+		{"2x3x2", 2, 3, 2},
+		{"4x4", 4, 4, 4},
+		{"1x4x1", 1, 4, 1},
+		{"8x16x8", 8, 16, 8},
+		{"16x32x16", 16, 32, 16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aData := make([]float32, tt.m*tt.k)
+			bData := make([]float32, tt.k*tt.n)
+			for i := range aData {
+				aData[i] = float32(i%7+1) * 0.1
+			}
+			for i := range bData {
+				bData[i] = float32(i%5+1) * 0.1
+			}
+
+			// Compute expected result using FP32 CPU engine.
+			cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+			cpuA, _ := tensor.New[float32]([]int{tt.m, tt.k}, aData)
+			cpuB, _ := tensor.New[float32]([]int{tt.k, tt.n}, bData)
+			expected, err := cpuEng.MatMul(ctx, cpuA, cpuB)
+			if err != nil {
+				t.Fatalf("CPU MatMul: %v", err)
+			}
+
+			// Create both A and B with FP8E4M3Storage.
+			fp8A := tensor.NewFP8E4M3Storage(aData)
+			a, _ := tensor.NewWithStorage[float32]([]int{tt.m, tt.k}, fp8A)
+			fp8B := tensor.NewFP8E4M3Storage(bData)
+			b, _ := tensor.NewWithStorage[float32]([]int{tt.k, tt.n}, fp8B)
+
+			// Upload weights to GPU.
+			if err := eng.UploadWeights([]*tensor.TensorNumeric[float32]{a, b}); err != nil {
+				t.Fatalf("UploadWeights: %v", err)
+			}
+
+			got, err := eng.MatMul(ctx, a, b)
+			if err != nil {
+				t.Fatalf("MatMul FP8 both: %v", err)
+			}
+
+			gotData := got.Data()
+			expData := expected.Data()
+			if len(gotData) != len(expData) {
+				t.Fatalf("output size mismatch: got %d, want %d", len(gotData), len(expData))
+			}
+
+			// Compute cosine similarity.
+			var dotAB, dotAA, dotBB float64
+			for i := range gotData {
+				g := float64(gotData[i])
+				e := float64(expData[i])
+				dotAB += g * e
+				dotAA += g * g
+				dotBB += e * e
+			}
+			cosSim := float64(1.0)
+			if dotAA > 0 && dotBB > 0 {
+				cosSim = dotAB / (math.Sqrt(dotAA) * math.Sqrt(dotBB))
+			}
+
+			if cosSim < 0.99 {
+				t.Errorf("cosine similarity %.6f < 0.99 threshold", cosSim)
+				t.Logf("expected: %v", expData)
+				t.Logf("got:      %v", gotData)
+			}
+
+			// Also check max relative error for diagnostic purposes.
+			var maxRelErr float64
+			for i := range gotData {
+				if expData[i] == 0 {
+					continue
+				}
+				rel := math.Abs(float64(gotData[i]-expData[i])) / math.Abs(float64(expData[i]))
+				if rel > maxRelErr {
+					maxRelErr = rel
+				}
+			}
+
+			// FP8 quantization is lossy; allow up to 10% relative error
+			// (both A and B quantized compounds the loss).
+			if maxRelErr > 0.10 {
+				t.Errorf("max relative error %.4f exceeds 0.10 threshold", maxRelErr)
+			}
+		})
+	}
+
+	// Verify FP32 path is not regressed.
+	t.Run("fp32_no_regression", func(t *testing.T) {
+		aData := []float32{1, 2, 3, 4}
+		bData := []float32{5, 6, 7, 8}
+		a, _ := tensor.New[float32]([]int{2, 2}, aData)
+		b, _ := tensor.New[float32]([]int{2, 2}, bData)
+
+		cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+		expected, err := cpuEng.MatMul(ctx, a, b)
+		if err != nil {
+			t.Fatalf("CPU MatMul: %v", err)
+		}
+
+		got, err := eng.MatMul(ctx, a, b)
+		if err != nil {
+			t.Fatalf("GPU MatMul FP32: %v", err)
+		}
+
+		gotData := got.Data()
+		expData := expected.Data()
+		for i := range gotData {
+			if math.Abs(float64(gotData[i]-expData[i])) > 1e-4 {
+				t.Errorf("[%d] got %.6f, want %.6f", i, gotData[i], expData[i])
+			}
+		}
+	})
+}
+
 func TestGPUEngine_MatMulFP8BWeight(t *testing.T) {
 	if !cuda.Available() {
 		t.Skip("CUDA not available")
