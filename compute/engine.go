@@ -67,6 +67,38 @@ type FP16ToF32Converter interface {
 	ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)
 }
 
+// PagedGQAer is an optional interface for engines that support paged
+// grouped-query attention via block-table indirection. When the engine
+// supports paged attention, callers can pass block pointers and indices
+// instead of contiguous KV tensors.
+//
+// Q:            [batch*numQHeads, headDim]
+// blockPtrsK:   device array of float* pointers to K blocks
+// blockPtrsV:   device array of float* pointers to V blocks
+// blockIndices: device array [batch * maxNumBlocks] logical→physical mapping
+// seqLen:       valid KV positions
+// blockSize:    tokens per block
+// headDim:      dimension per head
+// numQHeads:    query heads per batch element
+// numKVHeads:   KV heads per batch element
+// batch:        number of sequences
+//
+// Returns output tensor [batch*numQHeads, headDim].
+type PagedGQAer interface {
+	PagedGQA(
+		Q *tensor.TensorNumeric[float32],
+		blockPtrsK, blockPtrsV unsafe.Pointer,
+		blockIndices unsafe.Pointer,
+		seqLen, blockSize, headDim int,
+		numQHeads, numKVHeads int,
+		batch int,
+	) (*tensor.TensorNumeric[float32], error)
+
+	// IsPagedGQASupported returns true when the paged attention kernel is
+	// available on this engine.
+	IsPagedGQASupported() bool
+}
+
 // Engine defines the interface for a computation engine (e.g., CPU, GPU).
 // All tensor operations should be routed through an Engine implementation to ensure
 // hardware interoperability and optimized performance.

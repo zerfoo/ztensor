@@ -94,3 +94,13 @@ func (bt *BlockTable[T]) BlockCount() int {
 func (bt *BlockTable[T]) TokenCount() int {
 	return bt.tokenCount
 }
+
+// Blocks returns the ordered slice of physical blocks held by this table.
+func (bt *BlockTable[T]) Blocks() []*Block[T] {
+	return bt.blocks
+}
+
+// Pool returns the BlockPool backing this table.
+func (bt *BlockTable[T]) Pool() *BlockPool[T] {
+	return bt.pool
+}

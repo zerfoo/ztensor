@@ -107,6 +107,16 @@ func (p *BlockPool[T]) BlockSize() int {
 	return p.blockSize
 }
 
+// NumLayers returns the number of layers per block.
+func (p *BlockPool[T]) NumLayers() int {
+	return p.numLayers
+}
+
+// HeadDim returns the head dimension per position per layer.
+func (p *BlockPool[T]) HeadDim() int {
+	return p.headDim
+}
+
 // FragmentationRatio returns the fraction of allocated blocks that are
 // partially used (0 < Used < blockSize). A ratio of 0.0 means all allocated
 // blocks are either empty or full; 1.0 means every allocated block is
