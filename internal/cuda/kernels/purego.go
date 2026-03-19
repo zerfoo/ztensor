@@ -96,6 +96,10 @@ type KernelLib struct {
 	launchFlashAttentionF32       uintptr
 	launchFlashAttentionDecodeF32 uintptr
 
+	// flash_attention2
+	launchFlashAttention2F32       uintptr
+	launchFlashAttention2DecodeF32 uintptr
+
 	// FP16 elementwise
 	launchAddFP16, launchSubFP16, launchMulFP16, launchDivFP16 uintptr
 
@@ -143,6 +147,10 @@ type KernelLib struct {
 
 	// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
 	launchFP4GemvF16 uintptr
+
+	// gemv_warp (warp-specialized GEMV for decode phase)
+	launchGemvWarpF32 uintptr
+	launchGemvWarpF16 uintptr
 }
 
 var (
@@ -248,6 +256,9 @@ func openKernelLib() (*KernelLib, error) {
 		// flash_attention
 		{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
 		{"flash_attention_decode_f32", &k.launchFlashAttentionDecodeF32},
+		// flash_attention2
+		{"flash_attention2_forward_f32", &k.launchFlashAttention2F32},
+		{"flash_attention2_decode_f32", &k.launchFlashAttention2DecodeF32},
 		// FP16 elementwise
 		{"launch_add_fp16", &k.launchAddFP16},
 		{"launch_sub_fp16", &k.launchSubFP16},
@@ -285,6 +296,9 @@ func openKernelLib() (*KernelLib, error) {
 		{"ragged_attention_forward_f32", &k.launchRaggedAttentionF32},
 		// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
 		{"fp4_gemv_f16", &k.launchFP4GemvF16},
+		// gemv_warp (warp-specialized GEMV for decode phase)
+		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
+		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -295,6 +309,8 @@ func openKernelLib() (*KernelLib, error) {
 			"gemv_q6k_f32":                    true,
 			"gemv_q5_0_f32":                   true,
 			"flash_attention_decode_f32":      true,
+			"flash_attention2_forward_f32":   true,
+			"flash_attention2_decode_f32":    true,
 			"launch_f32_to_fp16":              true,
 			"launch_fp16_to_f32":              true,
 			"launch_dequant_fp8e4m3_to_fp16":  true,
@@ -312,6 +328,8 @@ func openKernelLib() (*KernelLib, error) {
 			"paged_attention_forward_f32":     true,
 			"ragged_attention_forward_f32":    true,
 			"fp4_gemv_f16":                    true,
+			"launch_gemv_warp_f32":             true,
+			"launch_gemv_warp_f16":             true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
