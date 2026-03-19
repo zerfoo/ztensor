@@ -30,6 +30,8 @@ const (
 	OpenCL
 	// Metal represents an Apple GPU device accessed via Metal.
 	Metal
+	// FPGA represents a Field-Programmable Gate Array accelerator device.
+	FPGA
 )
 
 // --- Device Registry ---
