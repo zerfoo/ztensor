@@ -32,6 +32,8 @@ const (
 	Metal
 	// FPGA represents a Field-Programmable Gate Array accelerator device.
 	FPGA
+	// SYCL represents a device accessed via the SYCL runtime (Intel oneAPI).
+	SYCL
 )
 
 // --- Device Registry ---
