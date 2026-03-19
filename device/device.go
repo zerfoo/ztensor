@@ -28,6 +28,8 @@ const (
 	ROCm
 	// OpenCL represents a GPU device accessed via OpenCL.
 	OpenCL
+	// Metal represents an Apple GPU device accessed via Metal.
+	Metal
 )
 
 // --- Device Registry ---
