@@ -3,6 +3,8 @@ package gpuapi
 import (
 	"fmt"
 	"unsafe"
+
+	"github.com/zerfoo/ztensor/internal/sycl"
 )
 
 // SYCLKernels implements the KernelRunner interface for SYCL devices.
@@ -203,8 +205,11 @@ func (k *SYCLKernels) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ floa
 	return fmt.Errorf("FusedQKNormRoPEF32: not implemented for SYCL")
 }
 
-func (k *SYCLKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
-	return fmt.Errorf("ScaledSoftmaxF32: not implemented for SYCL")
+func (k *SYCLKernels) ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
+	if !sycl.ScaledSoftmaxF32Available() {
+		return fmt.Errorf("ScaledSoftmaxF32: SYCL kernel not available")
+	}
+	return sycl.ScaledSoftmaxF32(input, output, outer, inner, axisSize, scale, streamPtr(s))
 }
 
 func (k *SYCLKernels) AddFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
@@ -271,8 +276,11 @@ func (k *SYCLKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream) 
 	return fmt.Errorf("RoPESelect: not implemented for SYCL")
 }
 
-func (k *SYCLKernels) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
-	return fmt.Errorf("SgemvM1: not implemented for SYCL")
+func (k *SYCLKernels) SgemvM1(y, A, x unsafe.Pointer, M, N int, s Stream) error {
+	if !sycl.SgemvM1Available() {
+		return fmt.Errorf("SgemvM1: SYCL kernel not available")
+	}
+	return sycl.SgemvM1(y, A, x, M, N, streamPtr(s))
 }
 
 // Compile-time interface assertion.
