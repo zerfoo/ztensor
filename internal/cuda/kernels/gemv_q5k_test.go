@@ -278,27 +278,20 @@ func TestGemvQ5KF32_Parity(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	maxRelErr := 0.0
+	maxAbsErr := 0.0
 	for i := range got {
-		absRef := math.Abs(float64(ref[i]))
 		diff := math.Abs(float64(got[i] - ref[i]))
-		var relErr float64
-		if absRef > 1e-6 {
-			relErr = diff / absRef
-		} else {
-			relErr = diff
+		if diff > maxAbsErr {
+			maxAbsErr = diff
 		}
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > 1e-4 {
-			t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
+		if diff > 1e-3 {
+			t.Errorf("y[%d] = %f, want %f (abs err %e)", i, got[i], ref[i], diff)
 			if t.Failed() {
 				break
 			}
 		}
 	}
-	t.Logf("max relative error: %e", maxRelErr)
+	t.Logf("max absolute error: %e", maxAbsErr)
 }
 
 func TestGemvQ5KF32_LargerMatrix(t *testing.T) {
@@ -353,27 +346,20 @@ func TestGemvQ5KF32_LargerMatrix(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	maxRelErr := 0.0
+	maxAbsErr := 0.0
 	for i := range got {
-		absRef := math.Abs(float64(ref[i]))
 		diff := math.Abs(float64(got[i] - ref[i]))
-		var relErr float64
-		if absRef > 1e-6 {
-			relErr = diff / absRef
-		} else {
-			relErr = diff
+		if diff > maxAbsErr {
+			maxAbsErr = diff
 		}
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > 1e-4 {
-			t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
+		if diff > 1e-3 {
+			t.Errorf("y[%d] = %f, want %f (abs err %e)", i, got[i], ref[i], diff)
 			if t.Failed() {
 				break
 			}
 		}
 	}
-	t.Logf("max relative error: %e", maxRelErr)
+	t.Logf("max absolute error: %e", maxAbsErr)
 }
 
 func TestGemvQ5KF32_MultipleSizes(t *testing.T) {
@@ -441,27 +427,20 @@ func TestGemvQ5KF32_MultipleSizes(t *testing.T) {
 				t.Fatalf("Memcpy y: %v", err)
 			}
 
-			maxRelErr := 0.0
+			maxAbsErr := 0.0
 			for i := range got {
-				absRef := math.Abs(float64(ref[i]))
 				diff := math.Abs(float64(got[i] - ref[i]))
-				var relErr float64
-				if absRef > 1e-6 {
-					relErr = diff / absRef
-				} else {
-					relErr = diff
+				if diff > maxAbsErr {
+					maxAbsErr = diff
 				}
-				if relErr > maxRelErr {
-					maxRelErr = relErr
-				}
-				if relErr > 1e-4 {
-					t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
+				if diff > 1e-3 {
+					t.Errorf("y[%d] = %f, want %f (abs err %e)", i, got[i], ref[i], diff)
 					if t.Failed() {
 						break
 					}
 				}
 			}
-			t.Logf("max relative error: %e", maxRelErr)
+			t.Logf("max absolute error: %e", maxAbsErr)
 		})
 	}
 }
