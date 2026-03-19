@@ -147,6 +147,10 @@ type KernelLib struct {
 
 	// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
 	launchFP4GemvF16 uintptr
+
+	// gemv_warp (warp-specialized GEMV for decode phase)
+	launchGemvWarpF32 uintptr
+	launchGemvWarpF16 uintptr
 }
 
 var (
@@ -292,6 +296,9 @@ func openKernelLib() (*KernelLib, error) {
 		{"ragged_attention_forward_f32", &k.launchRaggedAttentionF32},
 		// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
 		{"fp4_gemv_f16", &k.launchFP4GemvF16},
+		// gemv_warp (warp-specialized GEMV for decode phase)
+		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
+		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -321,6 +328,8 @@ func openKernelLib() (*KernelLib, error) {
 			"paged_attention_forward_f32":     true,
 			"ragged_attention_forward_f32":    true,
 			"fp4_gemv_f16":                    true,
+			"launch_gemv_warp_f32":             true,
+			"launch_gemv_warp_f16":             true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
