@@ -110,6 +110,11 @@ func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n, dataOffset i
 }
 
 func (k *CUDAKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, s Stream) error {
+	// Prefer the sm_121 (Blackwell) optimized kernel when available.
+	// This avoids the dp4a fallback path and dispatches Q4_K GEMV directly.
+	if kernels.IsQ4KSm121Supported() {
+		return kernels.GemvQ4KSm121F32(wQ4K, x, y, M, K, streamPtr(s))
+	}
 	if kernels.GemvQ4KDp4aF32Available() {
 		return kernels.GemvQ4KDp4aF32(wQ4K, x, y, M, K, streamPtr(s))
 	}
