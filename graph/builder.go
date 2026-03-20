@@ -2,6 +2,8 @@
 package graph
 
 import (
+	"sort"
+
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -58,11 +60,14 @@ func (b *Builder[T]) Build(outputNode Node[T]) (*Graph[T], error) {
 }
 
 // Parameters returns all the trainable parameters in the graph.
+// The returned slice is sorted by parameter name for deterministic ordering.
 func (b *Builder[T]) Parameters() []*Parameter[T] {
 	var params []*Parameter[T]
 	for _, node := range b.nodes {
 		params = append(params, node.Parameters()...)
 	}
-
+	sort.Slice(params, func(i, j int) bool {
+		return params[i].Name < params[j].Name
+	})
 	return params
 }
