@@ -23,6 +23,7 @@ type Collector interface {
 // CounterMetric is a monotonically increasing counter.
 type CounterMetric interface {
 	Inc()
+	Add(n int64)
 }
 
 // GaugeMetric is a metric that can be set to any value.
@@ -164,6 +165,10 @@ func (c *inMemCounter) Inc() {
 	c.val.Add(1)
 }
 
+func (c *inMemCounter) Add(n int64) {
+	c.val.Add(n)
+}
+
 type inMemGauge struct {
 	bits atomic.Uint64
 }
@@ -228,6 +233,9 @@ type nopMetric struct{}
 
 // Inc is a no-op.
 func (nopMetric) Inc() {}
+
+// Add is a no-op.
+func (nopMetric) Add(_ int64) {}
 
 // Set is a no-op.
 func (nopMetric) Set(_ float64) {}
