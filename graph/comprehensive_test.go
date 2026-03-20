@@ -406,3 +406,119 @@ func TestParameter_AddGradient_Uint32(t *testing.T) {
 func TestParameter_AddGradient_Uint64(t *testing.T) {
 	testAddGradientType(t, "uint64", []uint64{1, 2}, []uint64{3, 4})
 }
+
+// ---------- Parameter ordering ----------
+
+func TestParameterOrdering(t *testing.T) {
+	engine := compute.NewCPUEngine[int](numeric.IntOps{})
+	b := NewBuilder[int](engine)
+
+	in := b.Input([]int{2})
+
+	// Create parameters with intentionally unsorted names.
+	names := []string{"zebra", "alpha", "middle", "beta"}
+	wantOrder := []string{"alpha", "beta", "middle", "zebra"}
+
+	var lastNode Node[int] = in
+	for _, name := range names {
+		v, _ := tensor.New[int]([]int{2}, []int{1, 2})
+		n := &mockNode{
+			name:   name,
+			params: []*Parameter[int]{{Name: name, Value: v}},
+		}
+		b.AddNode(n, lastNode)
+		lastNode = n
+	}
+
+	g, err := b.Build(lastNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Call Parameters() multiple times and verify deterministic sorted order.
+	for iter := 0; iter < 5; iter++ {
+		params := g.Parameters()
+		if len(params) != len(wantOrder) {
+			t.Fatalf("iter %d: got %d params, want %d", iter, len(params), len(wantOrder))
+		}
+		for i, p := range params {
+			if p.Name != wantOrder[i] {
+				t.Errorf("iter %d: params[%d].Name = %q, want %q", iter, i, p.Name, wantOrder[i])
+			}
+		}
+	}
+}
+
+// ---------- LoadParameters ----------
+
+func TestLoadParametersByName(t *testing.T) {
+	engine := compute.NewCPUEngine[int](numeric.IntOps{})
+	b := NewBuilder[int](engine)
+
+	in := b.Input([]int{3})
+
+	v1, _ := tensor.New[int]([]int{3}, []int{1, 2, 3})
+	v2, _ := tensor.New[int]([]int{3}, []int{4, 5, 6})
+	n1 := &mockNode{
+		name:   "layer1",
+		params: []*Parameter[int]{{Name: "weight_a", Value: v1}},
+	}
+	n2 := &mockNode{
+		name:   "layer2",
+		params: []*Parameter[int]{{Name: "weight_b", Value: v2}},
+	}
+	b.AddNode(n1, in)
+	b.AddNode(n2, n1)
+
+	g, err := b.Build(n2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("successful load", func(t *testing.T) {
+		newData := map[string][]int{
+			"weight_a": {10, 20, 30},
+			"weight_b": {40, 50, 60},
+		}
+		if err := g.LoadParameters(newData); err != nil {
+			t.Fatalf("LoadParameters: %v", err)
+		}
+
+		// Verify the data was written.
+		for _, p := range g.Parameters() {
+			want, ok := newData[p.Name]
+			if !ok {
+				t.Errorf("unexpected param %q", p.Name)
+				continue
+			}
+			got := p.Value.Data()
+			if len(got) != len(want) {
+				t.Errorf("%s: len = %d, want %d", p.Name, len(got), len(want))
+				continue
+			}
+			for i := range got {
+				if got[i] != want[i] {
+					t.Errorf("%s[%d] = %d, want %d", p.Name, i, got[i], want[i])
+				}
+			}
+		}
+	})
+
+	t.Run("unknown parameter", func(t *testing.T) {
+		err := g.LoadParameters(map[string][]int{
+			"nonexistent": {1, 2, 3},
+		})
+		if err == nil {
+			t.Error("expected error for unknown parameter name")
+		}
+	})
+
+	t.Run("length mismatch", func(t *testing.T) {
+		err := g.LoadParameters(map[string][]int{
+			"weight_a": {1, 2}, // too short
+		})
+		if err == nil {
+			t.Error("expected error for length mismatch")
+		}
+	})
+}

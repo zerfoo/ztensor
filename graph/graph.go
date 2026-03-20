@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -322,13 +323,41 @@ func (g *Graph[T]) ClearMemo() {
 }
 
 // Parameters returns all the trainable parameters in the graph.
+// The returned slice is sorted by parameter name for deterministic ordering.
 func (g *Graph[T]) Parameters() []*Parameter[T] {
 	var params []*Parameter[T]
 	for _, node := range g.nodes {
 		params = append(params, node.Parameters()...)
 	}
-
+	sort.Slice(params, func(i, j int) bool {
+		return params[i].Name < params[j].Name
+	})
 	return params
+}
+
+// LoadParameters sets parameter values by name from the provided map.
+// Returns an error if a name is not found in the graph or the slice length
+// does not match the parameter's value tensor.
+func (g *Graph[T]) LoadParameters(params map[string][]T) error {
+	// Build a lookup from parameter name to parameter.
+	graphParams := g.Parameters()
+	byName := make(map[string]*Parameter[T], len(graphParams))
+	for _, p := range graphParams {
+		byName[p.Name] = p
+	}
+
+	for name, data := range params {
+		p, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("parameter %q not found in graph", name)
+		}
+		dst := p.Value.Data()
+		if len(data) != len(dst) {
+			return fmt.Errorf("parameter %q: length mismatch: got %d, want %d", name, len(data), len(dst))
+		}
+		copy(dst, data)
+	}
+	return nil
 }
 
 // Inputs returns the input nodes of the graph.
