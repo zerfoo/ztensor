@@ -74,26 +74,14 @@ func isNonCapturable[T tensor.Numeric](plan *ExecutionPlan[T], i int) bool {
 	return false
 }
 
-// CaptureStats reports CUDA graph capture coverage.
-type CaptureStats struct {
-	// TotalInstructions is the total number of instructions in the plan.
-	TotalInstructions int
-	// CapturedInstructions is the number of instructions inside the capture region.
-	CapturedInstructions int
-	// BypassedOps lists the op names that were absorbed into the graph via
-	// bypass (pre-executed on CPU, outputs cached on GPU, identity copy captured).
-	BypassedOps []string
-	// CoveragePercent is the capture coverage as a percentage (0-100).
-	CoveragePercent float64
-}
-
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
-// All instructions are captured into the graph (100% coverage). Ops that
-// cannot run natively during stream capture (EmbeddingLookup, Gather, etc.)
-// are pre-executed on the CPU, their outputs uploaded to fixed GPU buffers,
-// and an identity (no-op) forward is captured for those instructions. During
-// replay, the original ops run first to update the GPU buffers, then the
-// full graph is replayed.
+// It splits the plan into three regions:
+//  1. Pre-capture: instructions that trigger D2H copies or have dynamic state
+//  2. Capture region: GPU-only, position-independent instructions
+//  3. Post-capture: any trailing non-capturable instructions
+//
+// During replay, regions 1 and 3 run normally while region 2 is replayed
+// from the captured graph with near-zero launch overhead.
 type CUDAGraphExecutor[T tensor.Numeric] struct {
 	plan      *ExecutionPlan[T]
 	stream    *cuda.Stream
@@ -104,8 +92,8 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	failed    bool
 
 	// Capture region boundaries: instructions [captureStart, captureEnd)
-	// are captured into the CUDA graph. With full capture, these span
-	// [0, InstructionCount).
+	// are captured into the CUDA graph. Instructions outside this range
+	// run normally every call.
 	captureStart int
 	captureEnd   int
 
@@ -154,18 +142,6 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// allowing the caller to roll back cache mutations (e.g. Truncate seqLen
 	// and reset GPU counters) before the RunInstructions fallback.
 	snapshotCache func(ctx context.Context) func()
-
-	// bypassIndices stores instruction indices of non-capturable ops that
-	// were absorbed into the graph via the bypass mechanism. During capture,
-	// these ops use an identity forward that returns their pre-computed GPU
-	// output. During replay, the original forward runs first (outside the
-	// graph) to update the GPU buffers.
-	bypassIndices []int
-
-	// bypassOrigFwd stores the original Forward functions for bypassed
-	// instructions, keyed by instruction index. These are restored after
-	// capture and used during replay to compute fresh results.
-	bypassOrigFwd map[int]func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }
 
 // NewCUDAGraphExecutor creates a graph executor for the given plan.
@@ -179,38 +155,29 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups = 1
 	}
 
+	// Determine capture region: find the LONGEST contiguous run of capturable
+	// instructions. Non-capturable ops (EmbeddingLookup, Gather, Slice, etc.)
+	// may appear at the start, end, or scattered throughout the instruction
+	// list. The longest run is typically the transformer layers (attention +
+	// FFN) which form the bulk of GPU compute.
 	n := plan.InstructionCount()
-	if n == 0 {
-		log.Printf("cuda graph: no instructions found, graph disabled")
-		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
-	}
-
-	// Full capture: the capture region spans [0, n). Non-capturable ops are
-	// absorbed via the bypass mechanism — they are pre-executed on CPU, their
-	// outputs uploaded to GPU, and an identity forward is captured. This
-	// achieves 100% instruction coverage.
-	captureStart := 0
-	captureEnd := n
-
-	// Identify non-capturable instructions that need the bypass mechanism.
-	var bypassIndices []int
-	for i := 0; i < n; i++ {
-		if isNonCapturable(plan, i) {
-			bypassIndices = append(bypassIndices, i)
+	captureStart, captureEnd := 0, 0
+	runStart := 0
+	for i := 0; i <= n; i++ {
+		if i == n || isNonCapturable(plan, i) {
+			if i-runStart > captureEnd-captureStart {
+				captureStart = runStart
+				captureEnd = i
+			}
+			runStart = i + 1
 		}
 	}
 
-	// Verify there is at least one capturable instruction.
-	if len(bypassIndices) == n {
-		log.Printf("cuda graph: all %d instructions are non-capturable, graph disabled", n)
+	if captureStart >= captureEnd {
+		log.Printf("cuda graph: no capturable instructions found, graph disabled")
 		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
 	}
-
-	if len(bypassIndices) > 0 {
-		log.Printf("cuda graph: full capture [0, %d) with %d bypassed ops", n, len(bypassIndices))
-	} else {
-		log.Printf("cuda graph: full capture [0, %d), all ops natively capturable", n)
-	}
+	log.Printf("cuda graph: capture region is instructions [%d, %d) of %d total", captureStart, captureEnd, n)
 
 	// Upload frozen weights to GPU before any warmup runs or graph capture.
 	// This prevents getDevicePtr from issuing synchronous H2D copies on the
@@ -242,12 +209,10 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		captureStart:    captureStart,
 		captureEnd:      captureEnd,
 		inputSlotIdx:    inputSlotIdx,
-		hasPostCapture:  false, // full capture: no post-capture region
+		hasPostCapture:  captureEnd < plan.InstructionCount(),
 		gpuSlotCache:    make(map[int]*tensor.TensorNumeric[T]),
-		onCaptured:      onCaptured,
-		snapshotCache:   snapshotCache,
-		bypassIndices:   bypassIndices,
-		bypassOrigFwd:   make(map[int]func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)),
+		onCaptured:    onCaptured,
+		snapshotCache: snapshotCache,
 	}
 }
 
@@ -284,10 +249,7 @@ func (g *CUDAGraphExecutor[T]) Run(ctx context.Context, inputs ...*tensor.Tensor
 	return g.replay(ctx, inputs...)
 }
 
-// captureAndRun records the full instruction range as a CUDA graph.
-// Non-capturable ops are pre-executed on CPU, their outputs uploaded to GPU,
-// and identity forwards are installed for the capture pass. After capture,
-// original forwards are restored for use during replay.
+// captureAndRun records the capturable region as a CUDA graph.
 func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Prepare slots with the real inputs.
 	if err := g.plan.PrepareSlots(inputs...); err != nil {
@@ -295,19 +257,16 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 
-	// Pre-execute non-capturable ops on CPU to populate their output slots.
-	// Run ALL instructions up to the first capturable instruction, then
-	// selectively run remaining non-capturable ones. For simplicity, run
-	// the full instruction range normally first to get all slot values.
-	if len(g.bypassIndices) > 0 {
-		if err := g.plan.RunInstructionRange(ctx, 0, g.captureEnd); err != nil {
+	// Run pre-capture instructions normally (e.g. EmbeddingLookup).
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
 			g.failed = true
-			log.Printf("cuda graph: pre-execute run failed: %v", err)
+			log.Printf("cuda graph: pre-capture run failed: %v", err)
 			return g.plan.RunInstructions(ctx, inputs...)
 		}
 	}
 
-	// Ensure all slot data is GPU-resident before capture. Non-capturable
+	// Ensure all slot data is GPU-resident before capture. Pre-capture
 	// instructions (e.g. EmbeddingLookup with Q4K embedding tables) may
 	// produce CPU tensors. Upload them now so the capture region sees only
 	// GPU-resident data and avoids sync D2H copies that break capture.
@@ -319,12 +278,6 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// need all inputs on GPU to avoid cudaMemcpy during stream capture.
 	g.plan.EnsureCaptureInputsGPU(g.captureStart, g.captureEnd, g.gpuSlotCache)
 
-	// Install bypass forwards for non-capturable instructions. During
-	// capture, these return the pre-computed GPU output already in the
-	// scratch slot, contributing a no-op to the graph. The original forward
-	// functions are saved and restored after capture for use during replay.
-	g.installBypassForwards()
-
 	// Snapshot KV cache state before the capture region runs. If capture
 	// fails, restoreCache rolls back cache mutations (seqLen, GPU counters)
 	// so the RunInstructions fallback doesn't double-update the cache.
@@ -333,30 +286,19 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		restoreCache = g.snapshotCache(ctx)
 	}
 
-	// Re-prepare slots for the capture pass. The pre-execute run consumed
-	// the slots; we need fresh slot state with GPU-resident data.
-	if err := g.plan.PrepareSlots(inputs...); err != nil {
-		g.restoreBypassForwards()
-		g.failed = true
-		return g.plan.RunInstructions(ctx, inputs...)
-	}
-	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
-	g.plan.EnsureCaptureInputsGPU(g.captureStart, g.captureEnd, g.gpuSlotCache)
-
-	// Begin capture for the full instruction range.
-	log.Printf("CUDA GRAPH: about to begin full capture, instructions [%d, %d)", g.captureStart, g.captureEnd)
+	// Begin capture for the GPU-heavy region.
+	log.Printf("CUDA GRAPH: about to begin capture, instructions [%d, %d)", g.captureStart, g.captureEnd)
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
-		g.restoreBypassForwards()
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	log.Printf("CUDA GRAPH: capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
 
-	// Run all instructions — GPU operations are recorded. Bypassed ops
-	// contribute identity forwards that just return the cached GPU tensor.
+	// Run capturable instructions — GPU operations are recorded.
 	var captureErr error
 	if debugGraphCapture {
+		// Run instructions one at a time with logging to identify the exact failure point.
 		for i := g.captureStart; i < g.captureEnd; i++ {
 			opName := g.plan.InstructionOpName(i)
 			log.Printf("CUDA GRAPH capture: running instruction %d/%d op=%s", i, g.captureEnd-1, opName)
@@ -374,10 +316,6 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 
 	// End capture.
 	capturedGraph, endErr := cuda.StreamEndCapture(g.stream)
-
-	// Restore original forwards immediately after capture ends.
-	g.restoreBypassForwards()
-
 	if endErr != nil || captureErr != nil {
 		if endErr != nil {
 			log.Printf("cuda graph: end capture failed: %v", endErr)
@@ -389,6 +327,10 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		if capturedGraph != nil {
 			_ = cuda.GraphDestroy(capturedGraph)
 		}
+		// Restore KV cache state before fallback: the capture region ran
+		// GQA layers that called cache.Update(), incrementing seqLen and
+		// GPU counters. Without this restore, the fallback RunInstructions
+		// would double-update the cache for the same token.
 		if restoreCache != nil {
 			restoreCache()
 		}
@@ -403,15 +345,18 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		_ = cuda.GraphDestroy(capturedGraph)
 		g.graph = nil
 		g.failed = true
+		// Restore KV cache state: capture region already ran cache.Update().
 		if restoreCache != nil {
 			restoreCache()
 		}
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graphExec = exec
-	log.Printf("cuda graph: captured and instantiated successfully (instructions %d-%d, 100%% coverage)", g.captureStart, g.captureEnd-1)
+	log.Printf("cuda graph: captured and instantiated successfully (instructions %d-%d)", g.captureStart, g.captureEnd-1)
 
-	// Save all scratch slots written by captured instructions.
+	// Save all scratch slots written by captured instructions. These tensors
+	// hold the GPU buffers that the captured graph writes to. During replay,
+	// we must restore them after PrepareSlots (which resets scratchSlots).
 	g.capturedSlots = make([]*tensor.TensorNumeric[T], g.plan.SlotCount())
 	for i := g.captureStart; i < g.captureEnd; i++ {
 		outSlot := g.plan.InstructionOutputIdx(i)
@@ -433,71 +378,34 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		return nil, fmt.Errorf("cuda graph: sync after first launch: %w", err)
 	}
 
+	// Run post-capture instructions if any.
+	if g.captureEnd < g.plan.InstructionCount() {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph: post-capture run failed: %w", err)
+		}
+	}
+
 	return g.plan.OutputTensor(), nil
 }
 
-// installBypassForwards replaces the Forward functions of non-capturable
-// instructions with identity functions that return the pre-computed GPU
-// tensor already in the scratch slot. The original forwards are saved
-// in bypassOrigFwd for restoration after capture.
-func (g *CUDAGraphExecutor[T]) installBypassForwards() {
-	for _, idx := range g.bypassIndices {
-		inst := &g.plan.instructions[idx]
-		g.bypassOrigFwd[idx] = inst.Forward
-
-		// Capture the output slot index for the closure.
-		outSlot := inst.OutputIdx
-		inst.Forward = func(_ context.Context, _ []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-			// Return the GPU tensor already in the scratch slot from pre-execution.
-			t := g.plan.ScratchSlot(outSlot)
-			if t == nil {
-				return nil, fmt.Errorf("bypass: no cached GPU tensor for slot %d", outSlot)
-			}
-			return t, nil
-		}
-	}
-}
-
-// restoreBypassForwards restores the original Forward functions for all
-// bypassed instructions after capture completes.
-func (g *CUDAGraphExecutor[T]) restoreBypassForwards() {
-	for _, idx := range g.bypassIndices {
-		if origFwd, ok := g.bypassOrigFwd[idx]; ok {
-			g.plan.instructions[idx].Forward = origFwd
-		}
-	}
-}
-
 // replay launches the pre-captured graph with updated input.
-// For bypassed (non-capturable) ops, the original forwards are executed
-// outside the graph to compute fresh results, which are then uploaded to
-// the fixed GPU buffers. The graph then replays reading the updated data.
 func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	// NOTE: replayFast disabled for Q4 GEMV investigation.
+	// Phase 6 used the full replay path and achieved 234 tok/s.
+
+	// First replay: full path that sets up slot state.
 	if err := g.plan.PrepareSlots(inputs...); err != nil {
 		return nil, fmt.Errorf("cuda graph replay: prepare slots: %w", err)
 	}
 
-	// Run bypassed (non-capturable) instructions using their original
-	// forwards to produce fresh CPU results, then upload to GPU.
-	if len(g.bypassIndices) > 0 {
-		for _, idx := range g.bypassIndices {
-			inst := &g.plan.instructions[idx]
-			ins := make([]*tensor.TensorNumeric[T], len(inst.InputIdx))
-			for j, slotIdx := range inst.InputIdx {
-				ins[j] = g.plan.ScratchSlot(slotIdx)
-				if ins[j] == nil {
-					return nil, fmt.Errorf("cuda graph replay: bypass instruction %d (%s): nil input at slot %d", idx, inst.OpName, slotIdx)
-				}
-			}
-			result, err := inst.Forward(ctx, ins)
-			if err != nil {
-				return nil, fmt.Errorf("cuda graph replay: bypass instruction %d (%s): %w", idx, inst.OpName, err)
-			}
-			g.plan.SetScratchSlot(inst.OutputIdx, result)
+	// Run pre-capture instructions normally.
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
 		}
 	}
 
-	// Ensure all bypass outputs and other CPU-resident slots are on GPU.
+	// Ensure pre-capture outputs are GPU-resident before replay.
 	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
 	// Restore captured slots. PrepareSlots resets scratchSlots from p.slots,
@@ -518,9 +426,20 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 		return nil, fmt.Errorf("cuda graph: sync failed: %w", err)
 	}
 
+	// Run post-capture instructions if any.
+	if g.hasPostCapture {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: post-capture: %w", err)
+		}
+	}
+
 	// Cache the EmbeddingLookup output GPU tensor for fast replay.
+	// After EnsureSlotsGPU, the embedding slot has a GPU tensor that we can
+	// reuse on subsequent replays via targeted CopyFromHost.
 	g.initEmbeddingCache()
 
+	// All slots are now GPU-resident and capturedSlots are in place.
+	// Subsequent replays can use the fast path.
 	g.replayReady = true
 
 	return g.plan.OutputTensor(), nil
@@ -530,28 +449,23 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 // replay. It skips PrepareSlots (which copies ~185 slot pointers),
 // EnsureSlotsGPU (which iterates all slots checking residency), and
 // capturedSlots restoration (already in place from previous replay).
-// Only the input slot is updated and bypassed instructions re-run.
+// Only the input slot is updated and pre-capture instructions re-run.
 func (g *CUDAGraphExecutor[T]) replayFast(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Set only the input slot — all other scratch slots are already correct
 	// from the previous replay.
 	g.plan.SetScratchSlot(g.inputSlotIdx, inputs[0])
 
-	// Re-run bypassed (non-capturable) instructions because the input token
-	// changes each step. Their outputs are uploaded to cached GPU buffers.
-	for _, idx := range g.bypassIndices {
-		inst := &g.plan.instructions[idx]
-		ins := make([]*tensor.TensorNumeric[T], len(inst.InputIdx))
-		for j, slotIdx := range inst.InputIdx {
-			ins[j] = g.plan.ScratchSlot(slotIdx)
+	// Pre-capture instructions (e.g. EmbeddingLookup) must still run because
+	// the input token changes each step.
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
 		}
-		result, err := inst.Forward(ctx, ins)
-		if err != nil {
-			return nil, fmt.Errorf("cuda graph replay: bypass instruction %d (%s): %w", idx, inst.OpName, err)
-		}
-		g.plan.SetScratchSlot(inst.OutputIdx, result)
 	}
 
-	// Targeted GPU upload for the EmbeddingLookup output slot.
+	// Targeted GPU upload for the EmbeddingLookup output slot. Instead of
+	// scanning all slots via EnsureSlotsGPU, copy just the embedding vector
+	// into the cached GPU buffer. This avoids iterating ~185 slots.
 	if g.embeddingCached {
 		g.uploadEmbeddingToGPU()
 	}
@@ -565,16 +479,23 @@ func (g *CUDAGraphExecutor[T]) replayFast(ctx context.Context, inputs ...*tensor
 		return nil, fmt.Errorf("cuda graph: sync failed: %w", err)
 	}
 
+	// Run post-capture instructions if any.
+	if g.hasPostCapture {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: post-capture: %w", err)
+		}
+	}
+
 	return g.plan.OutputTensor(), nil
 }
 
-// initEmbeddingCache identifies the EmbeddingLookup bypassed instruction
+// initEmbeddingCache identifies the EmbeddingLookup pre-capture instruction
 // and caches its GPU tensor from gpuSlotCache. Called once after the first
 // replay when EnsureSlotsGPU has populated the cache.
 func (g *CUDAGraphExecutor[T]) initEmbeddingCache() {
-	for _, idx := range g.bypassIndices {
-		if g.plan.InstructionOpName(idx) == "EmbeddingLookup" {
-			slotIdx := g.plan.InstructionOutputIdx(idx)
+	for i := 0; i < g.captureStart; i++ {
+		if g.plan.InstructionOpName(i) == "EmbeddingLookup" {
+			slotIdx := g.plan.InstructionOutputIdx(i)
 			if cached, ok := g.gpuSlotCache[slotIdx]; ok {
 				g.embeddingCached = true
 				g.embeddingSlotIdx = slotIdx
@@ -603,26 +524,6 @@ func (g *CUDAGraphExecutor[T]) uploadEmbeddingToGPU() {
 	}
 	if err := gs.CopyFromHost(cpuResult.Data(), 0); err == nil {
 		g.plan.SetScratchSlot(g.embeddingSlotIdx, g.embeddingGPUPtr)
-	}
-}
-
-// CaptureStats returns statistics about the CUDA graph capture coverage.
-func (g *CUDAGraphExecutor[T]) CaptureStats() CaptureStats {
-	total := g.plan.InstructionCount()
-	captured := g.captureEnd - g.captureStart
-	var bypassed []string
-	for _, idx := range g.bypassIndices {
-		bypassed = append(bypassed, g.plan.InstructionOpName(idx))
-	}
-	pct := 0.0
-	if total > 0 {
-		pct = float64(captured) / float64(total) * 100.0
-	}
-	return CaptureStats{
-		TotalInstructions:    total,
-		CapturedInstructions: captured,
-		BypassedOps:          bypassed,
-		CoveragePercent:      pct,
 	}
 }
 
