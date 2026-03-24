@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/zerfoo/ztensor/compare/v0.4.0...v0.4.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* **cuda:** expand libkernels.so search paths and log dlopen errors (issue [#7](https://github.com/zerfoo/ztensor/issues/7)) ([b906f08](https://github.com/zerfoo/ztensor/commit/b906f08ac3424a4ff4ab34fe888014a009ee2122))
+
 ## [0.4.0](https://github.com/zerfoo/ztensor/compare/v0.3.2...v0.4.0) (2026-03-24)
 
 
