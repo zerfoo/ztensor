@@ -2,6 +2,7 @@ package kernels
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/zerfoo/ztensor/internal/cuda"
@@ -347,7 +348,16 @@ func openKernelLib() (*KernelLib, error) {
 	return kernelLib, errKernelLib
 }
 
+var klibWarnOnce sync.Once
+
 func klib() *KernelLib {
-	k, _ := openKernelLib()
+	k, err := openKernelLib()
+	if err != nil {
+		klibWarnOnce.Do(func() {
+			slog.Warn("cuda kernels not available -- GPU operations will fail",
+				"error", err,
+				"hint", "build with: cd internal/cuda/kernels && make CUDA_ARCH=<your_arch> shared")
+		})
+	}
 	return k
 }

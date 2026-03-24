@@ -162,9 +162,17 @@ const (
 )
 
 // kernelLibPaths lists paths to try for the custom kernels shared library.
+// The first match wins. Standard system paths are tried via the bare name
+// (dlopen searches LD_LIBRARY_PATH, /usr/lib, /usr/local/lib automatically).
+// We also check common CUDA installation directories and the ztensor module
+// source tree for development builds.
 var kernelLibPaths = []string{
-	"libkernels.so",
-	"./libkernels.so",
+	"libkernels.so",                                          // LD_LIBRARY_PATH + system default
+	"./libkernels.so",                                        // current working directory
+	"./internal/cuda/kernels/libkernels.so",                  // ztensor source tree (dev)
+	"/usr/local/lib/libkernels.so",                           // standard local install
+	"/usr/local/cuda/lib64/libkernels.so",                    // CUDA install directory
+	"/opt/zerfoo/lib/libkernels.so",                          // packaged install
 }
 
 // DlopenKernels loads the custom kernels shared library (libkernels.so)
