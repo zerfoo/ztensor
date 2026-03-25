@@ -493,6 +493,104 @@ func TestDequantizeQ5K_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestMergeQ4KStorage(t *testing.T) {
+	// Build 3 Q4KStorage objects from different data patterns.
+	patterns := [3]func(i int) float32{
+		func(i int) float32 { return float32(math.Sin(float64(i)*0.1)) * 2.0 },
+		func(i int) float32 { return float32(i) * 0.01 },
+		func(i int) float32 { return float32(math.Cos(float64(i)*0.2)) * 1.5 },
+	}
+
+	storages := make([]*Q4KStorage, 3)
+	dequantized := make([][]float32, 3)
+	for p := range 3 {
+		values := make([]float32, 256)
+		for i := range values {
+			values[i] = patterns[p](i)
+		}
+		raw := buildQ4KBlock(values)
+		s, err := NewQ4KStorageFromRaw(raw, 256)
+		if err != nil {
+			t.Fatalf("NewQ4KStorageFromRaw[%d]: %v", p, err)
+		}
+		storages[p] = s
+		dequantized[p] = s.Slice()
+	}
+
+	merged := MergeQ4KStorage(storages[0], storages[1], storages[2])
+
+	// Check lengths.
+	if merged.Len() != 768 {
+		t.Fatalf("Len() = %d, want 768", merged.Len())
+	}
+	if merged.NumBlocks() != 3 {
+		t.Fatalf("NumBlocks() = %d, want 3", merged.NumBlocks())
+	}
+
+	// Dequantize merged and compare with concatenation of individual results.
+	mergedData := make([]float32, merged.Len())
+	merged.Dequantize(mergedData)
+
+	offset := 0
+	for p := range 3 {
+		for i, want := range dequantized[p] {
+			if mergedData[offset+i] != want {
+				t.Errorf("segment %d index %d: got %v, want %v", p, i, mergedData[offset+i], want)
+			}
+		}
+		offset += len(dequantized[p])
+	}
+}
+
+func TestMergeQ6KStorage(t *testing.T) {
+	// Build 3 Q6KStorage objects from different data patterns.
+	patterns := [3]func(i int) float32{
+		func(i int) float32 { return float32(math.Sin(float64(i)*0.1)) * 2.0 },
+		func(i int) float32 { return float32(i) * 0.01 },
+		func(i int) float32 { return float32(math.Cos(float64(i)*0.2)) * 1.5 },
+	}
+
+	storages := make([]*Q6KStorage, 3)
+	dequantized := make([][]float32, 3)
+	for p := range 3 {
+		values := make([]float32, 256)
+		for i := range values {
+			values[i] = patterns[p](i)
+		}
+		raw := buildQ6KBlock(values)
+		s, err := NewQ6KStorageFromRaw(raw, 256)
+		if err != nil {
+			t.Fatalf("NewQ6KStorageFromRaw[%d]: %v", p, err)
+		}
+		storages[p] = s
+		dequantized[p] = s.Slice()
+	}
+
+	merged := MergeQ6KStorage(storages[0], storages[1], storages[2])
+
+	// Check lengths.
+	if merged.Len() != 768 {
+		t.Fatalf("Len() = %d, want 768", merged.Len())
+	}
+	if merged.NumBlocks() != 3 {
+		t.Fatalf("NumBlocks() = %d, want 3", merged.NumBlocks())
+	}
+
+	// Dequantize merged and compare with concatenation of individual results.
+	mergedData := make([]float32, merged.Len())
+	merged.Dequantize(mergedData)
+
+	offset := 0
+	for p := range 3 {
+		for i, want := range dequantized[p] {
+			if mergedData[offset+i] != want {
+				t.Errorf("segment %d index %d: got %v, want %v", p, i, mergedData[offset+i], want)
+			}
+		}
+		offset += len(dequantized[p])
+	}
+}
+
 func TestNewQ5KStorageFromRaw(t *testing.T) {
 	values := make([]float32, 256)
 	for i := range values {

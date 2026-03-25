@@ -155,6 +155,26 @@ func (q *Q4KStorage) GPUPtr() (unsafe.Pointer, int, int) {
 	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
 }
 
+// MergeQ4KStorage concatenates multiple Q4KStorage objects into one.
+// Used to merge Q/K/V or Gate/Up weight matrices row-wise for single-GEMV
+// optimization during inference decode.
+func MergeQ4KStorage(storages ...*Q4KStorage) *Q4KStorage {
+	totalBytes := 0
+	totalLen := 0
+	for _, s := range storages {
+		totalBytes += len(s.raw)
+		totalLen += s.len
+	}
+	raw := make([]byte, 0, totalBytes)
+	for _, s := range storages {
+		raw = append(raw, s.raw...)
+	}
+	return &Q4KStorage{
+		raw: raw,
+		len: totalLen,
+	}
+}
+
 var _ Storage[float32] = (*Q4KStorage)(nil)
 
 // Q6_K format: super-blocks of 256 values.
@@ -287,6 +307,26 @@ func (q *Q6KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
 // GPUPtr returns the GPU-resident copy pointer, byte size, and device ID.
 func (q *Q6KStorage) GPUPtr() (unsafe.Pointer, int, int) {
 	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
+}
+
+// MergeQ6KStorage concatenates multiple Q6KStorage objects into one.
+// Used to merge Q/K/V or Gate/Up weight matrices row-wise for single-GEMV
+// optimization during inference decode.
+func MergeQ6KStorage(storages ...*Q6KStorage) *Q6KStorage {
+	totalBytes := 0
+	totalLen := 0
+	for _, s := range storages {
+		totalBytes += len(s.raw)
+		totalLen += s.len
+	}
+	raw := make([]byte, 0, totalBytes)
+	for _, s := range storages {
+		raw = append(raw, s.raw...)
+	}
+	return &Q6KStorage{
+		raw: raw,
+		len: totalLen,
+	}
 }
 
 var _ Storage[float32] = (*Q6KStorage)(nil)
