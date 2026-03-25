@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/zerfoo/ztensor/compare/v0.4.1...v0.5.0) (2026-03-25)
+
+
+### Features
+
+* **tensor:** add MergeQ4KStorage and MergeQ6KStorage ([764a750](https://github.com/zerfoo/ztensor/commit/764a750b10af622d5655ad7342a52cd8d574e5ef))
+
 ## [0.4.1](https://github.com/zerfoo/ztensor/compare/v0.4.0...v0.4.1) (2026-03-24)
 
 
