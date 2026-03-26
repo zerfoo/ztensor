@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/zerfoo/ztensor/compare/v0.5.0...v0.5.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* **cuda:** raise shared memory limit for Q4 GEMV with K &gt; 12288 ([d654c72](https://github.com/zerfoo/ztensor/commit/d654c725b6919d8aa63f85266f009cf326d6375d))
+
 ## [0.5.0](https://github.com/zerfoo/ztensor/compare/v0.4.1...v0.5.0) (2026-03-25)
 
 
