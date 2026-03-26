@@ -10,6 +10,91 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
+func TestFP16MatMul_NilInputs(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+	eng.dtype = DTypeFP16
+
+	ctx := context.Background()
+
+	a, _ := tensor.New[float32]([]int{2, 3}, make([]float32, 6))
+
+	// Nil A tensor.
+	_, err = eng.MatMul(ctx, nil, a)
+	if err == nil {
+		t.Fatal("expected error for nil A tensor, got nil")
+	}
+
+	// Nil B tensor.
+	_, err = eng.MatMul(ctx, a, nil)
+	if err == nil {
+		t.Fatal("expected error for nil B tensor, got nil")
+	}
+
+	// Both nil.
+	_, err = eng.MatMul(ctx, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for both nil tensors, got nil")
+	}
+}
+
+func TestFP16MatMul_F32StillWorks(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+	// Explicitly use F32 dtype (default) to verify no regression.
+
+	ctx := context.Background()
+	cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+
+	aData := []float32{1, 2, 3, 4, 5, 6}
+	bData := []float32{7, 8, 9, 10, 11, 12}
+
+	cpuA, _ := tensor.New[float32]([]int{2, 3}, aData)
+	cpuB, _ := tensor.New[float32]([]int{3, 2}, bData)
+	expected, err := cpuEng.MatMul(ctx, cpuA, cpuB)
+	if err != nil {
+		t.Fatalf("CPU MatMul: %v", err)
+	}
+
+	a, _ := tensor.New[float32]([]int{2, 3}, aData)
+	b, _ := tensor.New[float32]([]int{3, 2}, bData)
+
+	got, err := eng.MatMul(ctx, a, b)
+	if err != nil {
+		t.Fatalf("F32 GPU MatMul: %v", err)
+	}
+
+	gotData := got.Data()
+	expData := expected.Data()
+	if len(gotData) != len(expData) {
+		t.Fatalf("output size mismatch: got %d, want %d", len(gotData), len(expData))
+	}
+
+	for i := range gotData {
+		if expData[i] == 0 {
+			continue
+		}
+		relErr := math.Abs(float64(gotData[i]-expData[i])) / math.Abs(float64(expData[i]))
+		if relErr > 1e-5 {
+			t.Errorf("element %d: got %f, want %f (relErr=%.6f)", i, gotData[i], expData[i], relErr)
+		}
+	}
+}
+
 func TestFP16MatMul_BatchDimensions(t *testing.T) {
 	if !cuda.Available() {
 		t.Skip("CUDA not available")

@@ -277,6 +277,10 @@ func fp16MatMul[T tensor.Numeric](
 	a, b *tensor.TensorNumeric[T],
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	if a == nil || b == nil {
+		return nil, fmt.Errorf("fp16MatMul: input tensors must not be nil")
+	}
+
 	if e.blas == nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -297,6 +301,10 @@ func fp16MatMul[T tensor.Numeric](
 
 	if k != bK {
 		return nil, fmt.Errorf("fp16MatMul: incompatible inner dimensions %d != %d", k, bK)
+	}
+
+	if m == 0 || n == 0 || k == 0 {
+		return nil, fmt.Errorf("fp16MatMul: zero-size dimension (m=%d, n=%d, k=%d)", m, n, k)
 	}
 
 	// Compute batch dimensions.
@@ -329,11 +337,19 @@ func fp16MatMul[T tensor.Numeric](
 	}
 	defer cleanupA()
 
+	if devA == nil {
+		return nil, fmt.Errorf("fp16MatMul: device pointer A is nil")
+	}
+
 	devB, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 	defer cleanupB()
+
+	if devB == nil {
+		return nil, fmt.Errorf("fp16MatMul: device pointer B is nil")
+	}
 
 	aMatElems := m * k
 	bMatElems := k * n
@@ -371,6 +387,9 @@ func fp16MatMul[T tensor.Numeric](
 	devC, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
 		return nil, fmt.Errorf("fp16MatMul: alloc output: %w", err)
+	}
+	if devC == nil {
+		return nil, fmt.Errorf("fp16MatMul: pool returned nil output pointer for %d bytes", outBytes)
 	}
 
 	// MixedFP16Gemm: FP16 inputs, FP32 output, FP32 accumulation.
@@ -556,6 +575,9 @@ func fp16MatMulNative[T tensor.Numeric](
 	devC, err := e.pool.Alloc(e.deviceID, outFP16Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("fp16MatMulNative: alloc output: %w", err)
+	}
+	if devC == nil {
+		return nil, fmt.Errorf("fp16MatMulNative: pool returned nil output pointer for %d bytes", outFP16Bytes)
 	}
 
 	// Float16Gemm: FP16 inputs, FP16 output, FP32 accumulation.

@@ -157,6 +157,19 @@ func Sgemm(h *Handle, m, n, k int, alpha float32,
 	a unsafe.Pointer, b unsafe.Pointer,
 	beta float32, c unsafe.Pointer,
 ) error {
+	if h == nil {
+		return fmt.Errorf("cublasSgemm: nil handle")
+	}
+	if a == nil {
+		return fmt.Errorf("cublasSgemm: nil pointer for matrix A")
+	}
+	if b == nil {
+		return fmt.Errorf("cublasSgemm: nil pointer for matrix B")
+	}
+	if c == nil {
+		return fmt.Errorf("cublasSgemm: nil pointer for matrix C")
+	}
+
 	lib, err := getCublasLib()
 	if err != nil {
 		return err
@@ -345,6 +358,19 @@ func GemmEx(h *Handle, m, n, k int, alpha float32,
 	c unsafe.Pointer, cType CudaDataType,
 	computeType CublasComputeType,
 ) error {
+	if h == nil {
+		return fmt.Errorf("cublasGemmEx: nil handle")
+	}
+	if a == nil {
+		return fmt.Errorf("cublasGemmEx: nil pointer for matrix A")
+	}
+	if b == nil {
+		return fmt.Errorf("cublasGemmEx: nil pointer for matrix B")
+	}
+	if c == nil {
+		return fmt.Errorf("cublasGemmEx: nil pointer for matrix C")
+	}
+
 	lib, err := getCublasLib()
 	if err != nil {
 		return err
