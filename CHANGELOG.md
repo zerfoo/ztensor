@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/zerfoo/ztensor/compare/v0.6.0...v0.6.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* **compute:** add VRAM bounds check for large MatMul allocations ([915816c](https://github.com/zerfoo/ztensor/commit/915816c739febfccf580ec6d47df2941b33677f5))
+
 ## [0.6.0](https://github.com/zerfoo/ztensor/compare/v0.5.1...v0.6.0) (2026-03-26)
 
 
