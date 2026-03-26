@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/zerfoo/ztensor/compare/v0.5.1...v0.6.0) (2026-03-26)
+
+
+### Features
+
+* **gguf:** add shared GGUF writer package ([0709c09](https://github.com/zerfoo/ztensor/commit/0709c096728e59a41a9760cbf91cd10f66ef147f))
+
 ## [0.5.1](https://github.com/zerfoo/ztensor/compare/v0.5.0...v0.5.1) (2026-03-26)
 
 
