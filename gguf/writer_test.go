@@ -81,9 +81,9 @@ func TestMagicAndVersionBytes(t *testing.T) {
 	}
 	raw := buf.Bytes()
 
-	// Verify "GGUF" appears as bytes 47, 47, 55, 46 (little-endian 0x46475547).
-	if raw[0] != 0x47 || raw[1] != 0x55 || raw[2] != 0x47 || raw[3] != 0x46 {
-		t.Fatalf("magic bytes = [%#x, %#x, %#x, %#x], want [0x47, 0x55, 0x47, 0x46]",
+	// Verify "GGUF" appears as bytes 47, 47, 55, 46 (little-endian 0x46554747).
+	if raw[0] != 0x47 || raw[1] != 0x47 || raw[2] != 0x55 || raw[3] != 0x46 {
+		t.Fatalf("magic bytes = [%#x, %#x, %#x, %#x], want [0x47, 0x47, 0x55, 0x46]",
 			raw[0], raw[1], raw[2], raw[3])
 	}
 	// Version 3 in LE.

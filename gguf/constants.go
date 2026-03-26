@@ -6,7 +6,7 @@ package gguf
 
 // GGUF v3 format constants.
 const (
-	Magic     = 0x46475547 // "GGUF" in little-endian
+	Magic     = 0x46554747 // "GGUF" in little-endian
 	Version   = 3
 	Alignment = 32 // tensor data alignment in bytes
 )
