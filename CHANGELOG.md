@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/zerfoo/ztensor/compare/v0.6.1...v0.6.2) (2026-03-26)
+
+
+### Bug Fixes
+
+* **compute:** prevent FP16 MatMul segfault on aarch64 purego ([a6756c5](https://github.com/zerfoo/ztensor/commit/a6756c5446009370a0d7ca4629f72b3403fe1df9))
+
 ## [0.6.1](https://github.com/zerfoo/ztensor/compare/v0.6.0...v0.6.1) (2026-03-26)
 
 
