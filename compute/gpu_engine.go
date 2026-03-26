@@ -33,6 +33,11 @@ const (
 	DTypeFP8
 )
 
+// DefaultMaxAllocBytes is the default maximum single allocation size (4 GB)
+// for MatMul output buffers. This prevents segfaults when cuBLAS receives
+// very large matrices that would exhaust device memory.
+const DefaultMaxAllocBytes int64 = 4 * 1024 * 1024 * 1024
+
 // GPUEngine is a GPU-accelerated implementation of the Engine interface.
 // MatMul uses BLAS for maximum performance. Elementwise, scalar, activation,
 // and math operations use native GPU kernels for float32 types.
@@ -75,6 +80,13 @@ type GPUEngine[T tensor.Numeric] struct {
 	// access (e.g., GB10 with NVLink-C2C). When true, weight uploads use
 	// cudaMallocManaged instead of cudaMalloc + explicit H2D copy.
 	managedMem bool
+
+	// maxAllocBytes is the maximum single allocation size (in bytes) allowed
+	// for MatMul output buffers. Allocations exceeding this limit return an
+	// error instead of attempting the allocation, which prevents segfaults
+	// when cuBLAS receives very large matrices (e.g., 128256x4096 LM head).
+	// Default: DefaultMaxAllocBytes (4 GB).
+	maxAllocBytes int64
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -163,30 +175,32 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		l.Warn("arena pool not available, falling back to MemPool", "error", err.Error())
 		bucketPool := gpuapi.NewCUDAMemPoolFrom(fallbackPool)
 		return &GPUEngine[T]{
-			cpu:        NewCPUEngine(ops),
-			runtime:    rt,
-			blas:       blas,
-			dnn:        dnn,
-			kernels:    gpuapi.NewCUDAKernels(),
-			pool:       bucketPool,
-			stream:     stream,
-			logger:     l,
-			deviceID:   dev,
-			managedMem: managedMem,
+			cpu:           NewCPUEngine(ops),
+			runtime:       rt,
+			blas:          blas,
+			dnn:           dnn,
+			kernels:       gpuapi.NewCUDAKernels(),
+			pool:          bucketPool,
+			stream:        stream,
+			logger:        l,
+			deviceID:      dev,
+			managedMem:    managedMem,
+			maxAllocBytes: DefaultMaxAllocBytes,
 		}, nil
 	}
 
 	return &GPUEngine[T]{
-		cpu:        NewCPUEngine(ops),
-		runtime:    rt,
-		blas:       blas,
-		dnn:        dnn,
-		kernels:    gpuapi.NewCUDAKernels(),
-		pool:       arenaPool,
-		stream:     stream,
-		logger:     l,
-		deviceID:   dev,
-		managedMem: managedMem,
+		cpu:           NewCPUEngine(ops),
+		runtime:       rt,
+		blas:          blas,
+		dnn:           dnn,
+		kernels:       gpuapi.NewCUDAKernels(),
+		pool:          arenaPool,
+		stream:        stream,
+		logger:        l,
+		deviceID:      dev,
+		managedMem:    managedMem,
+		maxAllocBytes: DefaultMaxAllocBytes,
 	}, nil
 }
 
@@ -248,6 +262,32 @@ func (e *GPUEngine[T]) SetDType(d DType) {
 // DTypeValue returns the current compute precision.
 func (e *GPUEngine[T]) DTypeValue() DType {
 	return e.dtype
+}
+
+// SetMaxAllocBytes sets the maximum single allocation size (in bytes)
+// allowed for MatMul output buffers. If size <= 0, the default is used.
+func (e *GPUEngine[T]) SetMaxAllocBytes(size int64) {
+	if size <= 0 {
+		size = DefaultMaxAllocBytes
+	}
+	e.maxAllocBytes = size
+}
+
+// MaxAllocBytes returns the current maximum single allocation size.
+func (e *GPUEngine[T]) MaxAllocBytes() int64 {
+	return e.maxAllocBytes
+}
+
+// checkVRAMBounds validates that a requested allocation size does not exceed
+// the configured maximum. This prevents segfaults when cuBLAS receives very
+// large matrices (e.g., 128256x4096 for a Llama LM head) whose output
+// allocation would exhaust available VRAM.
+func (e *GPUEngine[T]) checkVRAMBounds(op string, allocBytes int) error {
+	if int64(allocBytes) > e.maxAllocBytes {
+		return fmt.Errorf("%s: output allocation (%d bytes) exceeds available VRAM (%d bytes)",
+			op, allocBytes, e.maxAllocBytes)
+	}
+	return nil
 }
 
 // UploadWeights copies CPU-resident tensors to GPU device memory in place.
@@ -601,6 +641,29 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return nil, fmt.Errorf("MatMul: input tensors must not be nil")
 	}
 
+	// VRAM bounds check: estimate output size before dispatching to any path.
+	// For A [..., m, k] x B [..., k, n], output is [..., m, n] * sizeof(float32).
+	// This catches oversized allocations early (e.g., 128256x4096 LM head) and
+	// returns a clear error instead of segfaulting inside cuBLAS.
+	{
+		aShape := a.Shape()
+		bShape := b.Shape()
+		if len(aShape) >= 2 && len(bShape) >= 2 {
+			m := aShape[len(aShape)-2]
+			n := bShape[len(bShape)-1]
+			batchSize := 1
+			for _, d := range aShape[:len(aShape)-2] {
+				batchSize *= d
+			}
+			// Use float32 (4 bytes) as the element size for the output estimate,
+			// since all MatMul paths produce float32 outputs.
+			estimatedBytes := batchSize * m * n * 4
+			if err := e.checkVRAMBounds("MatMul", estimatedBytes); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	// Quantized MatMul dispatch chain. Order matters for performance:
 	// check the most common quantization types first to minimize failing
 	// type assertions on the hot path. Q4_K and Q4 are checked first
@@ -803,8 +866,15 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	bMatSize := k * n
 	cMatSize := m * n
 
+	// VRAM bounds check: reject allocations that would exceed device memory
+	// and cause a segfault (e.g., 128256x4096 LM head output).
+	outputBytes := batchSize * cMatSize * elemSize
+	if err := e.checkVRAMBounds("MatMul", outputBytes); err != nil {
+		return nil, err
+	}
+
 	// Allocate device output.
-	devCTotal, err := e.pool.Alloc(e.deviceID, batchSize*cMatSize*elemSize)
+	devCTotal, err := e.pool.Alloc(e.deviceID, outputBytes)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
 		e.logger.Warn("MatMul: GPU output alloc failed, falling back to CPU", "error", err.Error())
@@ -838,7 +908,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 			if err := batched.SgemmStridedBatched(m, n, k, 1.0,
 				devA, strideA, devB, strideBVal, 0.0,
 				devCTotal, strideC, batchSize); err != nil {
-				e.pool.Free(e.deviceID, devCTotal, batchSize*cMatSize*elemSize)
+				e.pool.Free(e.deviceID, devCTotal, outputBytes)
 				return nil, fmt.Errorf("MatMul: batched GEMM: %w", err)
 			}
 			return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
@@ -877,7 +947,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		}
 
 		if blasErr != nil {
-			e.pool.Free(e.deviceID, devCTotal, batchSize*cMatSize*elemSize)
+			e.pool.Free(e.deviceID, devCTotal, outputBytes)
 
 			return nil, fmt.Errorf("MatMul: BLAS batch %d: %w", batch, blasErr)
 		}
@@ -981,7 +1051,13 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 	bMatSize := n * k
 	cMatSize := m * n
 
-	devC, err := e.pool.Alloc(e.deviceID, batchSize*cMatSize*elemSize)
+	// VRAM bounds check: reject allocations that would exceed device memory.
+	outputBytes := batchSize * cMatSize * elemSize
+	if err := e.checkVRAMBounds("MatMulTransposeB", outputBytes); err != nil {
+		return nil, err
+	}
+
+	devC, err := e.pool.Alloc(e.deviceID, outputBytes)
 	if err != nil {
 		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
 		if tErr != nil {

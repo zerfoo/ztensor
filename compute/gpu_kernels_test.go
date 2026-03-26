@@ -61,13 +61,14 @@ func newFakeGPUEngine(t *testing.T) (*GPUEngine[float32], *fakeMemPool) {
 	t.Helper()
 	pool := newFakeMemPool()
 	eng := &GPUEngine[float32]{
-		cpu:      NewCPUEngine[float32](numeric.Float32Ops{}),
-		runtime:  fakeRuntime{},
-		pool:     pool,
-		stream:   fakeStream{},
-		logger:   log.Nop(),
-		deviceID: 0,
-		dtype:    DTypeF32,
+		cpu:           NewCPUEngine[float32](numeric.Float32Ops{}),
+		runtime:       fakeRuntime{},
+		pool:          pool,
+		stream:        fakeStream{},
+		logger:        log.Nop(),
+		deviceID:      0,
+		dtype:         DTypeF32,
+		maxAllocBytes: DefaultMaxAllocBytes,
 	}
 	return eng, pool
 }
