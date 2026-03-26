@@ -62,6 +62,11 @@ func (w *Writer) AddMetadataUint64(key string, value uint64) {
 	w.metadata = append(w.metadata, kvPair{key: key, valueType: MetaTypeUint64, value: value})
 }
 
+// AddMetadataInt64 adds an int64 metadata key-value pair.
+func (w *Writer) AddMetadataInt64(key string, value int64) {
+	w.metadata = append(w.metadata, kvPair{key: key, valueType: MetaTypeInt64, value: value})
+}
+
 // AddMetadataStringArray adds a string array metadata key-value pair.
 func (w *Writer) AddMetadataStringArray(key string, values []string) {
 	w.metadata = append(w.metadata, kvPair{key: key, valueType: MetaTypeArray, value: stringArray(values)})
@@ -224,6 +229,8 @@ func writeMetadataValue(
 		return writeString(kv.value.(string))
 	case MetaTypeUint64:
 		return write(kv.value.(uint64))
+	case MetaTypeInt64:
+		return write(kv.value.(int64))
 	case MetaTypeArray:
 		switch arr := kv.value.(type) {
 		case stringArray:
