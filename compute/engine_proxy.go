@@ -280,6 +280,15 @@ func (p *EngineProxy[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[
 	return result, err
 }
 
+// ReduceMax delegates to the underlying engine and records the operation if tracing.
+func (p *EngineProxy[T]) ReduceMax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	result, err := p.real.ReduceMax(ctx, a, axis, keepDims, dst...)
+	if err == nil {
+		p.record("ReduceMax", []*tensor.TensorNumeric[T]{a}, result, map[string]any{"axis": axis, "keepDims": keepDims})
+	}
+	return result, err
+}
+
 // ReduceMean delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.ReduceMean(ctx, a, axis, keepDims, dst...)
