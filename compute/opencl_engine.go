@@ -308,5 +308,10 @@ func (e *OpenCLEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T],
 	return e.cpu.Rsqrt(ctx, a, dst...)
 }
 
+// HadamardTransform delegates to the CPU engine.
+func (e *OpenCLEngine[T]) HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.HadamardTransform(ctx, a, dst...)
+}
+
 // Static type assertion: OpenCLEngine satisfies Engine.
 var _ Engine[float32] = (*OpenCLEngine[float32])(nil)

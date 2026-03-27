@@ -235,6 +235,15 @@ func (p *EngineProxy[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], 
 	return result, err
 }
 
+// HadamardTransform delegates to the underlying engine and records the operation if tracing.
+func (p *EngineProxy[T]) HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	result, err := p.real.HadamardTransform(ctx, a, dst...)
+	if err == nil {
+		p.record("HadamardTransform", []*tensor.TensorNumeric[T]{a}, result, nil)
+	}
+	return result, err
+}
+
 // MulScalar delegates to the underlying engine and records the operation if tracing.
 func (p *EngineProxy[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.MulScalar(ctx, a, scalar, dst...)

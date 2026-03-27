@@ -320,5 +320,10 @@ func (e *ROCmEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], d
 	return e.cpu.Rsqrt(ctx, a, dst...)
 }
 
+// HadamardTransform delegates to the CPU engine.
+func (e *ROCmEngine[T]) HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.HadamardTransform(ctx, a, dst...)
+}
+
 // Static type assertion: ROCmEngine satisfies Engine.
 var _ Engine[float32] = (*ROCmEngine[float32])(nil)
