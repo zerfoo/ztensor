@@ -3946,6 +3946,13 @@ func (e *GPUEngine[T]) Sync() error {
 	return nil
 }
 
+// CosineSimilarity computes pairwise cosine similarity between rows of two 2D tensors.
+// a has shape [M, D], b has shape [N, D]. Result has shape [M, N].
+// Currently delegates to CPUEngine; a dedicated GPU kernel will be added later.
+func (e *GPUEngine[T]) CosineSimilarity(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.CosineSimilarity(ctx, a, b, dst...)
+}
+
 // HadamardTransform delegates to the CPU engine.
 func (e *GPUEngine[T]) HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.HadamardTransform(ctx, a, dst...)
