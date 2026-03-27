@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.6](https://github.com/zerfoo/ztensor/compare/v0.9.5...v0.9.6) (2026-03-27)
+
+
+### Bug Fixes
+
+* **graph:** skip all quantized storage in EnsureSlotsGPU/EnsureCaptureInputsGPU ([0b38668](https://github.com/zerfoo/ztensor/commit/0b38668bcfb6125270f56e95d3421ce36345bf37))
+
 ## [0.9.5](https://github.com/zerfoo/ztensor/compare/v0.9.4...v0.9.5) (2026-03-27)
 
 
