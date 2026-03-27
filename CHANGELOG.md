@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/zerfoo/ztensor/compare/v0.9.3...v0.9.4) (2026-03-27)
+
+
+### Bug Fixes
+
+* **compute:** copy mmap bytes to heap before cudaMemcpy upload ([c2d68e7](https://github.com/zerfoo/ztensor/commit/c2d68e7e860d92410b36cfb26a2772b2753bfa5c))
+
 ## [0.9.3](https://github.com/zerfoo/ztensor/compare/v0.9.2...v0.9.3) (2026-03-27)
 
 
