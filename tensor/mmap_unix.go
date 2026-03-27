@@ -45,11 +45,6 @@ func MmapFile(path string) (data []byte, closer func() error, err error) {
 	// Close the file descriptor; the mapping remains valid after close.
 	_ = f.Close()
 
-	// Hint sequential access for the initial tensor loading pass.
-	// Callers should call MadviseRandom(data) after loading completes
-	// to optimize for inference's random layer access pattern.
-	_ = MadviseSequential(mapped)
-
 	cleanup := func() error {
 		return syscall.Munmap(mapped)
 	}
