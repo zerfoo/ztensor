@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/zerfoo/ztensor/compare/v0.9.2...v0.9.3) (2026-03-27)
+
+
+### Bug Fixes
+
+* **graph:** skip quantized storage in PreUploadFrozenWeights ([4b8388c](https://github.com/zerfoo/ztensor/commit/4b8388c9ad14d2af78d2e2695a33df12028dd19b))
+
 ## [0.9.2](https://github.com/zerfoo/ztensor/compare/v0.9.1...v0.9.2) (2026-03-27)
 
 
