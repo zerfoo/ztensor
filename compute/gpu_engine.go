@@ -442,16 +442,20 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				tensor.GGMLTypeQ8_0, tensor.GGMLTypeQ5_0, tensor.GGMLTypeQ4_1,
 				tensor.GGMLTypeQ5_1:
 				// K-quants and other block formats: upload raw bytes contiguously.
-				rawBytes := ms.RawBytes()
-				devPtr, err := e.runtime.Malloc(len(rawBytes))
+				// Copy from mmap to heap first — cudaMemcpy from mmap'd pages
+				// can fail with misaligned address on ARM64 (GB10/Grace Hopper).
+				mmapBytes := ms.RawBytes()
+				heapCopy := make([]byte, len(mmapBytes))
+				copy(heapCopy, mmapBytes)
+				devPtr, err := e.runtime.Malloc(len(heapCopy))
 				if err != nil {
 					return fmt.Errorf("alloc mmap %d GPU (shape %v): %w", qtype, t.Shape(), err)
 				}
-				if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+				if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&heapCopy[0]), len(heapCopy), gpuapi.MemcpyHostToDevice); err != nil {
 					_ = e.runtime.Free(devPtr)
 					return fmt.Errorf("upload mmap %d (shape %v): %w", qtype, t.Shape(), err)
 				}
-				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+				ms.SetGPUPtr(devPtr, len(heapCopy), e.deviceID)
 				q4Uploaded++
 				continue
 			case tensor.GGMLTypeF16, tensor.GGMLTypeBF16:
