@@ -248,13 +248,16 @@ __device__ void dev_slice(float* out, const float* in,
 // T99.2: Repeat device function
 // ============================================================
 
-// dev_repeat replicates input along an axis (GQA K/V head replication).
-// For last-axis repeat: out[r*dim + i] = in[i] for r in [0, reps).
+// dev_repeat replicates input along an axis using repeat-each semantics
+// (np.repeat). Each element is repeated `reps` times consecutively:
+// [a,b,c] with reps=2 -> [a,a,b,b,c,c].
+// This is required for GQA KV head replication so each KV head correctly
+// pairs with its group of query heads.
 __device__ void dev_repeat(float* out, const float* in,
                             int axis, int reps, int dim) {
     int total = dim * reps;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
-        out[i] = in[i % dim];
+        out[i] = in[i / reps];
     }
     __syncthreads();
 }
