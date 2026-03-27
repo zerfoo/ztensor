@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"unsafe"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/device"
@@ -41,6 +42,10 @@ type MmapStorage struct {
 
 	decoded  []float32 // lazily populated on first Slice() call
 	decodeMu sync.Once
+
+	gpuPtr      unsafe.Pointer // cached GPU device pointer for raw bytes
+	gpuByteSize int
+	gpuDeviceID int
 }
 
 // NewMmapStorage creates an MmapStorage that wraps a slice of mmap'd bytes.
@@ -143,6 +148,44 @@ func (s *MmapStorage) QType() GGMLType { return s.qtype }
 
 // ByteSize returns the raw byte size of the mmap'd data.
 func (s *MmapStorage) ByteSize() int { return s.byteSize }
+
+// SetGPUPtr stores a pre-uploaded GPU device pointer for the raw quantized bytes.
+// After calling this, GPUPtr() returns the cached pointer and the GPU engine can
+// skip per-operation H2D copies.
+func (s *MmapStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	s.gpuPtr = ptr
+	s.gpuByteSize = byteSize
+	s.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the cached GPU device pointer, byte size, and device ID.
+// Returns (nil, 0, 0) if the data has not been uploaded to GPU yet.
+func (s *MmapStorage) GPUPtr() (unsafe.Pointer, int, int) {
+	return s.gpuPtr, s.gpuByteSize, s.gpuDeviceID
+}
+
+// RawBytesGPU returns the raw bytes in GPU-optimized layout. For Q4_0, this
+// repacks the interleaved blocks into separated scales+data format matching
+// Q4Storage.RawBytesGPU. For all other types, returns the raw bytes as-is.
+func (s *MmapStorage) RawBytesGPU() []byte {
+	if s.qtype != GGMLTypeQ4_0 {
+		return s.data
+	}
+	// Q4_0: repack from interleaved [scale(2) data(16)]... to
+	// [all_scales(N*2) padding all_data(N*16)].
+	const blockBytes = 18
+	totalBlocks := len(s.data) / blockBytes
+	scaleBytes := totalBlocks * 2
+	paddedScaleBytes := (scaleBytes + 15) &^ 15
+	dataBytes := totalBlocks * 16
+	out := make([]byte, paddedScaleBytes+dataBytes)
+	for i := range totalBlocks {
+		off := i * blockBytes
+		copy(out[i*2:i*2+2], s.data[off:off+2])               // scale
+		copy(out[paddedScaleBytes+i*16:], s.data[off+2:off+18]) // data
+	}
+	return out
+}
 
 // dequantize decodes the raw mmap'd bytes into float32 based on the quantization type.
 func (s *MmapStorage) dequantize(dst []float32) {
