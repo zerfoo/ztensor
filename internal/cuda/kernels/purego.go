@@ -155,6 +155,9 @@ type KernelLib struct {
 	// gemv_warp (warp-specialized GEMV for decode phase)
 	launchGemvWarpF32 uintptr
 	launchGemvWarpF16 uintptr
+
+	// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
+	launchTernaryGemvF32 uintptr
 }
 
 var (
@@ -305,6 +308,8 @@ func openKernelLib() (*KernelLib, error) {
 		// gemv_warp (warp-specialized GEMV for decode phase)
 		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
 		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
+		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
+		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -337,6 +342,7 @@ func openKernelLib() (*KernelLib, error) {
 			"fp4_gemv_f16":                    true,
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
+			"ternary_gemv_f32":                true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
