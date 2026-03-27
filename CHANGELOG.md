@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5](https://github.com/zerfoo/ztensor/compare/v0.9.4...v0.9.5) (2026-03-27)
+
+
+### Bug Fixes
+
+* **compute:** skip MmapStorage entirely in UploadWeights ([8796fd0](https://github.com/zerfoo/ztensor/commit/8796fd03f6ee406c92900eab6cef0662d338ba1e))
+
 ## [0.9.4](https://github.com/zerfoo/ztensor/compare/v0.9.3...v0.9.4) (2026-03-27)
 
 
