@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.0](https://github.com/zerfoo/ztensor/compare/v0.10.1...v0.11.0) (2026-03-27)
+
+
+### Features
+
+* **compute:** add CosineSimilarity to Engine[T] ([204f07b](https://github.com/zerfoo/ztensor/commit/204f07b49fc8d981dfb8d80539beec8548889e9a))
+* **compute:** add GPU dispatch for CosineSimilarity ([40588bc](https://github.com/zerfoo/ztensor/commit/40588bcbb249a35e5b8973b5aea813cb14810cc5))
+* **compute:** add GPU dispatch for ternary GEMV ([295f61c](https://github.com/zerfoo/ztensor/commit/295f61ceddab8ec5ee367dd51c82c9059792c7d7))
+* **compute:** add Hadamard matrix generator ([b3b3478](https://github.com/zerfoo/ztensor/commit/b3b347838f6b2c21a4c61761bc194a98180a20ad))
+* **compute:** add HadamardTransform to Engine[T] ([5a99614](https://github.com/zerfoo/ztensor/commit/5a99614839b20deca6fc37095209c7ee1e086f5c))
+* **compute:** add ReduceMax to Engine[T] ([4b9b712](https://github.com/zerfoo/ztensor/commit/4b9b712e47381fbeabbf68d2cc42dfe2237e0531))
+* **compute:** add split-KV flash decode kernel with CPU reference ([c16817e](https://github.com/zerfoo/ztensor/commit/c16817e6211fa8d6e6b19bf751f71e6918d434f5))
+* **compute:** add split-KV flash decode kernel with CPU reference ([41feddf](https://github.com/zerfoo/ztensor/commit/41feddfbccfbe7e79daa59b5d3a671daff31e919))
+* **compute:** add TernaryGEMV for ternary weight matrix-vector multiply ([8731bd1](https://github.com/zerfoo/ztensor/commit/8731bd172c60590fb0df32c93c4ffa4fdab50d9b))
+* **cuda:** add fused NSA three-path attention kernel stub ([a024958](https://github.com/zerfoo/ztensor/commit/a024958cf5f5acb3398c5724476068a6e37b0bc5))
+* **tensor:** add IQ2_XXS dequantization storage ([48677a7](https://github.com/zerfoo/ztensor/commit/48677a73b9937ec17806e3df8de8a4b335a5d350))
+* **tensor:** add IQ3_S dequantization storage ([9eab58b](https://github.com/zerfoo/ztensor/commit/9eab58b77dd7a5fe70e2027485e3a7f440670de0))
+* **tensor:** add IQ4_NL dequantization storage ([5205837](https://github.com/zerfoo/ztensor/commit/5205837c8fd596f7f621bd27e7ac906865b1346e))
+* **tensor:** add TernaryStorage for 2-bit ternary weights ([0f7c5ca](https://github.com/zerfoo/ztensor/commit/0f7c5ca4350fcb3baa4b1f6ecaf6c33b3de8fc5b))
+
 ## [0.10.1](https://github.com/zerfoo/ztensor/compare/v0.10.0...v0.10.1) (2026-03-27)
 
 
