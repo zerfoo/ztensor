@@ -282,186 +282,59 @@ func (s *MmapStorage) dequantizeQ8_0(dst []float32) {
 	}
 }
 
-// dequantizeQ4K decodes Q4_K super-blocks (256 elements, 144 bytes each).
-// Layout per super-block:
-//
-//	bytes 0-1:   fp16 d (super-block scale)
-//	bytes 2-3:   fp16 dmin (super-block min)
-//	bytes 4-15:  12 bytes packed sub-block scales/mins (6-bit each, 8 sub-blocks)
-//	bytes 16-143: 128 bytes packed 4-bit quantized values (256 values, 2 per byte)
+// dequantizeQ4K delegates to the reference DequantizeQ4K implementation per block.
 func (s *MmapStorage) dequantizeQ4K(dst []float32) {
 	const superBlockSize = 256
 	const superBlockBytes = 144
 	nBlocks := (s.length + superBlockSize - 1) / superBlockSize
-
 	for bi := range nBlocks {
-		off := bi * superBlockBytes
-		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off : off+2])).ToFloat32()
-		dmin := float16.FromBits(binary.LittleEndian.Uint16(s.data[off+2 : off+4])).ToFloat32()
-
-		// Decode 8 sub-block scales and mins from 12 bytes.
-		scales := s.data[off+4 : off+16]
-		var sc [8]float32
-		var mn [8]float32
-		for i := range 8 {
-			var scBits, mnBits uint8
-			if i < 4 {
-				scBits = scales[i] & 0x3F
-				mnBits = scales[i+4] & 0x3F
-			} else {
-				scBits = (scales[i+4] & 0x0F) | ((scales[i-4] >> 6) << 4)
-				mnBits = (scales[i+4] >> 4) | ((scales[i] >> 6) << 4)
-			}
-			sc[i] = d * float32(scBits)
-			mn[i] = dmin * float32(mnBits)
-		}
-
-		// Decode 256 values from 128 packed bytes.
-		qdata := s.data[off+16 : off+superBlockBytes]
-		baseIdx := bi * superBlockSize
-		for j := range 128 {
-			packed := qdata[j]
-			subBlock0 := (j * 2) / superBlockSize * 4           // sub-block for low pair
-			subIdx0 := (j * 2) % superBlockSize / (superBlockSize / 8) // sub-block index
-			_ = subBlock0
-			_ = subIdx0
-
-			// Simpler indexing: each sub-block covers 32 elements
-			elemIdx0 := baseIdx + j*2
-			elemIdx1 := baseIdx + j*2 + 1
-			sb := j / 16 // sub-block index (0-7): 16 bytes per sub-block, 32 values
-
-			q0 := float32(packed & 0x0F)
-			q1 := float32(packed >> 4)
-
-			if elemIdx0 < s.length {
-				dst[elemIdx0] = q0*sc[sb] - mn[sb]
-			}
-			if elemIdx1 < s.length {
-				dst[elemIdx1] = q1*sc[sb] - mn[sb]
-			}
+		off := bi * superBlockSize
+		remaining := s.length - off
+		blockRaw := s.data[bi*superBlockBytes : (bi+1)*superBlockBytes]
+		if remaining >= superBlockSize {
+			DequantizeQ4K(blockRaw, dst[off:off+superBlockSize])
+		} else {
+			var tmp [superBlockSize]float32
+			DequantizeQ4K(blockRaw, tmp[:])
+			copy(dst[off:], tmp[:remaining])
 		}
 	}
 }
 
-// dequantizeQ5K decodes Q5_K super-blocks (256 elements, 176 bytes each).
+// dequantizeQ5K delegates to the reference DequantizeQ5K implementation per block.
 func (s *MmapStorage) dequantizeQ5K(dst []float32) {
 	const superBlockSize = 256
 	const superBlockBytes = 176
 	nBlocks := (s.length + superBlockSize - 1) / superBlockSize
-
 	for bi := range nBlocks {
-		off := bi * superBlockBytes
-		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off : off+2])).ToFloat32()
-		dmin := float16.FromBits(binary.LittleEndian.Uint16(s.data[off+2 : off+4])).ToFloat32()
-
-		// Decode sub-block scales/mins from 12 bytes (same layout as Q4_K).
-		scales := s.data[off+4 : off+16]
-		var sc [8]float32
-		var mn [8]float32
-		for i := range 8 {
-			var scBits, mnBits uint8
-			if i < 4 {
-				scBits = scales[i] & 0x3F
-				mnBits = scales[i+4] & 0x3F
-			} else {
-				scBits = (scales[i+4] & 0x0F) | ((scales[i-4] >> 6) << 4)
-				mnBits = (scales[i+4] >> 4) | ((scales[i] >> 6) << 4)
-			}
-			sc[i] = d * float32(scBits)
-			mn[i] = dmin * float32(mnBits)
-		}
-
-		// Q5_K: 128 bytes low nibbles (ql) + 32 bytes high bits (qh)
-		ql := s.data[off+16 : off+144]
-		qh := s.data[off+144 : off+176]
-		baseIdx := bi * superBlockSize
-
-		for j := range 128 {
-			packed := ql[j]
-			sb := j / 16
-
-			q0Low := packed & 0x0F
-			q1Low := packed >> 4
-
-			// High bit from qh
-			hByte := qh[j/4]
-			hBit0 := (hByte >> (uint(j%4) * 2)) & 1
-			hBit1 := (hByte >> (uint(j%4)*2 + 1)) & 1
-
-			q0 := float32(q0Low | (hBit0 << 4))
-			q1 := float32(q1Low | (hBit1 << 4))
-
-			elemIdx0 := baseIdx + j*2
-			elemIdx1 := baseIdx + j*2 + 1
-
-			if elemIdx0 < s.length {
-				dst[elemIdx0] = q0*sc[sb] - mn[sb]
-			}
-			if elemIdx1 < s.length {
-				dst[elemIdx1] = q1*sc[sb] - mn[sb]
-			}
+		off := bi * superBlockSize
+		remaining := s.length - off
+		blockRaw := s.data[bi*superBlockBytes : (bi+1)*superBlockBytes]
+		if remaining >= superBlockSize {
+			DequantizeQ5K(blockRaw, dst[off:off+superBlockSize])
+		} else {
+			var tmp [superBlockSize]float32
+			DequantizeQ5K(blockRaw, tmp[:])
+			copy(dst[off:], tmp[:remaining])
 		}
 	}
 }
 
-// dequantizeQ6K decodes Q6_K super-blocks (256 elements, 210 bytes each).
-// Layout: 128 bytes ql + 64 bytes qh + 16 bytes scales + 2 bytes d
+// dequantizeQ6K delegates to the reference DequantizeQ6K implementation per block.
 func (s *MmapStorage) dequantizeQ6K(dst []float32) {
 	const superBlockSize = 256
 	const superBlockBytes = 210
 	nBlocks := (s.length + superBlockSize - 1) / superBlockSize
-
 	for bi := range nBlocks {
-		off := bi * superBlockBytes
-		ql := s.data[off : off+128]
-		qh := s.data[off+128 : off+192]
-		scaleBytes := s.data[off+192 : off+208]
-		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off+208 : off+210])).ToFloat32()
-
-		// 16 int8 sub-block scales
-		var sc [16]float32
-		for i := range 16 {
-			sc[i] = d * float32(int8(scaleBytes[i]))
-		}
-
-		baseIdx := bi * superBlockSize
-
-		// Decode 256 values. Q6_K packs 6 bits per value:
-		// - ql: lower 4 bits (128 bytes for 256 values, 2 per byte)
-		// - qh: upper 2 bits (64 bytes for 256 values, 4 per byte)
-		for j := range 128 {
-			packedLow := ql[j]
-			q0Low := packedLow & 0x0F
-			q1Low := packedLow >> 4
-
-			// Each qh byte holds 2-bit high parts for 4 values
-			qhByte := qh[j/2]
-			var q0High, q1High byte
-			if j%2 == 0 {
-				q0High = (qhByte >> 0) & 0x03
-				q1High = (qhByte >> 2) & 0x03
-			} else {
-				q0High = (qhByte >> 4) & 0x03
-				q1High = (qhByte >> 6) & 0x03
-			}
-
-			q0 := int8(q0Low|(q0High<<4)) - 32
-			q1 := int8(q1Low|(q1High<<4)) - 32
-
-			// Sub-block: 16 values each, so 16 sub-blocks
-			sb0 := (j * 2) / 16
-			sb1 := (j*2 + 1) / 16
-
-			elemIdx0 := baseIdx + j*2
-			elemIdx1 := baseIdx + j*2 + 1
-
-			if elemIdx0 < s.length {
-				dst[elemIdx0] = float32(q0) * sc[sb0]
-			}
-			if elemIdx1 < s.length {
-				dst[elemIdx1] = float32(q1) * sc[sb1]
-			}
+		off := bi * superBlockSize
+		remaining := s.length - off
+		blockRaw := s.data[bi*superBlockBytes : (bi+1)*superBlockBytes]
+		if remaining >= superBlockSize {
+			DequantizeQ6K(blockRaw, dst[off:off+superBlockSize])
+		} else {
+			var tmp [superBlockSize]float32
+			DequantizeQ6K(blockRaw, tmp[:])
+			copy(dst[off:], tmp[:remaining])
 		}
 	}
 }
