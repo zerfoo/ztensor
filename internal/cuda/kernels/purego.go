@@ -140,6 +140,9 @@ type KernelLib struct {
 	// selective_scan
 	launchSelectiveScanForward uintptr
 
+	// flash_decode (split-KV)
+	launchFlashDecodeSplitKVF32 uintptr
+
 	// paged_attention
 	launchPagedAttentionF32 uintptr
 
@@ -152,6 +155,9 @@ type KernelLib struct {
 	// gemv_warp (warp-specialized GEMV for decode phase)
 	launchGemvWarpF32 uintptr
 	launchGemvWarpF16 uintptr
+
+	// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
+	launchTernaryGemvF32 uintptr
 }
 
 var (
@@ -291,6 +297,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_sgemv_m1", &k.launchSgemvM1},
 		// selective_scan
 		{"launch_selective_scan_forward", &k.launchSelectiveScanForward},
+		// flash_decode (split-KV)
+		{"flash_decode_splitkv_f32", &k.launchFlashDecodeSplitKVF32},
 		// paged_attention
 		{"paged_attention_forward_f32", &k.launchPagedAttentionF32},
 		// ragged_attention
@@ -300,6 +308,8 @@ func openKernelLib() (*KernelLib, error) {
 		// gemv_warp (warp-specialized GEMV for decode phase)
 		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
 		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
+		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
+		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -326,11 +336,13 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_rope_select":              true,
 			"launch_sgemv_m1":                 true,
 			"launch_selective_scan_forward":   true,
+			"flash_decode_splitkv_f32":        true,
 			"paged_attention_forward_f32":     true,
 			"ragged_attention_forward_f32":    true,
 			"fp4_gemv_f16":                    true,
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
+			"ternary_gemv_f32":                true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
