@@ -158,6 +158,15 @@ type KernelLib struct {
 
 	// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 	launchTernaryGemvF32 uintptr
+
+	// kv_dequant (fused dequant-and-gather for Q4/Q3 KV cache)
+	launchKVDequantQ4F32 uintptr
+	launchKVDequantQ3F32 uintptr
+
+	// iq_dequant (I-Quant dequantization kernels)
+	launchDequantIQ4NLF32  uintptr
+	launchDequantIQ3SF32   uintptr
+	launchDequantIQ2XXSF32 uintptr
 }
 
 var (
@@ -310,6 +319,13 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
 		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
+		// kv_dequant (fused dequant-and-gather for Q4/Q3 KV cache)
+		{"kv_dequant_q4_f32", &k.launchKVDequantQ4F32},
+		{"kv_dequant_q3_f32", &k.launchKVDequantQ3F32},
+		// iq_dequant (I-Quant dequantization kernels)
+		{"dequant_iq4nl_f32", &k.launchDequantIQ4NLF32},
+		{"dequant_iq3s_f32", &k.launchDequantIQ3SF32},
+		{"dequant_iq2xxs_f32", &k.launchDequantIQ2XXSF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -343,6 +359,11 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
 			"ternary_gemv_f32":                true,
+			"kv_dequant_q4_f32":              true,
+			"kv_dequant_q3_f32":              true,
+			"dequant_iq4nl_f32":              true,
+			"dequant_iq3s_f32":               true,
+			"dequant_iq2xxs_f32":             true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
