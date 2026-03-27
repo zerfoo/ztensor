@@ -274,9 +274,29 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 			}
 			continue
 		}
-		// Skip Q4Storage — already uploaded as raw Q4 bytes by UploadWeights.
-		// Q4 GEMV reads 0.5 bytes/weight (8x less than F32). Phase 6: 234 tok/s.
+		// Skip quantized storage types — already uploaded as raw bytes by
+		// UploadWeights. The quantized GEMV kernels read directly from the
+		// raw byte GPU pointers, so re-uploading as float32 is both wasteful
+		// and causes misaligned address errors during CUDA graph capture.
 		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q4KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q6KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.MmapStorage); ok {
 			continue
 		}
 		// Skip scalar constants — they are read as host values by Range, Pow, etc.
