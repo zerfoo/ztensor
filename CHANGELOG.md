@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/zerfoo/ztensor/compare/v0.9.0...v0.9.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* **tensor:** delegate K-quant MmapStorage dequant to reference implementations ([3ef8261](https://github.com/zerfoo/ztensor/commit/3ef8261f40c8cc58ce01bf5eca31948f143dbf2e))
+
 ## [0.9.0](https://github.com/zerfoo/ztensor/compare/v0.8.0...v0.9.0) (2026-03-27)
 
 
