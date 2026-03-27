@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/zerfoo/ztensor/compare/v0.7.0...v0.8.0) (2026-03-27)
+
+
+### Features
+
+* **tensor:** add Q4_1/Q5_0/Q5_1 support for MmapStorage ([8adb879](https://github.com/zerfoo/ztensor/commit/8adb87914d5d48ae2c54db6368ac2a83a1ce88d8))
+
 ## [0.7.0](https://github.com/zerfoo/ztensor/compare/v0.6.3...v0.7.0) (2026-03-27)
 
 
