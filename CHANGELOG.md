@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/zerfoo/ztensor/compare/v0.10.0...v0.10.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* **tensor:** remove MADV_SEQUENTIAL from MmapFile (caused 7x load regression) ([8949a19](https://github.com/zerfoo/ztensor/commit/8949a19d131f32efddcc68bf1571cb44d91ae93a))
+
 ## [0.10.0](https://github.com/zerfoo/ztensor/compare/v0.9.6...v0.10.0) (2026-03-27)
 
 
