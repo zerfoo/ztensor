@@ -20,3 +20,15 @@ func Mmap(fd uintptr, offset int64, length int) ([]byte, error) {
 func Munmap(data []byte) error {
 	return fmt.Errorf("munmap: not supported on Windows")
 }
+
+// MadviseSequential is a no-op on Windows.
+func MadviseSequential(_ []byte) error { return nil }
+
+// MadviseRandom is a no-op on Windows.
+func MadviseRandom(_ []byte) error { return nil }
+
+// MadviseWillNeed is a no-op on Windows.
+func MadviseWillNeed(_ []byte) error { return nil }
+
+// MadviseDontNeed is a no-op on Windows.
+func MadviseDontNeed(_ []byte) error { return nil }

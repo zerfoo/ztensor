@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"unsafe"
 )
 
 // MmapFile memory-maps the entire file at the given path for reading.
@@ -44,6 +45,11 @@ func MmapFile(path string) (data []byte, closer func() error, err error) {
 	// Close the file descriptor; the mapping remains valid after close.
 	_ = f.Close()
 
+	// Hint sequential access for the initial tensor loading pass.
+	// Callers should call MadviseRandom(data) after loading completes
+	// to optimize for inference's random layer access pattern.
+	_ = MadviseSequential(mapped)
+
 	cleanup := func() error {
 		return syscall.Munmap(mapped)
 	}
@@ -66,4 +72,48 @@ func Mmap(fd uintptr, offset int64, length int) ([]byte, error) {
 // Munmap releases a previously mapped memory region.
 func Munmap(data []byte) error {
 	return syscall.Munmap(data)
+}
+
+// MadviseSequential hints to the kernel that the mmap'd region will be
+// accessed sequentially. This enables aggressive read-ahead, which is
+// optimal during model loading when all tensors are read in order.
+func MadviseSequential(data []byte) error {
+	return madvise(data, syscall.MADV_SEQUENTIAL)
+}
+
+// MadviseRandom hints to the kernel that the mmap'd region will be
+// accessed randomly. This disables read-ahead, which is optimal during
+// inference when individual transformer layers are accessed in
+// unpredictable patterns (especially with MoE or speculative decoding).
+func MadviseRandom(data []byte) error {
+	return madvise(data, syscall.MADV_RANDOM)
+}
+
+// MadviseWillNeed hints to the kernel that the specified region will be
+// needed soon. The kernel may start paging in the data asynchronously.
+// Use this to prefetch the next transformer layer's weights while the
+// current layer is computing.
+func MadviseWillNeed(data []byte) error {
+	return madvise(data, syscall.MADV_WILLNEED)
+}
+
+// MadviseDontNeed hints to the kernel that the specified region is no
+// longer needed. The kernel may free the physical pages, reducing RSS.
+// Use after processing a layer to release pages back to the OS.
+func MadviseDontNeed(data []byte) error {
+	return madvise(data, syscall.MADV_DONTNEED)
+}
+
+func madvise(data []byte, advice int) error {
+	if len(data) == 0 {
+		return nil
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_MADVISE,
+		uintptr(unsafe.Pointer(&data[0])),
+		uintptr(len(data)),
+		uintptr(advice))
+	if errno != 0 {
+		return fmt.Errorf("madvise(%d): %w", advice, errno)
+	}
+	return nil
 }
