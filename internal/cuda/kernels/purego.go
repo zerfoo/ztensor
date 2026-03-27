@@ -140,6 +140,9 @@ type KernelLib struct {
 	// selective_scan
 	launchSelectiveScanForward uintptr
 
+	// flash_decode (split-KV)
+	launchFlashDecodeSplitKVF32 uintptr
+
 	// paged_attention
 	launchPagedAttentionF32 uintptr
 
@@ -291,6 +294,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_sgemv_m1", &k.launchSgemvM1},
 		// selective_scan
 		{"launch_selective_scan_forward", &k.launchSelectiveScanForward},
+		// flash_decode (split-KV)
+		{"flash_decode_splitkv_f32", &k.launchFlashDecodeSplitKVF32},
 		// paged_attention
 		{"paged_attention_forward_f32", &k.launchPagedAttentionF32},
 		// ragged_attention
@@ -326,6 +331,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_rope_select":              true,
 			"launch_sgemv_m1":                 true,
 			"launch_selective_scan_forward":   true,
+			"flash_decode_splitkv_f32":        true,
 			"paged_attention_forward_f32":     true,
 			"ragged_attention_forward_f32":    true,
 			"fp4_gemv_f16":                    true,
