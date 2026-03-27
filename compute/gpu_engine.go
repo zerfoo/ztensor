@@ -419,6 +419,9 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				continue // already on GPU
 			}
 			qtype := ms.QType()
+			// Only handle quantized types here. F32 MmapStorage falls through
+			// to the generic float32 upload path below, which correctly creates
+			// GPUStorage without interfering with CUDA graph capture.
 			switch qtype {
 			case tensor.GGMLTypeQ4_0:
 				// Q4_0 needs GPU-optimized separated layout (scales grouped,
@@ -433,6 +436,8 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 					return fmt.Errorf("upload mmap Q4_0 (shape %v): %w", t.Shape(), err)
 				}
 				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+				q4Uploaded++
+				continue
 			case tensor.GGMLTypeQ4_K, tensor.GGMLTypeQ5_K, tensor.GGMLTypeQ6_K,
 				tensor.GGMLTypeQ8_0, tensor.GGMLTypeQ5_0, tensor.GGMLTypeQ4_1,
 				tensor.GGMLTypeQ5_1:
@@ -447,6 +452,8 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 					return fmt.Errorf("upload mmap %d (shape %v): %w", qtype, t.Shape(), err)
 				}
 				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+				q4Uploaded++
+				continue
 			case tensor.GGMLTypeF16, tensor.GGMLTypeBF16:
 				// FP16/BF16: upload raw bytes for mixed-precision kernels.
 				rawBytes := ms.RawBytes()
@@ -459,34 +466,12 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 					return fmt.Errorf("upload mmap fp16 (shape %v): %w", t.Shape(), err)
 				}
 				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
-			default:
-				// F32 and other types: dequantize to float32 and upload as dense.
-				data := t.Data()
-				n := len(data)
-				if n == 0 {
-					continue
-				}
-				byteSize := n * f32Size
-				devPtr, err := e.allocWeight(byteSize)
-				if err != nil {
-					return fmt.Errorf("alloc mmap f32 GPU (shape %v): %w", t.Shape(), err)
-				}
-				src := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), byteSize)
-				if err := e.uploadBytes(devPtr, src); err != nil {
-					_ = e.runtime.Free(devPtr)
-					return fmt.Errorf("upload mmap f32 (shape %v): %w", t.Shape(), err)
-				}
-				gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
-				if err != nil {
-					_ = e.runtime.Free(devPtr)
-					return fmt.Errorf("GPU storage from mmap f32 (shape %v): %w", t.Shape(), err)
-				}
-				t.SetStorage(gs)
-				uploaded++
+				q4Uploaded++
 				continue
+			default:
+				// F32 and other unrecognized types: fall through to the
+				// generic float32 upload path below.
 			}
-			q4Uploaded++
-			continue
 		}
 		// Upload FP8 E4M3 raw bytes to GPU and cache the pointer.
 		// FP8 weights (1 byte/element) are used with cublasLtMatmul for
