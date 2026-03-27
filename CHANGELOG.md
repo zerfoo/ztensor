@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/zerfoo/ztensor/compare/v0.8.0...v0.9.0) (2026-03-27)
+
+
+### Features
+
+* **compute:** add MmapStorage GPU dispatch for quantized GEMV/GEMM ([62f3db1](https://github.com/zerfoo/ztensor/commit/62f3db145b46446bffd0f22ad041e639e1c1a483))
+
 ## [0.8.0](https://github.com/zerfoo/ztensor/compare/v0.7.0...v0.8.0) (2026-03-27)
 
 
