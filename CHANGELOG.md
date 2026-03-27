@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/zerfoo/ztensor/compare/v0.6.2...v0.6.3) (2026-03-27)
+
+
+### Bug Fixes
+
+* **compute:** change Repeat to repeat-each semantics for GQA correctness ([d3e6b96](https://github.com/zerfoo/ztensor/commit/d3e6b9667ad578080ce5f3931d84848b21c79eb5))
+
 ## [0.6.2](https://github.com/zerfoo/ztensor/compare/v0.6.1...v0.6.2) (2026-03-26)
 
 
