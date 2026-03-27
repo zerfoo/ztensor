@@ -313,6 +313,21 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 	return nil
 }
 
+// isQuantizedStorage returns true if the storage is a quantized type that
+// has its own GPU upload path (UploadWeights) and should NOT be converted
+// to float32 GPUStorage by EnsureSlotsGPU/EnsureCaptureInputsGPU.
+func isQuantizedStorage[T tensor.Numeric](t *tensor.TensorNumeric[T]) bool {
+	s := t.GetStorage()
+	switch any(s).(type) {
+	case *tensor.Q4Storage, *tensor.Q4KStorage, *tensor.Q8Storage,
+		*tensor.Q6KStorage, *tensor.Q5KStorage, *tensor.Q5_0Storage,
+		*tensor.MmapStorage, *tensor.BFloat16Storage, *tensor.Float16Storage,
+		*tensor.FP8E4M3Storage:
+		return true
+	}
+	return false
+}
+
 // EnsureSlotsGPU uploads any CPU-resident scratch slot tensors to GPU. If a
 // pre-allocated GPU tensor exists for the slot (from a previous capture), the
 // CPU data is copied into it to preserve device addresses for CUDA graph
@@ -333,6 +348,9 @@ func (p *ExecutionPlan[T]) EnsureSlotsGPU(gpuSlotCache map[int]*tensor.TensorNum
 		}
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 			continue // already GPU-resident
+		}
+		if isQuantizedStorage(t) {
+			continue // quantized types use their own GPU path
 		}
 		// Check for cached GPU buffer from previous capture.
 		if cached, ok := gpuSlotCache[i]; ok {
@@ -374,10 +392,10 @@ func (p *ExecutionPlan[T]) EnsureCaptureInputsGPU(start, end int, gpuSlotCache m
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 			continue
 		}
-		// Skip Q4Storage — Q4 weights have GPUPtr set by UploadWeights and use
-		// the fused Q4 GEMV kernel. Converting to F32 here would override the
-		// Q4 GEMV capture with cuBLAS SGEMM (8x more bandwidth, 33% slower).
-		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+		// Skip quantized storage types — they have their own GPU upload path
+		// (UploadWeights) and use fused GEMV kernels. Converting to F32 here
+		// would override the quantized capture with cuBLAS SGEMM.
+		if isQuantizedStorage(t) {
 			continue
 		}
 		if cached, ok := gpuSlotCache[idx]; ok {
