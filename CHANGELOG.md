@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/zerfoo/ztensor/compare/v0.6.3...v0.7.0) (2026-03-27)
+
+
+### Features
+
+* **tensor:** add MmapStorage type and platform mmap helpers ([f8b48bb](https://github.com/zerfoo/ztensor/commit/f8b48bb901fe9dd46a25a40b1eff05e92a7ab9bd))
+
 ## [0.6.3](https://github.com/zerfoo/ztensor/compare/v0.6.2...v0.6.3) (2026-03-27)
 
 
