@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/zerfoo/ztensor/compare/v0.9.6...v0.10.0) (2026-03-27)
+
+
+### Features
+
+* **tensor:** add madvise hints for mmap'd pages ([e26c8d6](https://github.com/zerfoo/ztensor/commit/e26c8d6a56e5da3959d98b3c2158e1e353e9af26))
+
 ## [0.9.6](https://github.com/zerfoo/ztensor/compare/v0.9.5...v0.9.6) (2026-03-27)
 
 
