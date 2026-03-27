@@ -18,6 +18,9 @@ const (
 	GGMLTypeF32  GGMLType = 0
 	GGMLTypeF16  GGMLType = 1
 	GGMLTypeQ4_0 GGMLType = 2
+	GGMLTypeQ4_1 GGMLType = 3
+	GGMLTypeQ5_0 GGMLType = 6
+	GGMLTypeQ5_1 GGMLType = 7
 	GGMLTypeQ8_0 GGMLType = 8
 	GGMLTypeQ4_K GGMLType = 12
 	GGMLTypeQ5_K GGMLType = 13
@@ -86,6 +89,15 @@ func mmapByteSize(qtype GGMLType, numElements int) (int, error) {
 	case GGMLTypeQ8_0:
 		nBlocks := (numElements + 31) / 32
 		return nBlocks * 34, nil // 2 bytes fp16 scale + 32 bytes int8
+	case GGMLTypeQ4_1:
+		nBlocks := (numElements + 31) / 32
+		return nBlocks * 20, nil // 2 bytes scale + 2 bytes min + 16 bytes data
+	case GGMLTypeQ5_0:
+		nBlocks := (numElements + 31) / 32
+		return nBlocks * 22, nil // 2 bytes scale + 4 bytes high bits + 16 bytes data
+	case GGMLTypeQ5_1:
+		nBlocks := (numElements + 31) / 32
+		return nBlocks * 24, nil // 2 bytes scale + 2 bytes min + 4 bytes high bits + 16 bytes data
 	case GGMLTypeQ4_K:
 		nBlocks := (numElements + 255) / 256
 		return nBlocks * 144, nil
@@ -145,6 +157,12 @@ func (s *MmapStorage) dequantize(dst []float32) {
 		s.dequantizeQ4_0(dst)
 	case GGMLTypeQ8_0:
 		s.dequantizeQ8_0(dst)
+	case GGMLTypeQ4_1:
+		s.dequantizeQ4_1(dst)
+	case GGMLTypeQ5_0:
+		s.dequantizeQ5_0(dst)
+	case GGMLTypeQ5_1:
+		s.dequantizeQ5_1(dst)
 	case GGMLTypeQ4_K:
 		s.dequantizeQ4K(dst)
 	case GGMLTypeQ5_K:
@@ -400,6 +418,98 @@ func (s *MmapStorage) dequantizeQ6K(dst []float32) {
 			}
 			if elemIdx1 < s.length {
 				dst[elemIdx1] = float32(q1) * sc[sb1]
+			}
+		}
+	}
+}
+
+// dequantizeQ4_1 decodes Q4_1 blocks: 32 elements per block, 20 bytes each.
+// Layout: 2 bytes fp16 scale + 2 bytes fp16 min + 16 bytes packed nibbles.
+func (s *MmapStorage) dequantizeQ4_1(dst []float32) {
+	const blockSize = 32
+	const blockBytes = 20
+	nBlocks := (s.length + blockSize - 1) / blockSize
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off : off+2])).ToFloat32()
+		m := float16.FromBits(binary.LittleEndian.Uint16(s.data[off+2 : off+4])).ToFloat32()
+		for j := range blockSize / 2 {
+			b := s.data[off+4+j]
+			idx0 := bi*blockSize + j
+			idx1 := bi*blockSize + j + blockSize/2
+			if idx0 < s.length {
+				dst[idx0] = float32(b&0x0F)*d + m
+			}
+			if idx1 < s.length {
+				dst[idx1] = float32(b>>4)*d + m
+			}
+		}
+	}
+}
+
+// dequantizeQ5_0 decodes Q5_0 blocks: 32 elements per block, 22 bytes each.
+// Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low nibbles.
+func (s *MmapStorage) dequantizeQ5_0(dst []float32) {
+	const blockSize = 32
+	const halfBlock = blockSize / 2
+	const blockBytes = 22
+	nBlocks := (s.length + blockSize - 1) / blockSize
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off : off+2])).ToFloat32()
+		qh := binary.LittleEndian.Uint32(s.data[off+2 : off+6])
+		for j := range halfBlock {
+			b := s.data[off+6+j]
+			lo := int(b & 0x0F)
+			hi := int(b >> 4)
+			// Add high bit from qh
+			if qh&(1<<uint(j)) != 0 {
+				lo |= 16
+			}
+			if qh&(1<<uint(j+halfBlock)) != 0 {
+				hi |= 16
+			}
+			idx0 := bi*blockSize + j
+			idx1 := bi*blockSize + j + halfBlock
+			if idx0 < s.length {
+				dst[idx0] = float32(lo-16) * d
+			}
+			if idx1 < s.length {
+				dst[idx1] = float32(hi-16) * d
+			}
+		}
+	}
+}
+
+// dequantizeQ5_1 decodes Q5_1 blocks: 32 elements per block, 24 bytes each.
+// Layout: 2 bytes fp16 scale + 2 bytes fp16 min + 4 bytes high bits + 16 bytes low nibbles.
+func (s *MmapStorage) dequantizeQ5_1(dst []float32) {
+	const blockSize = 32
+	const halfBlock = blockSize / 2
+	const blockBytes = 24
+	nBlocks := (s.length + blockSize - 1) / blockSize
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(s.data[off : off+2])).ToFloat32()
+		m := float16.FromBits(binary.LittleEndian.Uint16(s.data[off+2 : off+4])).ToFloat32()
+		qh := binary.LittleEndian.Uint32(s.data[off+4 : off+8])
+		for j := range halfBlock {
+			b := s.data[off+8+j]
+			lo := int(b & 0x0F)
+			hi := int(b >> 4)
+			if qh&(1<<uint(j)) != 0 {
+				lo |= 16
+			}
+			if qh&(1<<uint(j+halfBlock)) != 0 {
+				hi |= 16
+			}
+			idx0 := bi*blockSize + j
+			idx1 := bi*blockSize + j + halfBlock
+			if idx0 < s.length {
+				dst[idx0] = float32(lo)*d + m
+			}
+			if idx1 < s.length {
+				dst[idx1] = float32(hi)*d + m
 			}
 		}
 	}
