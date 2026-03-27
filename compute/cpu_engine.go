@@ -264,6 +264,141 @@ func (e *CPUEngine[T]) ReduceSum(
 	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
+// ReduceMax computes the maximum of elements along an axis.
+func (e *CPUEngine[T]) ReduceMax(
+	ctx context.Context,
+	a *tensor.TensorNumeric[T],
+	axis int,
+	keepDims bool,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("ReduceMax", time.Now())
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
+
+	// A negative axis means reduce over all axes.
+	if axis < 0 {
+		data := a.Data()
+		if len(data) == 0 {
+			return nil, errors.New("cannot reduce empty tensor")
+		}
+		maxVal := data[0]
+		for _, v := range data[1:] {
+			if e.ops.GreaterThan(v, maxVal) {
+				maxVal = v
+			}
+		}
+		shape := []int{1}
+		if keepDims {
+			shape = make([]int, a.Dims())
+			for i := range shape {
+				shape[i] = 1
+			}
+		}
+		result, err := e.getOrCreateDest(shape, dst...)
+		if err != nil {
+			return nil, err
+		}
+		result.Data()[0] = maxVal
+		return result, nil
+	}
+
+	shape := a.Shape()
+	if axis < 0 {
+		axis = len(shape) + axis
+	}
+	if axis < 0 || axis >= len(shape) {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(shape))
+	}
+
+	newShape := make([]int, 0, len(shape))
+	if keepDims {
+		newShape = make([]int, len(shape))
+		for i, dim := range shape {
+			if i == axis {
+				newShape[i] = 1
+			} else {
+				newShape[i] = dim
+			}
+		}
+	} else {
+		for i := range shape {
+			if i != axis {
+				newShape = append(newShape, shape[i])
+			}
+		}
+		if len(newShape) == 0 {
+			newShape = []int{1}
+		}
+	}
+
+	result, err := e.getOrCreateDest(newShape, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	aData := a.Data()
+	rData := result.Data()
+	aStrides := makeStrides(shape)
+	rStrides := makeStrides(newShape)
+
+	inner := 1
+	for i := axis + 1; i < len(shape); i++ {
+		inner *= shape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+	axisSize := shape[axis]
+
+	stripes := outer * inner
+	parallelFor(stripes, func(start, end int) {
+		for s := start; s < end; s++ { //nolint:intrange
+			o := 0
+			in := 0
+			if inner != 0 {
+				o = s / inner
+				in = s % inner
+			}
+			base := o*axisSize*inner + in
+			step := inner
+
+			rIndex := 0
+			tmp := base
+			for j := 0; j < len(shape); j++ { //nolint:intrange
+				stride := aStrides[j]
+				coord := 0
+				if stride != 0 {
+					coord = tmp / stride
+					tmp %= stride
+				}
+				if j < axis {
+					rIndex += coord * rStrides[j]
+				} else if j > axis {
+					if keepDims {
+						rIndex += coord * rStrides[j]
+					} else {
+						rIndex += coord * rStrides[j-1]
+					}
+				}
+			}
+
+			maxVal := aData[base]
+			for k := 1; k < axisSize; k++ { //nolint:intrange
+				idx := base + k*step
+				if e.ops.GreaterThan(aData[idx], maxVal) {
+					maxVal = aData[idx]
+				}
+			}
+			rData[rIndex] = maxVal
+		}
+	})
+
+	return result, nil
+}
+
 // Gather performs an embedding-style gather.
 // params must be 2D [vocab, dim].
 // indices may be 1D [N] or 2D [batch, seq].
@@ -1834,6 +1969,80 @@ func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return e.UnaryOp(ctx, a, func(v T) T {
 		return e.ops.Div(e.ops.FromFloat64(1), e.ops.Sqrt(v))
 	}, dst...)
+}
+
+// CosineSimilarity computes pairwise cosine similarity between rows of two 2D tensors.
+// a has shape [M, D], b has shape [N, D]. Result has shape [M, N].
+func (e *CPUEngine[T]) CosineSimilarity(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("CosineSimilarity", time.Now())
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if a == nil || b == nil {
+		return nil, errors.New("input tensors cannot be nil")
+	}
+	aShape := a.Shape()
+	bShape := b.Shape()
+	if len(aShape) != 2 || len(bShape) != 2 {
+		return nil, fmt.Errorf("tensors must be 2D, got a=%v b=%v", aShape, bShape)
+	}
+	M, D := aShape[0], aShape[1]
+	N := bShape[0]
+	if bShape[1] != D {
+		return nil, fmt.Errorf("dimension mismatch: a has D=%d, b has D=%d", D, bShape[1])
+	}
+
+	result, err := e.getOrCreateDest([]int{M, N}, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	aData := a.Data()
+	bData := b.Data()
+	rData := result.Data()
+
+	// Precompute norms for b rows.
+	bNorms := make([]float64, N)
+	for j := 0; j < N; j++ {
+		var sum float64
+		off := j * D
+		for k := 0; k < D; k++ {
+			v := float64(bData[off+k])
+			sum += v * v
+		}
+		bNorms[j] = math.Sqrt(sum)
+	}
+
+	parallelFor(M, func(start, end int) {
+		for i := start; i < end; i++ {
+			aOff := i * D
+			// Compute norm of a[i].
+			var aNorm float64
+			for k := 0; k < D; k++ {
+				v := float64(aData[aOff+k])
+				aNorm += v * v
+			}
+			aNorm = math.Sqrt(aNorm)
+
+			for j := 0; j < N; j++ {
+				bOff := j * D
+				var dot float64
+				for k := 0; k < D; k++ {
+					dot += float64(aData[aOff+k]) * float64(bData[bOff+k])
+				}
+				denom := aNorm * bNorms[j]
+				var sim float64
+				if denom > 0 {
+					sim = dot / denom
+				}
+				rData[i*N+j] = e.ops.FromFloat64(sim)
+			}
+		}
+	})
+
+	return result, nil
 }
 
 // Sqrt computes the element-wise square root of a tensor.

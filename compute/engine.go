@@ -222,6 +222,17 @@ type Engine[T tensor.Numeric] interface {
 		dst ...*tensor.TensorNumeric[T],
 	) (*tensor.TensorNumeric[T], error)
 
+	// ReduceMax calculates the maximum of elements along a specified axis.
+	// A negative axis reduces over all axes. When keepDims is true the reduced
+	// axis is retained with size 1.
+	ReduceMax(
+		ctx context.Context,
+		a *tensor.TensorNumeric[T],
+		axis int,
+		keepDims bool,
+		dst ...*tensor.TensorNumeric[T],
+	) (*tensor.TensorNumeric[T], error)
+
 	// AddScalar performs element-wise addition of a tensor by a scalar.
 	AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 
