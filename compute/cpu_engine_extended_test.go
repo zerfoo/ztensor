@@ -413,10 +413,11 @@ func TestCPUEngine_AdvancedFunctions(t *testing.T) {
 			t.Errorf("Expected shape [4, 2], got %v", result.Shape())
 		}
 
-		// Verify repeated data - repeating along axis 0 means the entire tensor is repeated
+		// Verify repeated data - repeat-each semantics: each row is repeated
+		// consecutively. Input was [1,2] [3,4], repeating along axis 0 twice
+		// gives: [1,2] [1,2] [3,4] [3,4] (each row repeated before the next).
 		data := result.Data()
-		// Input was [1,2] [3,4], repeating along axis 0 twice gives: [1,2] [3,4] [1,2] [3,4]
-		expected := []float32{1, 2, 3, 4, 1, 2, 3, 4}
+		expected := []float32{1, 2, 1, 2, 3, 4, 3, 4}
 
 		if len(data) != len(expected) {
 			t.Errorf("Expected %d values, got %d. Data: %v", len(expected), len(data), data)

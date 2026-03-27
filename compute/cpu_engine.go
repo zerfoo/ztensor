@@ -1787,12 +1787,15 @@ func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.TensorNumeric[T], axi
 	}
 	numBlocks := a.Size() / (blockSize * shape[axis])
 
-	// Fill the result tensor
+	// Fill the result tensor using repeat-each (np.repeat) semantics:
+	// each element along the axis is repeated `repetitions` times consecutively.
+	// For GQA, this ensures [kv0, kv0, kv0, kv1, kv1, kv1, ...] ordering
+	// so each KV head correctly pairs with its group of query heads.
 	for i := range numBlocks {
-		for r := range repetitions {
-			for j := range shape[axis] {
-				srcStart := i*shape[axis]*blockSize + j*blockSize
-				dstStart := i*shape[axis]*blockSize*repetitions + r*shape[axis]*blockSize + j*blockSize
+		for j := range shape[axis] {
+			srcStart := i*shape[axis]*blockSize + j*blockSize
+			for r := range repetitions {
+				dstStart := i*shape[axis]*blockSize*repetitions + (j*repetitions+r)*blockSize
 				copy(result.Data()[dstStart:dstStart+blockSize], a.Data()[srcStart:srcStart+blockSize])
 			}
 		}

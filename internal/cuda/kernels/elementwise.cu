@@ -613,8 +613,9 @@ __global__ void kernel_repeat(const float* src, float* dst,
     int repAxis = temp % (axisDim * reps);
     int outer = temp / (axisDim * reps);
 
-    // Map to source: strip out the repetition
-    int srcAxis = repAxis % axisDim;
+    // Map to source: repeat-each semantics (np.repeat).
+    // Each source element is repeated `reps` times consecutively.
+    int srcAxis = repAxis / reps;
     int srcIdx = (outer * axisDim + srcAxis) * innerSize + inner;
     dst[idx] = src[srcIdx];
 }
