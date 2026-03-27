@@ -410,6 +410,84 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
+		// Upload MmapStorage raw bytes to GPU based on quantization type.
+		// MmapStorage wraps mmap'd GGUF data -- the raw bytes are in the same
+		// format as the typed storage classes (Q4_0, Q4_K, Q8_0, etc.) so we
+		// upload them directly for use by the quantized GEMV kernels.
+		if ms, ok := any(t.GetStorage()).(*tensor.MmapStorage); ok {
+			if ptr, _, _ := ms.GPUPtr(); ptr != nil {
+				continue // already on GPU
+			}
+			qtype := ms.QType()
+			switch qtype {
+			case tensor.GGMLTypeQ4_0:
+				// Q4_0 needs GPU-optimized separated layout (scales grouped,
+				// then packed data grouped per row) for vectorized loads.
+				rawBytes := ms.RawBytesGPU()
+				devPtr, err := e.allocWeight(len(rawBytes))
+				if err != nil {
+					return fmt.Errorf("alloc mmap Q4_0 GPU (shape %v): %w", t.Shape(), err)
+				}
+				if err := e.uploadBytes(devPtr, rawBytes); err != nil {
+					_ = e.runtime.Free(devPtr)
+					return fmt.Errorf("upload mmap Q4_0 (shape %v): %w", t.Shape(), err)
+				}
+				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			case tensor.GGMLTypeQ4_K, tensor.GGMLTypeQ5_K, tensor.GGMLTypeQ6_K,
+				tensor.GGMLTypeQ8_0, tensor.GGMLTypeQ5_0, tensor.GGMLTypeQ4_1,
+				tensor.GGMLTypeQ5_1:
+				// K-quants and other block formats: upload raw bytes contiguously.
+				rawBytes := ms.RawBytes()
+				devPtr, err := e.runtime.Malloc(len(rawBytes))
+				if err != nil {
+					return fmt.Errorf("alloc mmap %d GPU (shape %v): %w", qtype, t.Shape(), err)
+				}
+				if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+					_ = e.runtime.Free(devPtr)
+					return fmt.Errorf("upload mmap %d (shape %v): %w", qtype, t.Shape(), err)
+				}
+				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			case tensor.GGMLTypeF16, tensor.GGMLTypeBF16:
+				// FP16/BF16: upload raw bytes for mixed-precision kernels.
+				rawBytes := ms.RawBytes()
+				devPtr, err := e.allocWeight(len(rawBytes))
+				if err != nil {
+					return fmt.Errorf("alloc mmap fp16 GPU (shape %v): %w", t.Shape(), err)
+				}
+				if err := e.uploadBytes(devPtr, rawBytes); err != nil {
+					_ = e.runtime.Free(devPtr)
+					return fmt.Errorf("upload mmap fp16 (shape %v): %w", t.Shape(), err)
+				}
+				ms.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			default:
+				// F32 and other types: dequantize to float32 and upload as dense.
+				data := t.Data()
+				n := len(data)
+				if n == 0 {
+					continue
+				}
+				byteSize := n * f32Size
+				devPtr, err := e.allocWeight(byteSize)
+				if err != nil {
+					return fmt.Errorf("alloc mmap f32 GPU (shape %v): %w", t.Shape(), err)
+				}
+				src := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), byteSize)
+				if err := e.uploadBytes(devPtr, src); err != nil {
+					_ = e.runtime.Free(devPtr)
+					return fmt.Errorf("upload mmap f32 (shape %v): %w", t.Shape(), err)
+				}
+				gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
+				if err != nil {
+					_ = e.runtime.Free(devPtr)
+					return fmt.Errorf("GPU storage from mmap f32 (shape %v): %w", t.Shape(), err)
+				}
+				t.SetStorage(gs)
+				uploaded++
+				continue
+			}
+			q4Uploaded++
+			continue
+		}
 		// Upload FP8 E4M3 raw bytes to GPU and cache the pointer.
 		// FP8 weights (1 byte/element) are used with cublasLtMatmul for
 		// mixed-precision MatMul (FP8 weights × FP16 activations → FP32 output).
@@ -730,6 +808,17 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for Q5_0 quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q5_0Storage); ok {
 		return e.matMulQ5_0BWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for MmapStorage on A -- route to the appropriate quantized kernel
+	// based on the GGML type stored in the mmap'd region.
+	if ms, ok := any(a.GetStorage()).(*tensor.MmapStorage); ok {
+		return e.matMulMmap(ctx, ms, a, b, dst...)
+	}
+
+	// Check for MmapStorage on B (virtual-transposed weights).
+	if ms, ok := any(b.GetStorage()).(*tensor.MmapStorage); ok {
+		return e.matMulMmapB(ctx, a, ms, b, dst...)
 	}
 
 	// FP16/FP8/BF16 storage checks — skip entirely for F32 compute.
@@ -2552,6 +2641,289 @@ func (e *GPUEngine[T]) matMulBF16BWeight(ctx context.Context, a *tensor.TensorNu
 	}
 
 	return makeGPUResult[T](e, outShape, devC, m*n, dst...)
+}
+
+// matMulMmap handles MatMul where A has MmapStorage. Routes to the appropriate
+// quantized kernel based on QType, using the pre-uploaded GPU pointer from
+// UploadWeights or uploading raw bytes on the fly.
+func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+	if len(aShape) < 2 || len(bShape) < 2 || len(aShape) > 2 || len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	m := aShape[0]
+	k := aShape[1]
+	n := bShape[1]
+	e.setDevice()
+
+	// Acquire GPU pointer for the quantized weight data.
+	devW, freeW, err := e.mmapDevicePtr(ms)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer freeW()
+
+	qtype := ms.QType()
+
+	// GEMV fast path (single-token decode: n==1).
+	if n == 1 {
+		devX, cleanupX, err := getDevicePtr(e, b)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		defer cleanupX()
+
+		f32Size := int(unsafe.Sizeof(float32(0)))
+		cSize := m * f32Size
+		devY, err := e.pool.Alloc(e.deviceID, cSize)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		var kerr error
+		switch qtype {
+		case tensor.GGMLTypeQ4_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ4KF32(devW, devX, devY, m, k, e.stream)
+		case tensor.GGMLTypeQ4_0:
+			if k%32 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			totalBlocks := (m * k) / 32
+			dataOff := tensor.Q4GPUDataOffset(totalBlocks)
+			kerr = e.kernels.GemmQ4F32(devW, devX, devY, m, k, 1, dataOff, e.stream)
+		case tensor.GGMLTypeQ8_0:
+			if k%32 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemmQ8F32(devW, devX, devY, m, k, 1, e.stream)
+		case tensor.GGMLTypeQ6_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ6KF32(devW, devX, devY, m, k, e.stream)
+		case tensor.GGMLTypeQ5_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ5KF32(devW, devX, devY, m, k, e.stream)
+		default:
+			e.pool.Free(e.deviceID, devY, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		if kerr != nil {
+			e.pool.Free(e.deviceID, devY, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		return makeGPUResult[T](e, []int{m, n}, devY, m*n, dst...)
+	}
+
+	// General GEMM: dequantize Q4_K on GPU, then cuBLAS Sgemm.
+	// Only Q4_K has a GPU dequant kernel; others fall back to CPU.
+	if qtype != tensor.GGMLTypeQ4_K {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	f32Size := int(unsafe.Sizeof(float32(0)))
+	dequantSize := m * k * f32Size
+	devAF32, err := e.pool.Alloc(e.deviceID, dequantSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer e.pool.Free(e.deviceID, devAF32, dequantSize)
+
+	if err := e.kernels.DequantQ4KF32(devW, devAF32, m, k, e.stream); err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupB()
+
+	cSize := m * n * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if err := e.blas.Sgemm(m, n, k, 1.0, devAF32, devB, 0.0, devC); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return nil, fmt.Errorf("matMulMmap: Sgemm: %w", err)
+	}
+
+	return makeGPUResult[T](e, []int{m, n}, devC, m*n, dst...)
+}
+
+// matMulMmapB handles MatMul where B has MmapStorage (virtual-transposed weight).
+// Routes to the appropriate quantized kernel based on QType.
+func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[T], ms *tensor.MmapStorage, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+	if len(aShape) < 2 || len(bShape) < 2 || len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// B is virtual-transposed: logical [K, N], physical [N, K].
+	k := aShape[len(aShape)-1]
+	n := bShape[1]
+	m := 1
+	for i := 0; i < len(aShape)-1; i++ {
+		m *= aShape[i]
+	}
+
+	e.setDevice()
+
+	devW, freeW, err := e.mmapDevicePtr(ms)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer freeW()
+
+	qtype := ms.QType()
+	nPhys := bShape[0] // physical rows = N (output dim)
+
+	// GEMV fast path (m==1, single-token decode).
+	if m == 1 {
+		devX, cleanupX, err := getDevicePtr(e, a)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		defer cleanupX()
+
+		f32Size := int(unsafe.Sizeof(float32(0)))
+		cSize := n * f32Size
+		devY, err := e.pool.Alloc(e.deviceID, cSize)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		var kerr error
+		switch qtype {
+		case tensor.GGMLTypeQ4_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ4KF32(devW, devX, devY, nPhys, k, e.stream)
+		case tensor.GGMLTypeQ4_0:
+			if k%32 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			totalBlocks := (nPhys * k) / 32
+			dataOff := tensor.Q4GPUDataOffset(totalBlocks)
+			kerr = e.kernels.GemmQ4F32(devW, devX, devY, nPhys, k, 1, dataOff, e.stream)
+		case tensor.GGMLTypeQ8_0:
+			if k%32 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemmQ8F32(devW, devX, devY, nPhys, k, 1, e.stream)
+		case tensor.GGMLTypeQ6_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ6KF32(devW, devX, devY, nPhys, k, e.stream)
+		case tensor.GGMLTypeQ5_K:
+			if k%256 != 0 {
+				e.pool.Free(e.deviceID, devY, cSize)
+				return e.cpu.MatMul(ctx, a, b, dst...)
+			}
+			kerr = e.kernels.GemvQ5KF32(devW, devX, devY, nPhys, k, e.stream)
+		default:
+			e.pool.Free(e.deviceID, devY, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		if kerr != nil {
+			e.pool.Free(e.deviceID, devY, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		outShape := make([]int, len(aShape))
+		copy(outShape, aShape[:len(aShape)-1])
+		outShape[len(outShape)-1] = n
+		return makeGPUResult[T](e, outShape, devY, m*n, dst...)
+	}
+
+	// General GEMM: dequantize Q4_K on GPU, then cuBLAS SgemmNT.
+	// Only Q4_K has a GPU dequant kernel; others fall back to CPU.
+	if qtype != tensor.GGMLTypeQ4_K {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	f32Size := int(unsafe.Sizeof(float32(0)))
+	dequantSize := nPhys * k * f32Size
+	devBF32, err := e.pool.Alloc(e.deviceID, dequantSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
+
+	if err := e.kernels.DequantQ4KF32(devW, devBF32, nPhys, k, e.stream); err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupA()
+
+	cSize := m * n * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	outShape := make([]int, len(aShape))
+	copy(outShape, aShape[:len(aShape)-1])
+	outShape[len(outShape)-1] = n
+
+	// Use SgemmNT if available (avoids explicit transpose).
+	if ntBLAS, ok := e.blas.(gpuapi.BLASTransposeB); ok {
+		if err := ntBLAS.SgemmNT(m, n, k, 1.0, devA, devBF32, 0.0, devC); err != nil {
+			e.pool.Free(e.deviceID, devC, cSize)
+			return nil, fmt.Errorf("matMulMmapB: SgemmNT: %w", err)
+		}
+		return makeGPUResult[T](e, outShape, devC, m*n, dst...)
+	}
+
+	// Fallback: CPU MatMul.
+	e.pool.Free(e.deviceID, devC, cSize)
+	return e.cpu.MatMul(ctx, a, b, dst...)
+}
+
+// mmapDevicePtr returns the GPU device pointer for MmapStorage data. If the data
+// has been pre-uploaded via UploadWeights, returns the cached pointer. Otherwise,
+// uploads the raw bytes to a temporary allocation from the pool.
+func (e *GPUEngine[T]) mmapDevicePtr(ms *tensor.MmapStorage) (unsafe.Pointer, func(), error) {
+	if ptr, _, _ := ms.GPUPtr(); ptr != nil {
+		return ptr, func() {}, nil
+	}
+	// Fallback: upload on the fly.
+	rawBytes := ms.RawBytesGPU()
+	devPtr, err := e.pool.Alloc(e.deviceID, len(rawBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { e.pool.Free(e.deviceID, devPtr, len(rawBytes)) }
+	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return devPtr, cleanup, nil
 }
 
 // --- GPU-accelerated and fallback methods ---
