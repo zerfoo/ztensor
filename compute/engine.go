@@ -271,4 +271,9 @@ type Engine[T tensor.Numeric] interface {
 
 	// Rsqrt computes the element-wise reciprocal square root of a tensor.
 	Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+
+	// HadamardTransform multiplies the input by a normalized Walsh-Hadamard matrix.
+	// Input shape must be [batch, dim] or [dim], where dim is a power of 2 and <= 512.
+	// The transform is its own inverse (H * H = I) when the matrix is normalized by 1/sqrt(dim).
+	HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }

@@ -1971,6 +1971,74 @@ func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	}, dst...)
 }
 
+// HadamardTransform multiplies the input by a normalized Walsh-Hadamard matrix.
+// Input shape must be [batch, dim] or [dim], where dim is a power of 2 and <= 512.
+// Uses the Fast Walsh-Hadamard Transform (FWHT) algorithm: O(n log n) per row.
+func (e *CPUEngine[T]) HadamardTransform(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("HadamardTransform", time.Now())
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
+
+	shape := a.Shape()
+	var batch, dim int
+	switch len(shape) {
+	case 1:
+		batch, dim = 1, shape[0]
+	case 2:
+		batch, dim = shape[0], shape[1]
+	default:
+		return nil, fmt.Errorf("hadamard: input must be 1D or 2D, got shape %v", shape)
+	}
+
+	if dim <= 0 || dim&(dim-1) != 0 {
+		return nil, fmt.Errorf("hadamard: dim must be a power of 2, got %d", dim)
+	}
+	if dim > 512 {
+		return nil, fmt.Errorf("hadamard: dim must be <= 512, got %d", dim)
+	}
+
+	result, err := e.getOrCreateDest(shape, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	aData := a.Data()
+	rData := result.Data()
+
+	// Copy input to result, then transform in-place.
+	copy(rData, aData)
+
+	// Normalization factor: 1/sqrt(dim).
+	scale := e.ops.FromFloat64(1.0 / math.Sqrt(float64(dim)))
+
+	// FWHT per row: butterfly passes with stride doubling.
+	for b := 0; b < batch; b++ {
+		row := rData[b*dim : (b+1)*dim]
+		for halfLen := 1; halfLen < dim; halfLen *= 2 {
+			for i := 0; i < dim; i += halfLen * 2 {
+				for j := 0; j < halfLen; j++ {
+					u := row[i+j]
+					v := row[i+j+halfLen]
+					row[i+j] = e.ops.Add(u, v)
+					row[i+j+halfLen] = e.ops.Sub(u, v)
+				}
+			}
+		}
+		// Normalize.
+		for i := range row {
+			row[i] = e.ops.Mul(row[i], scale)
+		}
+	}
+
+	return result, nil
+}
+
 // CosineSimilarity computes pairwise cosine similarity between rows of two 2D tensors.
 // a has shape [M, D], b has shape [N, D]. Result has shape [M, N].
 func (e *CPUEngine[T]) CosineSimilarity(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
