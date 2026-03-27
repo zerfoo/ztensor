@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/zerfoo/ztensor/compare/v0.9.1...v0.9.2) (2026-03-27)
+
+
+### Bug Fixes
+
+* **compute:** skip F32 MmapStorage in quantized upload path ([51ed3e7](https://github.com/zerfoo/ztensor/commit/51ed3e7090f0a44215a9b3ddc56b460128c0fc08))
+
 ## [0.9.1](https://github.com/zerfoo/ztensor/compare/v0.9.0...v0.9.1) (2026-03-27)
 
 
