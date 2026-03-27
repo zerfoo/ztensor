@@ -3265,6 +3265,11 @@ func (e *GPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T]
 	return e.gpuReduceSum(ctx, a, axis, keepDims, dst...)
 }
 
+// ReduceMax computes the maximum of elements along an axis (CPU fallback).
+func (e *GPUEngine[T]) ReduceMax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.ReduceMax(ctx, a, axis, keepDims, dst...)
+}
+
 // AddScalar adds a scalar to each element.
 func (e *GPUEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuAddScalar(ctx, a, scalar, dst...)
