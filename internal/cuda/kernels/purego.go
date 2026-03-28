@@ -158,6 +158,18 @@ type KernelLib struct {
 
 	// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 	launchTernaryGemvF32 uintptr
+
+	// nsa_attention (fused three-path Native Sparse Attention)
+	launchNSAAttentionF32 uintptr
+
+	// kv_dequant (Q4/Q3 KV cache dequantization)
+	launchKVDequantQ4F32 uintptr
+	launchKVDequantQ3F32 uintptr
+
+	// iq_dequant (importance-weighted quantization dequantization)
+	launchIQDequantNLF32  uintptr
+	launchIQDequant3SF32  uintptr
+	launchIQDequant2XXSF32 uintptr
 }
 
 var (
@@ -310,6 +322,15 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
 		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
+		// nsa_attention (fused three-path Native Sparse Attention)
+		{"nsa_attention_f32", &k.launchNSAAttentionF32},
+		// kv_dequant (Q4/Q3 KV cache dequantization)
+		{"kv_dequant_q4_f32", &k.launchKVDequantQ4F32},
+		{"kv_dequant_q3_f32", &k.launchKVDequantQ3F32},
+		// iq_dequant (importance-weighted quantization)
+		{"iq_dequant_nl_f32", &k.launchIQDequantNLF32},
+		{"iq_dequant_3s_f32", &k.launchIQDequant3SF32},
+		{"iq_dequant_2xxs_f32", &k.launchIQDequant2XXSF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -343,6 +364,12 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
 			"ternary_gemv_f32":                true,
+			"nsa_attention_f32":               true,
+			"kv_dequant_q4_f32":               true,
+			"kv_dequant_q3_f32":               true,
+			"iq_dequant_nl_f32":               true,
+			"iq_dequant_3s_f32":               true,
+			"iq_dequant_2xxs_f32":             true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
