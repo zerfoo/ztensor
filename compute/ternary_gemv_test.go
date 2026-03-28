@@ -100,6 +100,28 @@ func TestTernaryGEMV(t *testing.T) {
 		}
 	})
 
+	t.Run("identity_diagonal", func(t *testing.T) {
+		// NxN matrix with 1 on diagonal, 0 elsewhere — y should equal x.
+		n := 33 // intentionally not a multiple of 4
+		vals := make([]int8, n*n)
+		for i := 0; i < n; i++ {
+			vals[i*n+i] = 1
+		}
+		x := make([]float32, n)
+		for i := range x {
+			x[i] = float32(i)*0.5 - 8.0
+		}
+
+		ts := tensor.NewTernaryStorageFrom(vals)
+		y := TernaryGEMV(ts, x, n, n)
+
+		for i := 0; i < n; i++ {
+			if y[i] != x[i] {
+				t.Fatalf("y[%d] = %f, want %f", i, y[i], x[i])
+			}
+		}
+	})
+
 	t.Run("non_multiple_of_4_cols", func(t *testing.T) {
 		// 2x5 matrix — cols not a multiple of 4
 		weights := []int8{1, -1, 0, 1, -1, 0, 1, -1, 0, 1}
