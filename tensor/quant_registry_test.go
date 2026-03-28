@@ -11,6 +11,7 @@ func TestQuantRegistryInitRegistrations(t *testing.T) {
 	want := []string{
 		"AWQ_4",
 		"FP8_E4M3", "FP8_E5M2",
+		"IQ3_S",
 		"Q4_0", "Q4_K", "Q5_0", "Q5_K", "Q6_K", "Q8_0",
 		"W8A8",
 	}
