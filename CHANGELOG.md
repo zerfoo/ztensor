@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/zerfoo/ztensor/compare/v0.14.0...v0.14.1) (2026-03-28)
+
+
+### Bug Fixes
+
+* **ci:** exclude purego GPU binding packages from go vet ([60f0f66](https://github.com/zerfoo/ztensor/commit/60f0f6602adc0ca602cb2cc026835f004c8b4a36))
+* **tensor:** add IQ3_S to quant registry expected list ([98c9237](https://github.com/zerfoo/ztensor/commit/98c9237886ff8bdb8f44fd0786e6a311aa121cd9))
+
 ## [0.14.0](https://github.com/zerfoo/ztensor/compare/v0.13.0...v0.14.0) (2026-03-28)
 
 
