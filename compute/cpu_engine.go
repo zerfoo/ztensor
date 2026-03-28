@@ -2242,14 +2242,13 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 		}
 		return true
 	case *tensor.Q4KStorage:
-		// Q4_K on A: dequantize then re-quantize to Q4_0 for GEMM.
-		af32 := qs.Slice()
+		// Q4_K on A: fused dequant+GEMV (no re-quantization to Q4_0).
 		bF := any(b.Data()).([]float32)
 		rF := any(result.Data()).([]float32)
 		if batchSize == 1 {
-			q4 := tensor.QuantizeQ4(af32)
-			xblas.GemmQ4F32(m, n, k, q4, bF, rF)
+			xblas.GemmQ4KF32(m, n, k, qs, bF, rF)
 		} else {
+			af32 := qs.Slice()
 			for i := range batchSize {
 				aOff := i * m * k
 				cOff := i * m * n
@@ -2257,8 +2256,8 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 				if len(aShape) == len(bShape) {
 					bOff = i * k * n
 				}
-				batchA := tensor.QuantizeQ4(af32[aOff : aOff+m*k])
-				xblas.GemmQ4F32(m, n, k, batchA, bF[bOff:bOff+k*n], rF[cOff:cOff+m*n])
+				// Batch path falls back to dequant for now.
+				xblas.SgemmSimd(m, n, k, af32[aOff:aOff+m*k], bF[bOff:bOff+k*n], rF[cOff:cOff+m*n])
 			}
 		}
 		return true
@@ -2308,18 +2307,16 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 	storB := b.GetStorage()
 	switch qsB := any(storB).(type) {
 	case *tensor.Q4KStorage:
-		// Q4_K on B: dequantize then re-quantize to Q4_0 for GEMM-NT.
+		// Q4_K on B: fused dequant+GEMV-NT (no re-quantization to Q4_0).
 		af := any(a.Data()).([]float32)
 		rF := any(result.Data()).([]float32)
-		bf32 := qsB.Slice()
-		q4B := tensor.QuantizeQ4(bf32)
 		if batchSize == 1 {
-			xblas.GemmF32Q4NT(m, n, k, af, q4B, rF)
+			xblas.GemmF32Q4KNT(m, n, k, af, qsB, rF)
 		} else {
 			for i := range batchSize {
 				aOff := i * m * k
 				cOff := i * m * n
-				xblas.GemmF32Q4NT(m, n, k, af[aOff:aOff+m*k], q4B, rF[cOff:cOff+m*n])
+				xblas.GemmF32Q4KNT(m, n, k, af[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
 			}
 		}
 		return true

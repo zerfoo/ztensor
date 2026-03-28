@@ -77,6 +77,31 @@ func DequantizeQ4K(raw []byte, dst []float32) {
 	}
 }
 
+// DequantizeSubBlock dequantizes a single sub-block (32 values) from a super-block.
+// blkIdx is the super-block index, subIdx is 0..7.
+func (q *Q4KStorage) DequantizeSubBlock(blkIdx, subIdx int, dst []float32) {
+	blockRaw := q.raw[blkIdx*q4KBlockBytes : (blkIdx+1)*q4KBlockBytes]
+	d := float16.FromBits(binary.LittleEndian.Uint16(blockRaw[0:2])).ToFloat32()
+	dmin := float16.FromBits(binary.LittleEndian.Uint16(blockRaw[2:4])).ToFloat32()
+
+	scales, mins := decodeQ4KScalesMins(blockRaw)
+	sc := d * float32(scales[subIdx])
+	mn := dmin * float32(mins[subIdx])
+
+	qdata := blockRaw[16:]
+	group := subIdx / 2
+	isHigh := subIdx % 2 // 0 = low nibble, 1 = high nibble
+	baseQ := group * 32
+	for l := range 32 {
+		q := qdata[baseQ+l]
+		if isHigh == 0 {
+			dst[l] = sc*float32(q&0xF) - mn
+		} else {
+			dst[l] = sc*float32(q>>4) - mn
+		}
+	}
+}
+
 // Q4KStorage holds Q4_K quantized tensor data on CPU.
 type Q4KStorage struct {
 	raw []byte // raw super-block data
