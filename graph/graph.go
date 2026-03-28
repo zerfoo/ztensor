@@ -416,6 +416,13 @@ func (g *Graph[T]) Nodes() []Node[T] {
 	return g.nodes
 }
 
+// NodeOutput returns the cached output tensor from the last Forward call for
+// the given node, or nil if the node was not evaluated or its output was
+// released to the pool. Useful for extracting intermediate layer activations.
+func (g *Graph[T]) NodeOutput(n Node[T]) *tensor.TensorNumeric[T] {
+	return g.memo[n]
+}
+
 // Dependencies returns the dependencies of a given node.
 func (g *Graph[T]) Dependencies(n Node[T]) []Node[T] {
 	return g.dependencies[n]
