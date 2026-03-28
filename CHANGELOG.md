@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/zerfoo/ztensor/compare/v0.11.0...v0.12.0) (2026-03-28)
+
+
+### Features
+
+* **tensor:** make TernaryStorage implement Storage[float32] ([2c8e9fa](https://github.com/zerfoo/ztensor/commit/2c8e9fa8fe0b9f2e06f338be611a77a9ba290ffa))
+
+
+### Bug Fixes
+
+* **kernels:** add missing NSA, KV dequant, and IQ dequant fields to KernelLib ([bf32aef](https://github.com/zerfoo/ztensor/commit/bf32aef6c977330750c8afb3f5d7c032e9e43c21))
+
 ## [0.11.0](https://github.com/zerfoo/ztensor/compare/v0.10.1...v0.11.0) (2026-03-27)
 
 
