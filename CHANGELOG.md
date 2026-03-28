@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/zerfoo/ztensor/compare/v0.12.0...v0.13.0) (2026-03-28)
+
+
+### Features
+
+* **xblas:** add fused Q4_K GEMV kernel — 17x faster than dequant+requant ([7ceb267](https://github.com/zerfoo/ztensor/commit/7ceb26795f37fa9fcc741847cb991ded97c208bc))
+
 ## [0.12.0](https://github.com/zerfoo/ztensor/compare/v0.11.0...v0.12.0) (2026-03-28)
 
 
