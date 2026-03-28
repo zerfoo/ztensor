@@ -41,7 +41,7 @@ func TestTernaryStorage_Set(t *testing.T) {
 	s := NewTernaryStorage(4)
 	vals := []int8{1, -1, 0, 1}
 	for i, v := range vals {
-		s.Set(i, v)
+		s.SetElement(i, v)
 	}
 	for i, want := range vals {
 		got := s.Get(i)
@@ -51,8 +51,8 @@ func TestTernaryStorage_Set(t *testing.T) {
 	}
 
 	// Overwrite and verify
-	s.Set(0, -1)
-	s.Set(3, 0)
+	s.SetElement(0, -1)
+	s.SetElement(3, 0)
 	if got := s.Get(0); got != -1 {
 		t.Errorf("after overwrite Get(0) = %d, want -1", got)
 	}
@@ -113,7 +113,7 @@ func TestTernaryStorage_PanicOnInvalidValue(t *testing.T) {
 					t.Errorf("Set(0, %d) did not panic", v)
 				}
 			}()
-			s.Set(0, v)
+			s.SetElement(0, v)
 		}(val)
 	}
 }
@@ -147,7 +147,7 @@ func TestTernaryStorage_PanicOnOutOfRange(t *testing.T) {
 				t.Error("Set(4, 0) did not panic")
 			}
 		}()
-		s.Set(4, 0)
+		s.SetElement(4, 0)
 	}()
 }
 

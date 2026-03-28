@@ -27,7 +27,7 @@ func NewTernaryStorage(size int) *TernaryStorage {
 func NewTernaryStorageFrom(values []int8) *TernaryStorage {
 	s := NewTernaryStorage(len(values))
 	for i, v := range values {
-		s.Set(i, v)
+		s.SetElement(i, v)
 	}
 	return s
 }
@@ -46,9 +46,9 @@ func (s *TernaryStorage) Get(i int) int8 {
 	return int8(bits) - 1
 }
 
-// Set stores a ternary value (-1, 0, or 1) at index i.
+// SetElement stores a ternary value (-1, 0, or 1) at index i.
 // Panics if val is not in {-1, 0, 1} or i is out of range.
-func (s *TernaryStorage) Set(i int, val int8) {
+func (s *TernaryStorage) SetElement(i int, val int8) {
 	if i < 0 || i >= s.len {
 		panic("tensor: TernaryStorage index out of range")
 	}
@@ -68,6 +68,24 @@ func (s *TernaryStorage) Slice() []float32 {
 		out[i] = float32(s.Get(i))
 	}
 	return out
+}
+
+// Set replaces the storage contents by quantizing a float32 slice
+// to ternary values. Each value is rounded to the nearest of {-1, 0, 1}.
+// This satisfies the Storage[float32] interface.
+func (s *TernaryStorage) Set(data []float32) {
+	for i, v := range data {
+		if i >= s.len {
+			break
+		}
+		var q int8
+		if v > 0.5 {
+			q = 1
+		} else if v < -0.5 {
+			q = -1
+		}
+		s.SetElement(i, q)
+	}
 }
 
 // RawBytes returns the underlying packed byte slice.
