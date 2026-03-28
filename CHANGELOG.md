@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/zerfoo/ztensor/compare/v0.13.0...v0.14.0) (2026-03-28)
+
+
+### Features
+
+* **graph:** add NodeOutput method for intermediate activation extraction ([76a29c6](https://github.com/zerfoo/ztensor/commit/76a29c62546c68faa35bbcfb74d694288c8f84b3))
+
 ## [0.13.0](https://github.com/zerfoo/ztensor/compare/v0.12.0...v0.13.0) (2026-03-28)
 
 
