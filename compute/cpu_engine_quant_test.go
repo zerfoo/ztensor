@@ -997,3 +997,69 @@ func TestW8A8(t *testing.T) {
 		}
 	})
 }
+
+// BenchmarkQ4KvsQ4_0GEMV profiles Q4_K vs Q4_0 GEMV performance.
+// KQ-T1: identifies the root cause of Q4_K being ~45% slower than Q4_0.
+func BenchmarkQ4KvsQ4_0GEMV(b *testing.B) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	ctx := context.Background()
+	k, n := 4096, 4096
+
+	// Input vector.
+	xData := make([]float32, k)
+	for i := range xData {
+		xData[i] = float32(i%17-8) * 0.05
+	}
+	x, _ := tensor.New[float32]([]int{1, k}, xData)
+
+	// Weight data.
+	wF32 := make([]float32, n*k)
+	for i := range wF32 {
+		wF32[i] = float32(math.Sin(float64(i)*0.001)) * 1.5
+	}
+
+	b.Run("Q4_0", func(b *testing.B) {
+		q4Data := make([]byte, n*k/2+n*(k/32)*2)
+		for row := range n {
+			for bi := range k / 32 {
+				blockOff := (row*(k/32) + bi) * 18
+				vals := wF32[row*k+bi*32 : row*k+(bi+1)*32]
+				maxAbs := float32(0)
+				for _, v := range vals {
+					if v < 0 && -v > maxAbs {
+						maxAbs = -v
+					}
+					if v > 0 && v > maxAbs {
+						maxAbs = v
+					}
+				}
+				scale := maxAbs / 7.0
+				if scale == 0 {
+					scale = 1
+				}
+				q4Data[blockOff] = byte(math.Float32bits(scale))
+				q4Data[blockOff+1] = byte(math.Float32bits(scale) >> 8)
+				for j := range 16 {
+					v0 := int(vals[j]/scale+8.5) & 0x0f
+					v1 := int(vals[j+16]/scale+8.5) & 0x0f
+					q4Data[blockOff+2+j] = byte(v0 | (v1 << 4))
+				}
+			}
+		}
+		q4, _ := tensor.NewQ4StorageFromRaw(q4Data, n*k)
+		bTensor, _ := tensor.NewWithStorage[float32]([]int{n, k}, q4)
+		b.ResetTimer()
+		for b.Loop() {
+			_, _ = engine.MatMul(ctx, x, bTensor)
+		}
+	})
+
+	b.Run("Q4_K", func(b *testing.B) {
+		q4k := quantizeQ4K(wF32)
+		bTensor, _ := tensor.NewWithStorage[float32]([]int{n, k}, q4k)
+		b.ResetTimer()
+		for b.Loop() {
+			_, _ = engine.MatMul(ctx, x, bTensor)
+		}
+	})
+}
