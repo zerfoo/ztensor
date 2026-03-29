@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/zerfoo/ztensor/compare/v0.14.1...v0.15.0) (2026-03-29)
+
+
+### Features
+
+* **tensor:** MmapStorage.SliceElements for zero-copy expert weight slicing ([0a40e11](https://github.com/zerfoo/ztensor/commit/0a40e11c698406358918dafd9401782ce0d43f71))
+* **xblas:** streaming GEMM for mmap'd tensors, unblocks over-RAM inference ([8d80b91](https://github.com/zerfoo/ztensor/commit/8d80b914343916b3e1f9a578630bbf129515d405))
+
 ## [0.14.1](https://github.com/zerfoo/ztensor/compare/v0.14.0...v0.14.1) (2026-03-28)
 
 
