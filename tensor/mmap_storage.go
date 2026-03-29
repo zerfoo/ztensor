@@ -431,5 +431,28 @@ func (s *MmapStorage) dequantizeQ5_1(dst []float32) {
 	}
 }
 
+// Q4KBlockRaw returns the raw 144-byte slice for Q4_K superblock blockIdx.
+// Each Q4_K superblock encodes 256 float32 values.
+// The caller must not modify the returned slice.
+func (s *MmapStorage) Q4KBlockRaw(blockIdx int) []byte {
+	const blockBytes = 144
+	off := blockIdx * blockBytes
+	return s.data[off : off+blockBytes]
+}
+
+// Q5KBlockRaw returns the raw 176-byte slice for Q5_K superblock blockIdx.
+func (s *MmapStorage) Q5KBlockRaw(blockIdx int) []byte {
+	const blockBytes = 176
+	off := blockIdx * blockBytes
+	return s.data[off : off+blockBytes]
+}
+
+// Q6KBlockRaw returns the raw 210-byte slice for Q6_K superblock blockIdx.
+func (s *MmapStorage) Q6KBlockRaw(blockIdx int) []byte {
+	const blockBytes = 210
+	off := blockIdx * blockBytes
+	return s.data[off : off+blockBytes]
+}
+
 // Ensure MmapStorage implements Storage[float32].
 var _ Storage[float32] = (*MmapStorage)(nil)

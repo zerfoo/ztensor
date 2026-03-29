@@ -2299,6 +2299,27 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 			}
 		}
 		return true
+	case *tensor.MmapStorage:
+		// A is mmap'd: stream per-superblock to avoid materializing the full tensor.
+		// B is activations (float32) — safe to call Data().
+		bF := any(b.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			xblas.GemmMmapF32(m, n, k, qs, bF, rF)
+		} else {
+			// Batched A-side mmap: fall back to full decode (rare path).
+			af32 := qs.Slice()
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				bOff := 0
+				if len(aShape) == len(bShape) {
+					bOff = i * k * n
+				}
+				xblas.SgemmSimd(m, n, k, af32[aOff:aOff+m*k], bF[bOff:bOff+k*n], rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	default:
 		// Not handled on A; fall through to check B.
 	}
@@ -2391,6 +2412,22 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 				aOff := i * m * k
 				cOff := i * m * n
 				xblas.GemmF32W8A8NT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
+			}
+		}
+		return true
+	case *tensor.MmapStorage:
+		// B is mmap'd weights: stream per-superblock to avoid materializing the
+		// full float32 tensor. This is the critical path for models larger than RAM.
+		// A is activations (float32, computed) — safe to call Data().
+		aF := any(a.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			xblas.GemmF32MmapNT(m, n, k, aF, qsB, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.GemmF32MmapNT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
 			}
 		}
 		return true
