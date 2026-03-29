@@ -431,6 +431,66 @@ func (s *MmapStorage) dequantizeQ5_1(dst []float32) {
 	}
 }
 
+// SliceElements returns a new MmapStorage that covers elements [start, end)
+// of this storage. Both start and end must be aligned to the quantization
+// block size (32 for Q4_0/Q8_0, 256 for Q4_K/Q5_K/Q6_K). Returns an error
+// if the range is not aligned or out of bounds.
+//
+// This enables zero-copy expert slicing for stacked MoE weight tensors:
+// instead of calling Slice() (which materializes the full tensor), callers
+// can obtain a sub-tensor that still points into the mmap'd region.
+func (s *MmapStorage) SliceElements(start, end int) (*MmapStorage, error) {
+	if start < 0 || end > s.length || start >= end {
+		return nil, fmt.Errorf("MmapStorage.SliceElements: range [%d,%d) out of bounds (len=%d)", start, end, s.length)
+	}
+	blockSize, blockBytes, err := mmapBlockLayout(s.qtype)
+	if err != nil {
+		return nil, fmt.Errorf("MmapStorage.SliceElements: unsupported qtype %d: %w", s.qtype, err)
+	}
+	if start%blockSize != 0 {
+		return nil, fmt.Errorf("MmapStorage.SliceElements: start %d not aligned to block size %d", start, blockSize)
+	}
+	if end%blockSize != 0 {
+		return nil, fmt.Errorf("MmapStorage.SliceElements: end %d not aligned to block size %d", end, blockSize)
+	}
+	byteStart := (start / blockSize) * blockBytes
+	byteEnd := (end / blockSize) * blockBytes
+	return &MmapStorage{
+		data:     s.data[byteStart:byteEnd],
+		length:   end - start,
+		byteSize: byteEnd - byteStart,
+		qtype:    s.qtype,
+	}, nil
+}
+
+// mmapBlockLayout returns (blockSize, blockBytes) for the given GGML quantization type.
+func mmapBlockLayout(qtype GGMLType) (blockSize, blockBytes int, err error) {
+	switch qtype {
+	case GGMLTypeQ4_0:
+		return 32, 18, nil
+	case GGMLTypeQ4_1:
+		return 32, 20, nil
+	case GGMLTypeQ5_0:
+		return 32, 22, nil
+	case GGMLTypeQ5_1:
+		return 32, 24, nil
+	case GGMLTypeQ8_0:
+		return 32, 34, nil
+	case GGMLTypeQ4_K:
+		return 256, 144, nil
+	case GGMLTypeQ5_K:
+		return 256, 176, nil
+	case GGMLTypeQ6_K:
+		return 256, 210, nil
+	case GGMLTypeF32:
+		return 1, 4, nil
+	case GGMLTypeF16, GGMLTypeBF16:
+		return 1, 2, nil
+	default:
+		return 0, 0, fmt.Errorf("unsupported type %d", qtype)
+	}
+}
+
 // Q4KBlockRaw returns the raw 144-byte slice for Q4_K superblock blockIdx.
 // Each Q4_K superblock encodes 256 float32 values.
 // The caller must not modify the returned slice.

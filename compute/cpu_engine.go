@@ -1315,12 +1315,12 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], 
 	}
 
 	// Virtual transpose for quantized 2D storage: swap shape without moving data.
-	// GemmF32Q4NT/Q8NT handle the implicit transpose when reading blocks.
+	// GemmF32Q4NT/Q8NT/MmapNT handle the implicit transpose when reading blocks.
 	if len(originalShape) == 2 && axes[0] == 1 && axes[1] == 0 && len(dst) == 0 {
 		s := a.GetStorage()
 		isQuantized := false
 		switch any(s).(type) {
-		case *tensor.Q4Storage, *tensor.Q8Storage:
+		case *tensor.Q4Storage, *tensor.Q8Storage, *tensor.MmapStorage:
 			isQuantized = true
 		}
 		if isQuantized {
