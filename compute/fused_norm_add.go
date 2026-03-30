@@ -8,6 +8,8 @@ import (
 // RMSNorm + elementwise Add in a single GPU kernel launch.
 // output = rmsnorm(input, weight, eps) + residual.
 // This eliminates one kernel launch per fusion point.
+//
+// This API is not covered by the v1 stability guarantee.
 type FusedNormAddProvider[T tensor.Numeric] interface {
 	// GPUFusedNormAdd computes:
 	//   normed = rmsnorm(input, weight, eps)

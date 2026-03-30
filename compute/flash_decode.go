@@ -15,6 +15,8 @@ import (
 // O:  [batch * numQHeads, headDim]         — output (caller-allocated).
 //
 // Supports GQA: numQHeads must be a multiple of numKVHeads.
+//
+// This API is not covered by the v1 stability guarantee.
 func FlashDecode(
 	Q, K, V, O []float32,
 	batch, numQHeads, numKVHeads, kvLen, headDim int,

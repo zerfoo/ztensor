@@ -7,6 +7,8 @@ import (
 // FusedAddRMSNormProvider is implemented by engines that support fused
 // residual-add + RMS normalization in a single GPU kernel launch.
 // This eliminates one kernel launch per fusion point (2 per transformer layer).
+//
+// This API is not covered by the v1 stability guarantee.
 type FusedAddRMSNormProvider[T tensor.Numeric] interface {
 	// GPUFusedAddRMSNorm computes:
 	//   sum    = input + residual

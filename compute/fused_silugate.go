@@ -11,6 +11,8 @@ import (
 // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x)).
 // gate and up must have the same shape.
 // This avoids materializing separate sigmoid, mul, and mul intermediate tensors.
+//
+// This API is not covered by the v1 stability guarantee.
 func FusedSiLUGate(gate, up *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	gShape := gate.Shape()
 	uShape := up.Shape()

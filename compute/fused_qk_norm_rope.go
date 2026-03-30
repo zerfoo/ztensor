@@ -8,6 +8,8 @@ import (
 // per-head QK RMSNorm + RoPE in a single GPU kernel launch.
 // This replaces 4 kernel launches (Q_norm + K_norm + Q_RoPE + K_RoPE)
 // with 1 per GQA layer during decode.
+//
+// This API is not covered by the v1 stability guarantee.
 type FusedQKNormRoPEProvider[T tensor.Numeric] interface {
 	// GPUFusedQKNormRoPE applies per-head RMSNorm + RoPE to combined Q+K data.
 	// input: [totalHeads, headDim] (Q heads then K heads, contiguous).

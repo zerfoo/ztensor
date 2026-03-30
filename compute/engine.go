@@ -12,6 +12,8 @@ import (
 // FusedRMSNormer is an optional interface for engines that support GPU-accelerated
 // fused RMSNorm. Layers can type-assert to this to use the fused kernel.
 // Returns (output, scales) where scales contains per-row rsqrt values for backward pass.
+//
+// This API is not covered by the v1 stability guarantee.
 type FusedRMSNormer interface {
 	FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (output, scales *tensor.TensorNumeric[float32], err error)
 }
@@ -19,6 +21,8 @@ type FusedRMSNormer interface {
 // PoolResetter is an optional interface for engines that use arena-based
 // memory pools. Call ResetPool() at the start of each forward pass to
 // reclaim all per-pass intermediate allocations in O(1).
+//
+// This API is not covered by the v1 stability guarantee.
 type PoolResetter interface {
 	ResetPool()
 }
@@ -27,6 +31,8 @@ type PoolResetter interface {
 // model weights to device memory at load time. This eliminates per-operation
 // host-to-device copies during inference. Each tensor's storage is replaced
 // in-place from CPUStorage to device-resident storage.
+//
+// This API is not covered by the v1 stability guarantee.
 type WeightUploader interface {
 	UploadWeights(tensors []*tensor.TensorNumeric[float32]) error
 }
@@ -35,12 +41,16 @@ type WeightUploader interface {
 // C = A * B^T without explicitly transposing B. This avoids an extra
 // GPU allocation and kernel launch for the transpose operation.
 // A is [batch, m, k], B is [batch, n, k], result is [batch, m, n].
+//
+// This API is not covered by the v1 stability guarantee.
 type TransposeBMatMuler[T tensor.Numeric] interface {
 	MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }
 
 // StreamProvider is an optional interface for engines that expose their
 // underlying GPU stream for CUDA graph capture.
+//
+// This API is not covered by the v1 stability guarantee.
 type StreamProvider interface {
 	// Stream returns the engine's GPU stream as an unsafe.Pointer (cudaStream_t).
 	Stream() unsafe.Pointer
@@ -49,6 +59,8 @@ type StreamProvider interface {
 // GPUStreamAccessor is an optional interface for engines that provide their
 // gpuapi.Stream for async memory operations (e.g., KV cache D2D copies
 // during CUDA graph capture).
+//
+// This API is not covered by the v1 stability guarantee.
 type GPUStreamAccessor interface {
 	GPUStream() gpuapi.Stream
 }
@@ -56,6 +68,8 @@ type GPUStreamAccessor interface {
 // GPUArgmaxer is an optional interface for engines that can compute argmax
 // entirely on GPU, returning just the index without copying logits to host.
 // This eliminates the ~1MB D2H copy per token for greedy decoding.
+//
+// This API is not covered by the v1 stability guarantee.
 type GPUArgmaxer interface {
 	GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error)
 }
@@ -63,6 +77,8 @@ type GPUArgmaxer interface {
 // FP16ToF32Converter is an optional interface for engines that can convert
 // a tensor with Float16Storage to a regular float32 GPU tensor. This is used
 // at the end of the FP16 forward pass to produce F32 logits for sampling.
+//
+// This API is not covered by the v1 stability guarantee.
 type FP16ToF32Converter interface {
 	ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)
 }
@@ -71,6 +87,8 @@ type FP16ToF32Converter interface {
 // grouped-query attention via block-table indirection. When the engine
 // supports paged attention, callers can pass block pointers and indices
 // instead of contiguous KV tensors.
+//
+// This API is not covered by the v1 stability guarantee.
 //
 // Q:            [batch*numQHeads, headDim]
 // blockPtrsK:   device array of float* pointers to K blocks

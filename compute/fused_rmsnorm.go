@@ -11,6 +11,8 @@ import (
 // Weight shape: [D].
 // Returns (output, scales) where output has same shape as input and scales
 // has shape [..., 1] containing the per-row rsqrt(mean(x^2)+eps) values.
+//
+// This API is not covered by the v1 stability guarantee.
 func FusedRMSNorm(input, weight *tensor.TensorNumeric[float32], epsilon float32) (output, scales *tensor.TensorNumeric[float32], err error) {
 	shape := input.Shape()
 	D := shape[len(shape)-1]
