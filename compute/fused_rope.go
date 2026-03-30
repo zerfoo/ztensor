@@ -8,12 +8,16 @@ import (
 )
 
 // FusedRoPEProvider is implemented by engines that support fused GPU RoPE.
+//
+// This API is not covered by the v1 stability guarantee.
 type FusedRoPEProvider[T tensor.Numeric] interface {
 	GPUFusedRoPE(input, cosAngles, sinAngles *tensor.TensorNumeric[T], rotaryDim int) (*tensor.TensorNumeric[T], error)
 }
 
 // FusedRoPE applies rotary position embeddings in a single pass.
 // Input shape: [batch, seq_len, head_dim] where head_dim is even.
+//
+// This API is not covered by the v1 stability guarantee.
 // cos/sin shape: [seq_len, half_dim] (precomputed angles).
 // rotaryDim: number of dimensions that receive rotation (<= head_dim, must be even).
 // For each position (b, s):

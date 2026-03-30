@@ -9,6 +9,8 @@ import (
 )
 
 // TraceRecorder is the interface used by EngineProxy to record traced operations.
+//
+// This API is not covered by the v1 stability guarantee.
 type TraceRecorder[T tensor.Numeric] interface {
 	Record(opName string, inputs []*tensor.TensorNumeric[T], output *tensor.TensorNumeric[T], extra map[string]any)
 	RecordMultiOutput(opName string, inputs []*tensor.TensorNumeric[T], outputs []*tensor.TensorNumeric[T], extra map[string]any)

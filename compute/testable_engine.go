@@ -9,8 +9,10 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-// TestableEngine extends CPUEngine with methods that allow controlled error injection
+// TestableEngine extends CPUEngine with methods that allow controlled error injection.
 // This enables testing of previously unreachable error paths.
+//
+// This API is not covered by the v1 stability guarantee.
 type TestableEngine[T tensor.Numeric] struct {
 	*CPUEngine[T]
 }
@@ -23,6 +25,8 @@ func NewTestableEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *TestableEng
 }
 
 // FailableTensor wraps a tensor and can be configured to fail on specific operations.
+//
+// This API is not covered by the v1 stability guarantee.
 type FailableTensor[T tensor.Numeric] struct {
 	*tensor.TensorNumeric[T]
 	failOnSet    bool
@@ -140,6 +144,8 @@ func (e *TestableEngine[T]) TestableTranspose(_ context.Context, a *tensor.Tenso
 }
 
 // FailableZeroer can be configured to fail on Zero operations.
+//
+// This API is not covered by the v1 stability guarantee.
 type FailableZeroer[T tensor.Numeric] struct {
 	engine   *TestableEngine[T]
 	failZero bool
