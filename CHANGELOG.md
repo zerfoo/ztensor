@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/zerfoo/ztensor/compare/v0.15.0...v1.0.0) (2026-03-30)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([0230a86](https://github.com/zerfoo/ztensor/commit/0230a86f12e84ea40459cd31681f68b9035455e7))
+
 ## [0.15.0](https://github.com/zerfoo/ztensor/compare/v0.14.1...v0.15.0) (2026-03-29)
 
 
