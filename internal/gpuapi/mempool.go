@@ -22,3 +22,18 @@ type MemPool interface {
 	// Stats returns the number of cached allocations and their total bytes.
 	Stats() (allocations int, totalBytes int)
 }
+
+// CaptureAwareAllocator is implemented by memory pools that support
+// CUDA graph capture. When capture mode is active, allocations use
+// cudaMallocAsync on the capture stream instead of cudaMalloc on the
+// default stream.
+//
+// Pools that do not implement this interface are unaffected by graph
+// capture; all tensors must be pre-allocated before capture begins.
+type CaptureAwareAllocator interface {
+	// SetCaptureStream enables capture-aware allocation.
+	// stream is the raw cudaStream_t (unsafe.Pointer).
+	SetCaptureStream(stream unsafe.Pointer)
+	// ClearCaptureStream disables capture-aware allocation.
+	ClearCaptureStream()
+}

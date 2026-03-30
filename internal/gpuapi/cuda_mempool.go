@@ -45,10 +45,23 @@ func (p *CUDAMemPool) Stats() (int, int) {
 	return p.inner.Stats()
 }
 
+// SetCaptureStream enables capture-aware allocation mode on the
+// underlying cuda.MemPool. During capture, fresh allocations use
+// cudaMallocAsync on the given stream.
+func (p *CUDAMemPool) SetCaptureStream(stream unsafe.Pointer) {
+	p.inner.SetCaptureStream(cuda.StreamFromPtr(stream))
+}
+
+// ClearCaptureStream disables capture-aware allocation mode.
+func (p *CUDAMemPool) ClearCaptureStream() {
+	p.inner.ClearCaptureStream()
+}
+
 // Inner returns the underlying cuda.MemPool for backward compatibility.
 func (p *CUDAMemPool) Inner() *cuda.MemPool {
 	return p.inner
 }
 
-// Compile-time interface assertion.
+// Compile-time interface assertions.
 var _ MemPool = (*CUDAMemPool)(nil)
+var _ CaptureAwareAllocator = (*CUDAMemPool)(nil)
