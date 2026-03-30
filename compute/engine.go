@@ -117,6 +117,51 @@ type PagedGQAer interface {
 	IsPagedGQASupported() bool
 }
 
+// GraphCapturer is an optional interface for engines that support CUDA graph
+// capture and replay. Capturing records a sequence of GPU operations into a
+// replayable graph that executes in a single GPU submission with zero
+// intermediate synchronization.
+//
+// Usage:
+//
+//	gc, ok := engine.(compute.GraphCapturer)
+//	if ok {
+//	    gc.BeginCapture()         // start recording
+//	    // ... run engine ops normally ...
+//	    handle, _ := gc.EndCapture()  // stop recording, get graph
+//	    gc.ReplayGraph(handle)        // replay the recorded ops
+//	    gc.DestroyGraph(handle)       // free resources
+//	}
+//
+// All tensors used during capture must be pre-allocated. Allocations during
+// capture (cudaMalloc) will fail with error 901.
+//
+// This API is not covered by the v1 stability guarantee.
+type GraphCapturer interface {
+	// BeginCapture starts recording GPU operations on the engine's stream.
+	// All subsequent engine ops are recorded into the graph until EndCapture.
+	BeginCapture() error
+
+	// EndCapture stops recording and returns an opaque handle to the captured
+	// graph. The handle can be replayed multiple times via ReplayGraph.
+	EndCapture() (GraphHandle, error)
+
+	// ReplayGraph executes a previously captured graph. The graph replays all
+	// recorded operations using the same tensor memory addresses. Input data
+	// can be updated via direct writes to pre-allocated tensor buffers before
+	// replay; the graph will operate on the updated data.
+	ReplayGraph(handle GraphHandle) error
+
+	// DestroyGraph releases resources associated with a captured graph.
+	DestroyGraph(handle GraphHandle) error
+}
+
+// GraphHandle is an opaque reference to a captured CUDA graph.
+// It is created by EndCapture and consumed by ReplayGraph/DestroyGraph.
+type GraphHandle struct {
+	ptr interface{} // engine-specific internal state
+}
+
 // Engine defines the interface for a computation engine (e.g., CPU, GPU).
 // All tensor operations should be routed through an Engine implementation to ensure
 // hardware interoperability and optimized performance.

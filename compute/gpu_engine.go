@@ -589,6 +589,55 @@ func (e *GPUEngine[T]) GPUStream() gpuapi.Stream {
 	return e.stream
 }
 
+// BeginCapture starts recording GPU operations into a CUDA graph.
+// All subsequent engine ops are recorded until EndCapture is called.
+// All tensors must be pre-allocated before calling BeginCapture;
+// GPU memory allocations during capture will fail.
+func (e *GPUEngine[T]) BeginCapture() error {
+	s := cuda.StreamFromPtr(e.Stream())
+	return cuda.StreamBeginCapture(s)
+}
+
+// EndCapture stops recording and returns a handle to the captured graph.
+// The handle can be replayed via ReplayGraph.
+func (e *GPUEngine[T]) EndCapture() (GraphHandle, error) {
+	s := cuda.StreamFromPtr(e.Stream())
+	graph, err := cuda.StreamEndCapture(s)
+	if err != nil {
+		return GraphHandle{}, err
+	}
+	exec, err := cuda.GraphInstantiate(graph)
+	if err != nil {
+		cuda.GraphDestroy(graph)
+		return GraphHandle{}, err
+	}
+	// The Graph object is no longer needed after instantiation.
+	cuda.GraphDestroy(graph)
+	return GraphHandle{ptr: exec}, nil
+}
+
+// ReplayGraph executes a previously captured graph on the engine's stream.
+func (e *GPUEngine[T]) ReplayGraph(handle GraphHandle) error {
+	exec, ok := handle.ptr.(*cuda.GraphExec)
+	if !ok || exec == nil {
+		return fmt.Errorf("ReplayGraph: invalid graph handle")
+	}
+	s := cuda.StreamFromPtr(e.Stream())
+	if err := cuda.GraphLaunch(exec, s); err != nil {
+		return err
+	}
+	return s.Synchronize()
+}
+
+// DestroyGraph releases resources associated with a captured graph.
+func (e *GPUEngine[T]) DestroyGraph(handle GraphHandle) error {
+	exec, ok := handle.ptr.(*cuda.GraphExec)
+	if !ok || exec == nil {
+		return nil
+	}
+	return cuda.GraphExecDestroy(exec)
+}
+
 // Close releases the BLAS handle, DNN handle, GPU stream, and drains the memory pool.
 // The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {
