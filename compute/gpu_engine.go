@@ -591,16 +591,33 @@ func (e *GPUEngine[T]) GPUStream() gpuapi.Stream {
 
 // BeginCapture starts recording GPU operations into a CUDA graph.
 // All subsequent engine ops are recorded until EndCapture is called.
-// All tensors must be pre-allocated before calling BeginCapture;
-// GPU memory allocations during capture will fail.
+// If the engine's memory pool implements CaptureAwareAllocator, it is
+// switched to use cudaMallocAsync on the capture stream so that any
+// allocations during capture are recorded as graph nodes instead of
+// calling cudaMalloc on the default stream.
 func (e *GPUEngine[T]) BeginCapture() error {
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok {
+		cap.SetCaptureStream(e.Stream())
+	}
 	s := cuda.StreamFromPtr(e.Stream())
-	return cuda.StreamBeginCapture(s)
+	if err := cuda.StreamBeginCapture(s); err != nil {
+		// Roll back capture-aware mode on failure.
+		if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok {
+			cap.ClearCaptureStream()
+		}
+		return err
+	}
+	return nil
 }
 
 // EndCapture stops recording and returns a handle to the captured graph.
-// The handle can be replayed via ReplayGraph.
+// The handle can be replayed via ReplayGraph. Capture-aware allocation
+// mode is cleared regardless of whether capture succeeds or fails.
 func (e *GPUEngine[T]) EndCapture() (GraphHandle, error) {
+	// Always clear capture-aware allocation when leaving the capture region.
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok {
+		defer cap.ClearCaptureStream()
+	}
 	s := cuda.StreamFromPtr(e.Stream())
 	graph, err := cuda.StreamEndCapture(s)
 	if err != nil {
