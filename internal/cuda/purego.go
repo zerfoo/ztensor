@@ -28,6 +28,10 @@ type CUDALib struct {
 	cudaMemcpyPeer          uintptr
 	cudaDeviceGetAttribute  uintptr
 
+	// Async alloc/free (optional, available since CUDA 11.2)
+	cudaMallocAsync uintptr
+	cudaFreeAsync   uintptr
+
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
 	cudaStreamBeginCapture  uintptr
 	cudaStreamEndCapture    uintptr
@@ -101,9 +105,13 @@ func Open() (*CUDALib, error) {
 		*s.ptr = addr
 	}
 
-	// Resolve optional CUDA graph API symbols (available since CUDA 10.0).
-	// These are not required for basic operation, so failure is silently ignored.
+	// Resolve optional symbols. These are not required for basic operation,
+	// so failure is silently ignored.
 	optSyms := []sym{
+		// Async alloc/free (CUDA 11.2+)
+		{"cudaMallocAsync", &lib.cudaMallocAsync},
+		{"cudaFreeAsync", &lib.cudaFreeAsync},
+		// CUDA graph API (CUDA 10.0+)
 		{"cudaStreamBeginCapture", &lib.cudaStreamBeginCapture},
 		{"cudaStreamEndCapture", &lib.cudaStreamEndCapture},
 		{"cudaGraphInstantiate", &lib.cudaGraphInstantiate},

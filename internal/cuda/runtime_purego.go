@@ -79,6 +79,38 @@ func Malloc(size int) (unsafe.Pointer, error) {
 	return unsafe.Pointer(devPtr), nil //nolint:govet
 }
 
+// MallocAsync allocates size bytes on the given CUDA stream.
+// During stream capture, this records the allocation as a graph node
+// instead of performing it immediately on the default stream.
+// Falls back to synchronous Malloc if cudaMallocAsync is not available.
+func MallocAsync(size int, s *Stream) (unsafe.Pointer, error) {
+	l := lib()
+	if l == nil || l.cudaMallocAsync == 0 {
+		return Malloc(size)
+	}
+	var devPtr uintptr
+	ret := ccall(l.cudaMallocAsync, uintptr(unsafe.Pointer(&devPtr)), uintptr(size), s.handle)
+	if ret != cudaSuccess {
+		return nil, fmt.Errorf("cudaMallocAsync failed: %s", cudaErrorString(ret))
+	}
+	return unsafe.Pointer(devPtr), nil //nolint:govet
+}
+
+// FreeAsync frees device memory on the given stream.
+// During stream capture, this records the free as a graph node.
+// Falls back to synchronous Free if cudaFreeAsync is not available.
+func FreeAsync(ptr unsafe.Pointer, s *Stream) error {
+	l := lib()
+	if l == nil || l.cudaFreeAsync == 0 {
+		return Free(ptr)
+	}
+	ret := ccall(l.cudaFreeAsync, uintptr(ptr), s.handle)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaFreeAsync failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
 // MallocManaged allocates size bytes of unified memory accessible from both
 // host and device.
 func MallocManaged(size int) (unsafe.Pointer, error) {
