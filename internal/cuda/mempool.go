@@ -24,13 +24,19 @@ func SetDefaultMemPool(p *MemPool) {
 // memory. It caches freed allocations by (deviceID, byteSize) for reuse,
 // avoiding the overhead of cudaMalloc/cudaFree on every operation and
 // preventing cross-device pointer reuse in multi-GPU setups.
+//
+// MemPool is capture-aware: when a capture stream is set via
+// SetCaptureStream, fresh allocations use cudaMallocAsync on that stream
+// so they are recorded as graph nodes instead of calling cudaMalloc on
+// the default stream (which would break CUDA graph capture).
 type MemPool struct {
-	mu           sync.Mutex
-	cache        map[int]map[int][]unsafe.Pointer // deviceID -> byteSize -> list of free device pointers
-	managedCache map[int]map[int][]unsafe.Pointer // same structure for managed (unified) memory
-	hits         atomic.Int64
-	misses       atomic.Int64
-	frees        atomic.Int64
+	mu            sync.Mutex
+	cache         map[int]map[int][]unsafe.Pointer // deviceID -> byteSize -> list of free device pointers
+	managedCache  map[int]map[int][]unsafe.Pointer // same structure for managed (unified) memory
+	hits          atomic.Int64
+	misses        atomic.Int64
+	frees         atomic.Int64
+	captureStream *Stream // when non-nil, use MallocAsync on this stream
 }
 
 // NewMemPool creates a new empty memory pool.
@@ -39,6 +45,24 @@ func NewMemPool() *MemPool {
 		cache:        make(map[int]map[int][]unsafe.Pointer),
 		managedCache: make(map[int]map[int][]unsafe.Pointer),
 	}
+}
+
+// SetCaptureStream enables capture-aware allocation mode.
+// While set, Alloc uses cudaMallocAsync on the given stream so that
+// allocations are recorded as CUDA graph nodes instead of calling
+// cudaMalloc on the default stream.
+func (p *MemPool) SetCaptureStream(s *Stream) {
+	p.mu.Lock()
+	p.captureStream = s
+	p.mu.Unlock()
+}
+
+// ClearCaptureStream disables capture-aware allocation mode,
+// reverting Alloc to use synchronous cudaMalloc.
+func (p *MemPool) ClearCaptureStream() {
+	p.mu.Lock()
+	p.captureStream = nil
+	p.mu.Unlock()
 }
 
 // bucketSize rounds byteSize up to the next reuse bucket.
@@ -80,6 +104,8 @@ func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 			return ptr, nil
 		}
 	}
+	// Snapshot captureStream under the lock so we can use it after unlock.
+	cs := p.captureStream
 	p.mu.Unlock()
 	p.misses.Add(1)
 
@@ -87,6 +113,9 @@ func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 		return nil, err
 	}
 
+	if cs != nil {
+		return MallocAsync(bucket, cs)
+	}
 	return Malloc(bucket)
 }
 
