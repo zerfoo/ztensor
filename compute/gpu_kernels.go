@@ -91,10 +91,12 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 			"ptr", fmt.Sprintf("%p", devPtr))
 	}
 
-	// Use async memcpy on the engine's stream so H2D transfers are
-	// compatible with CUDA graph capture. Sync memcpy on the default
-	// stream would break capture with error 901.
-	if err := e.runtime.MemcpyAsync(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice, e.stream); err != nil {
+	// H2D uses sync Memcpy because the source is unpinned host memory
+	// (often mmap'd GGUF data). cudaMemcpyAsync requires pinned host
+	// memory for H2D; unpinned sources cause "misaligned address" errors.
+	// D2D copies (in GPUEngine.Copy) use MemcpyAsync safely since both
+	// pointers are device memory.
+	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
 		if debugGPU {
 			e.logger.Debug("getDevicePtr: Memcpy H2D failed",
 				"bytes", fmt.Sprintf("%d", byteSize),
