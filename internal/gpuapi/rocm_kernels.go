@@ -186,6 +186,10 @@ func (k *ROCmKernels) Repeat(_ unsafe.Pointer, _ unsafe.Pointer, _, _, _, _ int,
 	return fmt.Errorf("Repeat: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) RepeatInterleaveF32(_, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("RepeatInterleaveF32: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) Argmax(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("Argmax: not implemented for ROCm")
 }

@@ -196,6 +196,10 @@ func (k *OpenCLKernels) Repeat(_ unsafe.Pointer, _ unsafe.Pointer, _, _, _, _ in
 	return fmt.Errorf("Repeat: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) RepeatInterleaveF32(_, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("RepeatInterleaveF32: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) Argmax(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("Argmax: not implemented for OpenCL")
 }

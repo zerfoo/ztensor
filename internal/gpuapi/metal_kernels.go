@@ -395,6 +395,12 @@ func (k *MetalKernels) Repeat(src, dst unsafe.Pointer, outerSize, axisDim, inner
 		})
 }
 
+// --- RepeatInterleaveF32 (GQA head expansion) ---
+
+func (k *MetalKernels) RepeatInterleaveF32(_, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("RepeatInterleaveF32: not implemented for Metal")
+}
+
 // --- Argmax (two-pass) ---
 
 func (k *MetalKernels) Argmax(input, result, scratch unsafe.Pointer, n int, _ Stream) error {

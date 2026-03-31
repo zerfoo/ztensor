@@ -81,6 +81,9 @@ type KernelLib struct {
 	// fused_swiglu
 	launchFusedSwiGLUF32 uintptr
 
+	// fused_repeat_interleave (GQA KV head expansion)
+	launchRepeatInterleaveF32 uintptr
+
 	// fused_add_rmsnorm
 	launchFusedAddRMSNormF32 uintptr
 
@@ -264,6 +267,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_rope_f32", &k.launchFusedRoPEF32},
 			// fused_swiglu
 			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
+			// fused_repeat_interleave (GQA KV head expansion)
+			{"launch_repeat_interleave_f32", &k.launchRepeatInterleaveF32},
 		// fused_add_rmsnorm
 		{"fused_add_rmsnorm_f32", &k.launchFusedAddRMSNormF32},
 		// fused_norm_add
@@ -363,6 +368,7 @@ func openKernelLib() (*KernelLib, error) {
 			"fp4_gemv_f16":                    true,
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
+			"launch_repeat_interleave_f32":    true,
 			"ternary_gemv_f32":                true,
 			"nsa_attention_f32":               true,
 			"kv_dequant_q4_f32":               true,
