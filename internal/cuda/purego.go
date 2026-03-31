@@ -29,8 +29,9 @@ type CUDALib struct {
 	cudaDeviceGetAttribute  uintptr
 
 	// Async alloc/free (optional, available since CUDA 11.2)
-	cudaMallocAsync uintptr
-	cudaFreeAsync   uintptr
+	cudaMallocAsync  uintptr
+	cudaFreeAsync    uintptr
+	cudaMemsetAsync  uintptr
 
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
 	cudaStreamBeginCapture  uintptr
@@ -111,6 +112,7 @@ func Open() (*CUDALib, error) {
 		// Async alloc/free (CUDA 11.2+)
 		{"cudaMallocAsync", &lib.cudaMallocAsync},
 		{"cudaFreeAsync", &lib.cudaFreeAsync},
+		{"cudaMemsetAsync", &lib.cudaMemsetAsync},
 		// CUDA graph API (CUDA 10.0+)
 		{"cudaStreamBeginCapture", &lib.cudaStreamBeginCapture},
 		{"cudaStreamEndCapture", &lib.cudaStreamEndCapture},

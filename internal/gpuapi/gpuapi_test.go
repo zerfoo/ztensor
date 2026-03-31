@@ -29,6 +29,7 @@ func (stubRuntime) Memcpy(_, _ unsafe.Pointer, _ int, _ gpuapi.MemcpyKind) error
 func (stubRuntime) MemcpyAsync(_, _ unsafe.Pointer, _ int, _ gpuapi.MemcpyKind, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubRuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ gpuapi.Stream) error { return nil }
 func (stubRuntime) MemcpyPeer(_ unsafe.Pointer, _ int, _ unsafe.Pointer, _ int, _ int) error {
 	return nil
 }

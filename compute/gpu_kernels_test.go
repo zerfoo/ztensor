@@ -46,6 +46,7 @@ func (fakeRuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, _ gpuapi.Memc
 	copy(dstSlice, srcSlice)
 	return nil
 }
+func (fakeRuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ gpuapi.Stream) error { return nil }
 func (fakeRuntime) MemcpyPeer(_ unsafe.Pointer, _ int, _ unsafe.Pointer, _ int, _ int) error {
 	return nil
 }

@@ -61,6 +61,10 @@ func (r *FPGARuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, kind Memcp
 	return r.Memcpy(dst, src, count, kind)
 }
 
+func (r *FPGARuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ Stream) error {
+	return fmt.Errorf("FPGARuntime.MemsetAsync: not yet implemented")
+}
+
 func (r *FPGARuntime) MemcpyPeer(dst unsafe.Pointer, _ int, src unsafe.Pointer, _ int, count int) error {
 	// FPGA does not support direct peer-to-peer transfer.
 	// Fall back to D2H + H2D via a host buffer.

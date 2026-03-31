@@ -3159,6 +3159,11 @@ func (e *GPUEngine[T]) Pow(ctx context.Context, base, exponent *tensor.TensorNum
 
 // Zero sets all elements to zero.
 func (e *GPUEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
+	// GPU path: use cudaMemsetAsync on the engine's stream.
+	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return e.runtime.MemsetAsync(gs.Ptr(), 0, gs.ByteSize(), e.stream)
+	}
+	// CPU fallback for non-GPU tensors.
 	return e.cpu.Zero(ctx, a)
 }
 

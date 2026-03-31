@@ -61,6 +61,10 @@ func (r *OpenCLRuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, kind Mem
 	return r.Memcpy(dst, src, count, kind)
 }
 
+func (r *OpenCLRuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ Stream) error {
+	return fmt.Errorf("OpenCLRuntime.MemsetAsync: not yet implemented")
+}
+
 func (r *OpenCLRuntime) MemcpyPeer(dst unsafe.Pointer, _ int, src unsafe.Pointer, _ int, count int) error {
 	// OpenCL does not support peer-to-peer copies directly.
 	// Fall back to D2H + H2D via a host buffer.

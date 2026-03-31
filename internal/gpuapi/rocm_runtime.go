@@ -1,6 +1,7 @@
 package gpuapi
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/device"
@@ -43,6 +44,10 @@ func (r *ROCmRuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, kind Memcp
 		hs = stream.(*hipStreamWrapper).inner
 	}
 	return hip.MemcpyAsync(dst, src, count, hipMemcpyKind(kind), hs)
+}
+
+func (r *ROCmRuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ Stream) error {
+	return fmt.Errorf("ROCmRuntime.MemsetAsync: not yet implemented")
 }
 
 func (r *ROCmRuntime) MemcpyPeer(dst unsafe.Pointer, dstDevice int, src unsafe.Pointer, srcDevice int, count int) error {
