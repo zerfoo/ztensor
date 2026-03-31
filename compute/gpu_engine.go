@@ -2640,6 +2640,32 @@ func (e *GPUEngine[T]) matMulBF16BWeight(ctx context.Context, a *tensor.TensorNu
 	return makeGPUResult[T](e, outShape, devC, m*n, dst...)
 }
 
+// cpuMatMulToGPU runs MatMul on the CPU engine then uploads the result to GPU.
+// This ensures callers always receive a GPU-resident tensor, maintaining device
+// consistency when the GPU engine falls back to CPU for unsupported quant types.
+func (e *GPUEngine[T]) cpuMatMulToGPU(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	result, err := e.cpu.MatMul(ctx, a, b, dst...)
+	if err != nil {
+		return nil, err
+	}
+	// If already GPU-resident (e.g., dst was provided with GPUStorage), return as-is.
+	if _, ok := result.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return result, nil
+	}
+	// Upload CPU result to GPU.
+	data := result.Data()
+	byteSize := len(data) * int(unsafe.Sizeof(*new(T)))
+	devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+	if err != nil {
+		return result, nil // fallback: return CPU tensor if GPU alloc fails
+	}
+	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		e.pool.Free(e.deviceID, devPtr, byteSize)
+		return result, nil
+	}
+	return makeGPUResult[T](e, result.Shape(), devPtr, len(data), dst...)
+}
+
 // matMulMmap handles MatMul where A has MmapStorage. Routes to the appropriate
 // quantized kernel based on QType, using the pre-uploaded GPU pointer from
 // UploadWeights or uploading raw bytes on the fly.
@@ -2647,7 +2673,7 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 	aShape := a.Shape()
 	bShape := b.Shape()
 	if len(aShape) < 2 || len(bShape) < 2 || len(aShape) > 2 || len(bShape) > 2 {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	m := aShape[0]
@@ -2658,7 +2684,7 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 	// Acquire GPU pointer for the quantized weight data.
 	devW, freeW, err := e.mmapDevicePtr(ms)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer freeW()
 
@@ -2668,7 +2694,7 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 	if n == 1 {
 		devX, cleanupX, err := getDevicePtr(e, b)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 		defer cleanupX()
 
@@ -2676,7 +2702,7 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 		cSize := m * f32Size
 		devY, err := e.pool.Alloc(e.deviceID, cSize)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 
 		var kerr error
@@ -2684,13 +2710,13 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 		case tensor.GGMLTypeQ4_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ4KF32(devW, devX, devY, m, k, e.stream)
 		case tensor.GGMLTypeQ4_0:
 			if k%32 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			totalBlocks := (m * k) / 32
 			dataOff := tensor.Q4GPUDataOffset(totalBlocks)
@@ -2698,28 +2724,28 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 		case tensor.GGMLTypeQ8_0:
 			if k%32 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemmQ8F32(devW, devX, devY, m, k, 1, e.stream)
 		case tensor.GGMLTypeQ6_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ6KF32(devW, devX, devY, m, k, e.stream)
 		case tensor.GGMLTypeQ5_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ5KF32(devW, devX, devY, m, k, e.stream)
 		default:
 			e.pool.Free(e.deviceID, devY, cSize)
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 		if kerr != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 		return makeGPUResult[T](e, []int{m, n}, devY, m*n, dst...)
 	}
@@ -2727,31 +2753,31 @@ func (e *GPUEngine[T]) matMulMmap(ctx context.Context, ms *tensor.MmapStorage, a
 	// General GEMM: dequantize Q4_K on GPU, then cuBLAS Sgemm.
 	// Only Q4_K has a GPU dequant kernel; others fall back to CPU.
 	if qtype != tensor.GGMLTypeQ4_K {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	f32Size := int(unsafe.Sizeof(float32(0)))
 	dequantSize := m * k * f32Size
 	devAF32, err := e.pool.Alloc(e.deviceID, dequantSize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer e.pool.Free(e.deviceID, devAF32, dequantSize)
 
 	if err := e.kernels.DequantQ4KF32(devW, devAF32, m, k, e.stream); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	devB, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer cleanupB()
 
 	cSize := m * n * f32Size
 	devC, err := e.pool.Alloc(e.deviceID, cSize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	if err := e.blas.Sgemm(m, n, k, 1.0, devAF32, devB, 0.0, devC); err != nil {
@@ -2768,7 +2794,7 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 	aShape := a.Shape()
 	bShape := b.Shape()
 	if len(aShape) < 2 || len(bShape) < 2 || len(bShape) > 2 {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	// B is virtual-transposed: logical [K, N], physical [N, K].
@@ -2783,7 +2809,7 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 
 	devW, freeW, err := e.mmapDevicePtr(ms)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer freeW()
 
@@ -2794,7 +2820,7 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 	if m == 1 {
 		devX, cleanupX, err := getDevicePtr(e, a)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 		defer cleanupX()
 
@@ -2802,7 +2828,7 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 		cSize := n * f32Size
 		devY, err := e.pool.Alloc(e.deviceID, cSize)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 
 		var kerr error
@@ -2810,13 +2836,13 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 		case tensor.GGMLTypeQ4_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ4KF32(devW, devX, devY, nPhys, k, e.stream)
 		case tensor.GGMLTypeQ4_0:
 			if k%32 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			totalBlocks := (nPhys * k) / 32
 			dataOff := tensor.Q4GPUDataOffset(totalBlocks)
@@ -2824,28 +2850,28 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 		case tensor.GGMLTypeQ8_0:
 			if k%32 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemmQ8F32(devW, devX, devY, nPhys, k, 1, e.stream)
 		case tensor.GGMLTypeQ6_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ6KF32(devW, devX, devY, nPhys, k, e.stream)
 		case tensor.GGMLTypeQ5_K:
 			if k%256 != 0 {
 				e.pool.Free(e.deviceID, devY, cSize)
-				return e.cpu.MatMul(ctx, a, b, dst...)
+				return e.cpuMatMulToGPU(ctx, a, b, dst...)
 			}
 			kerr = e.kernels.GemvQ5KF32(devW, devX, devY, nPhys, k, e.stream)
 		default:
 			e.pool.Free(e.deviceID, devY, cSize)
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 		if kerr != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpuMatMulToGPU(ctx, a, b, dst...)
 		}
 
 		outShape := make([]int, len(aShape))
@@ -2857,31 +2883,31 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 	// General GEMM: dequantize Q4_K on GPU, then cuBLAS SgemmNT.
 	// Only Q4_K has a GPU dequant kernel; others fall back to CPU.
 	if qtype != tensor.GGMLTypeQ4_K {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	f32Size := int(unsafe.Sizeof(float32(0)))
 	dequantSize := nPhys * k * f32Size
 	devBF32, err := e.pool.Alloc(e.deviceID, dequantSize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
 
 	if err := e.kernels.DequantQ4KF32(devW, devBF32, nPhys, k, e.stream); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 	defer cleanupA()
 
 	cSize := m * n * f32Size
 	devC, err := e.pool.Alloc(e.deviceID, cSize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return e.cpuMatMulToGPU(ctx, a, b, dst...)
 	}
 
 	outShape := make([]int, len(aShape))
@@ -2899,7 +2925,7 @@ func (e *GPUEngine[T]) matMulMmapB(ctx context.Context, a *tensor.TensorNumeric[
 
 	// Fallback: CPU MatMul.
 	e.pool.Free(e.deviceID, devC, cSize)
-	return e.cpu.MatMul(ctx, a, b, dst...)
+	return e.cpuMatMulToGPU(ctx, a, b, dst...)
 }
 
 // mmapDevicePtr returns the GPU device pointer for MmapStorage data. If the data
