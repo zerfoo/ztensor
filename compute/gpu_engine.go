@@ -3866,6 +3866,72 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 	return makeGPUResult[T](e, shape, devOut, n)
 }
 
+// GPUFusedSoftmaxVMul computes softmax(scores * scale) @ V in a single GPU
+// kernel launch. Decode-optimized (seqQ=1): avoids materializing the attention
+// weights tensor, saving one kernel launch and the associated memory traffic.
+// scores: [BH, 1, seqKV], V: [BH, seqKV, D]. Returns output: [BH, 1, D].
+func (e *GPUEngine[T]) GPUFusedSoftmaxVMul(scores, V *tensor.TensorNumeric[T], scale float32) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul: only float32 supported")
+	}
+
+	if scores == nil || V == nil {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul: input tensors must not be nil")
+	}
+
+	e.setDevice()
+
+	sShape := scores.Shape()
+	vShape := V.Shape()
+
+	// scores must be [BH, 1, seqKV] or [BH, seqKV]
+	var BH, seqKV int
+	switch len(sShape) {
+	case 3:
+		if sShape[1] != 1 {
+			return nil, fmt.Errorf("GPUFusedSoftmaxVMul: scores seqQ must be 1 for decode, got %d", sShape[1])
+		}
+		BH, seqKV = sShape[0], sShape[2]
+	case 2:
+		BH, seqKV = sShape[0], sShape[1]
+	default:
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul: scores must be 2D or 3D, got %dD", len(sShape))
+	}
+
+	// V must be [BH, seqKV, D]
+	if len(vShape) != 3 || vShape[0] != BH || vShape[1] != seqKV {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul: V shape mismatch: want [%d, %d, D], got %v", BH, seqKV, vShape)
+	}
+	D := vShape[2]
+
+	scoresPtr, scoresCleanup, err := getDevicePtr(e, scores)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul scores: %w", err)
+	}
+	defer scoresCleanup()
+
+	vPtr, vCleanup, err := getDevicePtr(e, V)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul V: %w", err)
+	}
+	defer vCleanup()
+
+	outElems := BH * D
+	outBytes := outElems * f32Size
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSoftmaxVMul alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedSoftmaxVMulF32(scoresPtr, vPtr, devOut, scale, BH, seqKV, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	outShape := []int{BH, 1, D}
+	return makeGPUResult[T](e, outShape, devOut, outElems)
+}
+
 // GPUFusedAddRMSNorm computes sum = input + residual and
 // normed = rmsnorm(sum, weight, eps) in a single GPU kernel launch.
 // Both inputs are read-only; outputs go to separate buffers.

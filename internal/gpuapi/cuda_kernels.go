@@ -294,5 +294,9 @@ func (k *CUDAKernels) SgemvM1(y, A, x unsafe.Pointer, M, N int, s Stream) error 
 	return kernels.SgemvM1(y, A, x, M, N, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedSoftmaxVMulF32(scores, V, output unsafe.Pointer, scale float32, BH, seqKV, D int, s Stream) error {
+	return kernels.FusedSoftmaxVMulF32(scores, V, output, scale, BH, seqKV, D, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

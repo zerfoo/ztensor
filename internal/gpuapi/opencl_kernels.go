@@ -296,5 +296,9 @@ func (k *OpenCLKernels) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ Stream) erro
 	return fmt.Errorf("SgemvM1: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedSoftmaxVMulF32: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)

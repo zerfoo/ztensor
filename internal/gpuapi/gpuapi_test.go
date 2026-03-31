@@ -277,6 +277,9 @@ func (stubKernelRunner) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ gpuapi
 func (stubKernelRunner) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
 var _ gpuapi.KernelRunner = stubKernelRunner{}
 

@@ -159,6 +159,9 @@ type KernelLib struct {
 	launchGemvWarpF32 uintptr
 	launchGemvWarpF16 uintptr
 
+	// fused_softmax_vmul (fused softmax + V multiply for decode attention)
+	launchFusedSoftmaxVMulF32 uintptr
+
 	// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 	launchTernaryGemvF32 uintptr
 
@@ -325,6 +328,8 @@ func openKernelLib() (*KernelLib, error) {
 		// gemv_warp (warp-specialized GEMV for decode phase)
 		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
 		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
+		// fused_softmax_vmul (fused softmax + V multiply for decode attention)
+		{"launch_fused_softmax_vmul_f32", &k.launchFusedSoftmaxVMulF32},
 		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
 		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
 		// nsa_attention (fused three-path Native Sparse Attention)
@@ -369,6 +374,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
 			"launch_repeat_interleave_f32":    true,
+			"launch_fused_softmax_vmul_f32":   true,
 			"ternary_gemv_f32":                true,
 			"nsa_attention_f32":               true,
 			"kv_dequant_q4_f32":               true,
