@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/zerfoo/ztensor/compare/v1.1.1...v1.1.2) (2026-03-31)
+
+
+### Bug Fixes
+
+* **compute:** upload CPU fallback MatMul results to GPU for device consistency ([5bc914b](https://github.com/zerfoo/ztensor/commit/5bc914b9ece94d1c87ae12701d7c285f531c6273))
+
 ## [1.1.1](https://github.com/zerfoo/ztensor/compare/v1.1.0...v1.1.1) (2026-03-31)
 
 
