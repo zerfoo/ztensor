@@ -3174,6 +3174,13 @@ func (e *GPUEngine[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], sh
 
 // Copy copies data from source to destination tensor.
 func (e *GPUEngine[T]) Copy(ctx context.Context, dst, src *tensor.TensorNumeric[T]) error {
+	dstGS, dstIsGPU := dst.GetStorage().(*tensor.GPUStorage[T])
+	srcGS, srcIsGPU := src.GetStorage().(*tensor.GPUStorage[T])
+	if dstIsGPU && srcIsGPU {
+		// D2D copy on engine stream.
+		return e.runtime.MemcpyAsync(dstGS.Ptr(), srcGS.Ptr(), dstGS.ByteSize(), gpuapi.MemcpyDeviceToDevice, e.stream)
+	}
+	// Fall back to CPU for mixed or CPU-only tensors.
 	return e.cpu.Copy(ctx, dst, src)
 }
 
