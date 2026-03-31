@@ -308,6 +308,23 @@ func ManagedMemorySupported(deviceID int) bool {
 	return true
 }
 
+// MemsetAsync fills count bytes of device memory with value on the given stream.
+func MemsetAsync(devPtr unsafe.Pointer, value int, count int, s *Stream) error {
+	l := lib()
+	if l == nil || l.cudaMemsetAsync == 0 {
+		return fmt.Errorf("cudaMemsetAsync: not available")
+	}
+	var streamHandle uintptr
+	if s != nil {
+		streamHandle = s.handle
+	}
+	ret := ccall(l.cudaMemsetAsync, uintptr(devPtr), uintptr(value), uintptr(count), streamHandle)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaMemsetAsync failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
 // MemcpyAsync copies count bytes asynchronously on the given stream.
 func MemcpyAsync(dst, src unsafe.Pointer, count int, kind MemcpyKind, stream *Stream) error {
 	l := lib()

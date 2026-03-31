@@ -48,6 +48,8 @@ type Runtime interface {
 	Memcpy(dst, src unsafe.Pointer, count int, kind MemcpyKind) error
 	// MemcpyAsync copies count bytes asynchronously on the given stream.
 	MemcpyAsync(dst, src unsafe.Pointer, count int, kind MemcpyKind, stream Stream) error
+	// MemsetAsync fills count bytes with value on the given stream.
+	MemsetAsync(devPtr unsafe.Pointer, value int, count int, stream Stream) error
 	// MemcpyPeer copies count bytes between devices (peer-to-peer).
 	MemcpyPeer(dst unsafe.Pointer, dstDevice int, src unsafe.Pointer, srcDevice int, count int) error
 

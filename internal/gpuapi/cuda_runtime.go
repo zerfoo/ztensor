@@ -45,6 +45,14 @@ func (r *CUDARuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, kind Memcp
 	return cuda.MemcpyAsync(dst, src, count, cudaMemcpyKind(kind), cs)
 }
 
+func (r *CUDARuntime) MemsetAsync(devPtr unsafe.Pointer, value int, count int, stream Stream) error {
+	var cs *cuda.Stream
+	if stream != nil {
+		cs = stream.(*cudaStreamWrapper).inner
+	}
+	return cuda.MemsetAsync(devPtr, value, count, cs)
+}
+
 func (r *CUDARuntime) MemcpyPeer(dst unsafe.Pointer, dstDevice int, src unsafe.Pointer, srcDevice int, count int) error {
 	return cuda.MemcpyPeer(dst, dstDevice, src, srcDevice, count)
 }

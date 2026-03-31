@@ -61,6 +61,10 @@ func (r *MetalRuntime) MemcpyAsync(dst, src unsafe.Pointer, count int, kind Memc
 	return r.Memcpy(dst, src, count, kind)
 }
 
+func (r *MetalRuntime) MemsetAsync(_ unsafe.Pointer, _ int, _ int, _ Stream) error {
+	return fmt.Errorf("MetalRuntime.MemsetAsync: not yet implemented")
+}
+
 func (r *MetalRuntime) MemcpyPeer(dst unsafe.Pointer, _ int, src unsafe.Pointer, _ int, count int) error {
 	// Metal does not support direct peer-to-peer between discrete GPUs.
 	// Fall back to D2H + H2D via a host buffer.

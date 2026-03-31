@@ -206,6 +206,9 @@ func (s *GPUStorage[T]) Len() int { return s.length }
 // DeviceID returns the GPU device ordinal this storage resides on.
 func (s *GPUStorage[T]) DeviceID() int { return s.deviceID }
 
+// ByteSize returns the total size in bytes of the stored elements.
+func (s *GPUStorage[T]) ByteSize() int { return s.byteSize }
+
 // TrySlice copies device memory to a new CPU slice.
 // For managed storage, the data is read directly from the unified pointer
 // without a D2H Memcpy. Returns an error if the copy fails.
