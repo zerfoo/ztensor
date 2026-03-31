@@ -91,7 +91,10 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 			"ptr", fmt.Sprintf("%p", devPtr))
 	}
 
-	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+	// Use async memcpy on the engine's stream so H2D transfers are
+	// compatible with CUDA graph capture. Sync memcpy on the default
+	// stream would break capture with error 901.
+	if err := e.runtime.MemcpyAsync(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice, e.stream); err != nil {
 		if debugGPU {
 			e.logger.Debug("getDevicePtr: Memcpy H2D failed",
 				"bytes", fmt.Sprintf("%d", byteSize),
