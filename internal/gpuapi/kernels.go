@@ -110,6 +110,11 @@ type KernelRunner interface {
 	// innerSize = product of dims after axis, reps = number of repetitions.
 	Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, stream Stream) error
 
+	// RepeatInterleaveF32 expands [B, numKV, S, D] to [B, numQ, S, D] for GQA
+	// key/value head expansion. Each KV head is repeated rep times along the
+	// head dimension (numQ = numKV * rep). Replaces Reshape->Repeat->Reshape.
+	RepeatInterleaveF32(input, output unsafe.Pointer, B, numKV, S, D, rep int, stream Stream) error
+
 	// Argmax finds the index of the maximum element in a float32 array on device.
 	// input: [n] float32, result: single int32 on device, scratch: temp storage.
 	// scratch must be at least 2*ceil(n/256)*4 bytes.

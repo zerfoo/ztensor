@@ -181,6 +181,10 @@ func (k *SYCLKernels) Repeat(_, _ unsafe.Pointer, _, _, _, _ int, _ Stream) erro
 	return fmt.Errorf("Repeat: not implemented for SYCL")
 }
 
+func (k *SYCLKernels) RepeatInterleaveF32(_, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("RepeatInterleaveF32: not implemented for SYCL")
+}
+
 func (k *SYCLKernels) Argmax(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("Argmax: not implemented for SYCL")
 }

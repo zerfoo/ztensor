@@ -193,6 +193,10 @@ func (k *CUDAKernels) Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerS
 	return kernels.Repeat(src, dst, outerSize, axisDim, innerSize, reps, streamPtr(s))
 }
 
+func (k *CUDAKernels) RepeatInterleaveF32(input, output unsafe.Pointer, B, numKV, S, D, rep int, s Stream) error {
+	return kernels.RepeatInterleaveF32(input, output, B, numKV, S, D, rep, streamPtr(s))
+}
+
 func (k *CUDAKernels) Argmax(input, result, scratch unsafe.Pointer, n int, s Stream) error {
 	return kernels.Argmax(input, result, scratch, n, streamPtr(s))
 }

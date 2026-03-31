@@ -179,6 +179,10 @@ func (k *FPGAKernels) Repeat(_, _ unsafe.Pointer, _, _, _, _ int, _ Stream) erro
 	return fmt.Errorf("Repeat: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) RepeatInterleaveF32(_, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("RepeatInterleaveF32: not implemented for FPGA")
+}
+
 func (k *FPGAKernels) Argmax(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("Argmax: not implemented for FPGA")
 }
