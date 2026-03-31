@@ -1097,6 +1097,16 @@ func sameShape[T tensor.Numeric](a, b *tensor.TensorNumeric[T]) bool {
 // reshape (no data movement needed). This happens when the non-unit dimensions
 // appear in the same order in both input and output shapes.
 func isTransposeReshape(inShape, outShape []int) bool {
+	// A transpose is equivalent to a reshape (no data movement) only when the
+	// permutation exclusively swaps unit-sized (1) dimensions. This is common
+	// during single-token generation where seqLen=1, e.g. [1,4,1,64] → [1,1,4,64].
+	//
+	// We verify this by collecting non-unit dimensions from both shapes IN ORDER
+	// and checking they match. Additionally, we must ensure the shapes are NOT
+	// identical with multiple equal non-unit dimensions (e.g. [5,5] transposed to
+	// [5,5] is NOT a no-op — data must be physically moved). We detect this by
+	// also requiring that inShape != outShape when all non-unit dims match, unless
+	// the shapes literally differ (which means unit dims were permuted).
 	var inNonUnit, outNonUnit []int
 	for _, d := range inShape {
 		if d != 1 {
@@ -1113,6 +1123,22 @@ func isTransposeReshape(inShape, outShape []int) bool {
 	}
 	for i := range inNonUnit {
 		if inNonUnit[i] != outNonUnit[i] {
+			return false
+		}
+	}
+	// Non-unit dimensions match in order. This is only a safe reshape if the
+	// full shapes actually differ (unit dims were moved). If inShape == outShape
+	// exactly, the permutation might swap equal-sized non-unit dims (e.g. square
+	// matrix transpose), which requires physical data movement.
+	if len(inShape) == len(outShape) {
+		allSame := true
+		for i := range inShape {
+			if inShape[i] != outShape[i] {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
 			return false
 		}
 	}
