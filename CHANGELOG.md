@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0](https://github.com/zerfoo/ztensor/compare/v1.0.0...v1.1.0) (2026-03-31)
+
+
+### Features
+
+* **compute:** add GPUFusedSoftmaxVMul method with provider interface ([d659e76](https://github.com/zerfoo/ztensor/commit/d659e765ffb9a75ad95d7265a6e0b68fd590578e))
+* **compute:** add GPURepeatInterleave method with purego bindings ([6af7b96](https://github.com/zerfoo/ztensor/commit/6af7b96b3dda59b665e7cb26d06374acb3ab941c))
+* **compute:** add GraphCapturer interface for CUDA graph capture/replay ([1f37c69](https://github.com/zerfoo/ztensor/commit/1f37c699ccaef5ae8e9f5bee22d010262c6b0adb))
+* **compute:** GPU-native Copy using cudaMemcpyAsync D2D ([efc8b42](https://github.com/zerfoo/ztensor/commit/efc8b42c4ba17e3d52152e0bbbff3deaa26d0ca4))
+* **compute:** wire capture-aware pool into GPUEngine BeginCapture/EndCapture ([e39b318](https://github.com/zerfoo/ztensor/commit/e39b318506372c3b0b3da8a4981efe7584d764a2))
+* **cuda:** add cudaMallocAsync and cudaFreeAsync bindings ([e339656](https://github.com/zerfoo/ztensor/commit/e339656ebe4c179cfcaaba3fe87d75c9984257f7))
+* **cuda:** add cudaMemsetAsync binding and GPU-native Zero ([47b5d39](https://github.com/zerfoo/ztensor/commit/47b5d396dda24a2a9adf448e7b952f52a478150d))
+* **cuda:** add fused repeat-interleave kernel for GQA head expansion ([91e2469](https://github.com/zerfoo/ztensor/commit/91e2469a6ac2b777a666fe58ca180f7e1db6edab))
+* **cuda:** add fused softmax + V multiply kernel for decode attention ([ef6f7ce](https://github.com/zerfoo/ztensor/commit/ef6f7ce30104a8769870ff85ef31a6459d3648e8))
+* **cuda:** make MemPool capture-aware with SetCaptureStream ([58b6337](https://github.com/zerfoo/ztensor/commit/58b63372c3100d560a3678d2f54493932e323065))
+* **gpuapi:** wire FusedSoftmaxVMulF32 into KernelRunner interface ([9afdb01](https://github.com/zerfoo/ztensor/commit/9afdb01d9c2b0fcda08982e8df60034628684799))
+
+
+### Bug Fixes
+
+* **compute:** copy mmap bytes to heap in mmapDevicePtr fallback ([0ad23b5](https://github.com/zerfoo/ztensor/commit/0ad23b5572da224c0c56ef893e87eec005ba66ae))
+* **compute:** revert H2D to sync Memcpy (async breaks mmap'd tensors) ([9a87e36](https://github.com/zerfoo/ztensor/commit/9a87e369f417a5ddfad21f23adbb8418412c6751))
+* **compute:** use async memcpy in getDevicePtr for CUDA graph capture ([b36b7ed](https://github.com/zerfoo/ztensor/commit/b36b7ed88455bb9fb3b6649d4356679fcbf8d181))
+
 ## [1.0.0](https://github.com/zerfoo/ztensor/compare/v0.15.0...v1.0.0) (2026-03-30)
 
 
