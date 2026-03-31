@@ -3508,6 +3508,45 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)
 }
 
+// RepeatInterleave expands a 4D tensor from [B, numKV, S, D] to [B, numQ, S, D]
+// by repeating each head along axis 1 (the head dimension) `reps` times.
+// This is a fused kernel for GQA key/value head expansion, replacing the
+// Reshape -> Repeat -> Reshape chain with a single kernel launch.
+// axis must be 1 and the input must be 4D [B, numKV, S, D].
+func (e *GPUEngine[T]) RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[T], axis int, reps int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	shape := a.Shape()
+	if !isFloat32[T]() || a == nil || axis != 1 || len(shape) != 4 || reps <= 0 {
+		// Fall back to generic Repeat path for unsupported configurations.
+		return e.Repeat(ctx, a, axis, reps, dst...)
+	}
+
+	B, numKV, S, D := shape[0], shape[1], shape[2], shape[3]
+	numQ := numKV * reps
+
+	gs, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
+	if !isGPU {
+		return e.Repeat(ctx, a, axis, reps, dst...)
+	}
+
+	e.setDevice()
+
+	outElems := B * numQ * S * D
+	outBytes := outElems * f32Size
+
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return e.Repeat(ctx, a, axis, reps, dst...)
+	}
+
+	if err := e.kernels.RepeatInterleaveF32(gs.Ptr(), devOut, B, numKV, S, D, reps, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return e.Repeat(ctx, a, axis, reps, dst...)
+	}
+
+	outShape := []int{B, numQ, S, D}
+	return makeGPUResult[T](e, outShape, devOut, outElems, dst...)
+}
+
 // OneHot creates a one-hot encoding.
 func (e *GPUEngine[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.OneHot(ctx, input, depth, dst...)
