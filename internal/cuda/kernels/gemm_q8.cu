@@ -30,16 +30,14 @@ __global__ void gemv_q8_kernel(
 {
     extern __shared__ float sx[];
 
-    /* Cooperatively load x[0..K-1] into shared memory using float4 loads. */
+    /* Cooperatively load x[0..K-1] into shared memory.
+     * Use per-element loads instead of float4 to avoid misaligned access
+     * when the activation pointer x is not 16-byte aligned (common on
+     * ARM64/Grace Hopper when x comes from pool allocations with
+     * non-aligned offsets). Shared memory loads later in the kernel are
+     * always aligned since shared memory base is 16-byte aligned. */
     int threads_per_block = blockDim.x;
-    int k4 = K / 4;
-    const float4* x4 = (const float4*)x;
-    float4* sx4 = (float4*)sx;
-    for (int i = threadIdx.x; i < k4; i += threads_per_block) {
-        sx4[i] = __ldg(&x4[i]);
-    }
-    /* Handle remainder if K is not a multiple of 4. */
-    for (int i = k4 * 4 + threadIdx.x; i < K; i += threads_per_block) {
+    for (int i = threadIdx.x; i < K; i += threads_per_block) {
         sx[i] = __ldg(&x[i]);
     }
     __syncthreads();
