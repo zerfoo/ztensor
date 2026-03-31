@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/zerfoo/ztensor/compare/v1.1.0...v1.1.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* **cuda:** remove float4 alignment requirement from gemv_q8_kernel ([1313605](https://github.com/zerfoo/ztensor/commit/13136054f73ebb31669f5509e06f79e3e8832009))
+* **cuda:** remove float4 alignment requirement from gemv_q8_kernel ([34aba3b](https://github.com/zerfoo/ztensor/commit/34aba3b9c3b3458cf231a61dd2995b42dc2b394c))
+
 ## [1.1.0](https://github.com/zerfoo/ztensor/compare/v1.0.0...v1.1.0) (2026-03-31)
 
 
