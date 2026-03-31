@@ -313,6 +313,10 @@ func (k *MetalKernels) SgemvM1(y, A, x unsafe.Pointer, M, N int, _ Stream) error
 		map[int][]byte{3: uint32Bytes(uint32(M)), 4: uint32Bytes(uint32(N))})
 }
 
+func (k *MetalKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedSoftmaxVMulF32: not yet implemented for Metal")
+}
+
 // --- Gather ---
 
 func (k *MetalKernels) Gather(table, indices, output unsafe.Pointer, N, D, _ int, _ Stream) error {

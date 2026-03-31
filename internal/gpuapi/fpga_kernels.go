@@ -279,5 +279,9 @@ func (k *FPGAKernels) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error 
 	return fmt.Errorf("SgemvM1: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedSoftmaxVMulF32: not implemented for FPGA")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*FPGAKernels)(nil)

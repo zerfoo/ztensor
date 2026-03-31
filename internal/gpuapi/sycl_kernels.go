@@ -287,5 +287,9 @@ func (k *SYCLKernels) SgemvM1(y, A, x unsafe.Pointer, M, N int, s Stream) error 
 	return sycl.SgemvM1(y, A, x, M, N, streamPtr(s))
 }
 
+func (k *SYCLKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedSoftmaxVMulF32: not implemented for SYCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*SYCLKernels)(nil)

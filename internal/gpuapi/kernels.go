@@ -199,4 +199,9 @@ type KernelRunner interface {
 	// SgemvM1 computes y = A*x for M=1 decode (single-token GEMV).
 	// y[M], A[M x N] row-major, x[N].
 	SgemvM1(y, A, x unsafe.Pointer, M, N int, stream Stream) error
+
+	// FusedSoftmaxVMulF32 computes softmax(scores * scale) @ V in one kernel.
+	// Decode-optimized (seqQ=1): avoids materializing the attention weights tensor.
+	// scores: [BH, seqKV], V: [BH, seqKV, D], output: [BH, D].
+	FusedSoftmaxVMulF32(scores, V, output unsafe.Pointer, scale float32, BH, seqKV, D int, stream Stream) error
 }
