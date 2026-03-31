@@ -30,16 +30,14 @@ __global__ void gemv_q8_kernel(
 {
     extern __shared__ float sx[];
 
-    /* Cooperatively load x[0..K-1] into shared memory using float4 loads. */
+    /* Cooperatively load x[0..K-1] into shared memory.
+     * Use per-element loads instead of float4 to avoid misaligned access
+     * when the activation pointer x is not 16-byte aligned (common on
+     * ARM64/Grace Hopper when x comes from pool allocations with
+     * non-aligned offsets). Shared memory loads later in the kernel are
+     * always aligned since shared memory base is 16-byte aligned. */
     int threads_per_block = blockDim.x;
-    int k4 = K / 4;
-    const float4* x4 = (const float4*)x;
-    float4* sx4 = (float4*)sx;
-    for (int i = threadIdx.x; i < k4; i += threads_per_block) {
-        sx4[i] = __ldg(&x4[i]);
-    }
-    /* Handle remainder if K is not a multiple of 4. */
-    for (int i = k4 * 4 + threadIdx.x; i < K; i += threads_per_block) {
+    for (int i = threadIdx.x; i < K; i += threads_per_block) {
         sx[i] = __ldg(&x[i]);
     }
     __syncthreads();
@@ -65,48 +63,44 @@ __global__ void gemv_q8_kernel(
         int k_base = bi * Q8_BLOCK_SIZE;
         const int8_t* qvals = (const int8_t*)(blk + 4);
 
-        /* Vectorized load: read 32 int8 values as two int4 (16 bytes each).
-         * int4 is a CUDA vector type: {int x, y, z, w} = 16 bytes. */
-        const int4* qv4 = (const int4*)qvals;
-        int4 q_lo = __ldg(&qv4[0]);  /* qvals[0..15] */
-        int4 q_hi = __ldg(&qv4[1]);  /* qvals[16..31] */
+        /* Read 32 int8 quantized values using per-byte loads.
+         * Avoid int4 (16-byte) vectorized loads because the Q8 block
+         * layout (4-byte scale + 32-byte data = 36 bytes) means qvals
+         * is only 4-byte aligned, not 16-byte aligned. On ARM64/Grace
+         * Hopper, misaligned int4 loads cause fatal errors. */
 
-        /* Unpack int4 into individual int8 values and dot with shared mem.
-         * Each int4 component (int x,y,z,w) holds 4 int8 values. */
-        const int8_t* q_lo_bytes = (const int8_t*)&q_lo;
-        const int8_t* q_hi_bytes = (const int8_t*)&q_hi;
-
-        /* Process first 16 values using float4 loads from shared memory. */
-        float4 sx0 = ((float4*)&sx[k_base])[0];   /* sx[k_base+0..3] */
-        float4 sx1 = ((float4*)&sx[k_base])[1];   /* sx[k_base+4..7] */
-        float4 sx2 = ((float4*)&sx[k_base])[2];   /* sx[k_base+8..11] */
-        float4 sx3 = ((float4*)&sx[k_base])[3];   /* sx[k_base+12..15] */
+        /* Process first 16 values using float4 loads from shared memory
+         * (shared memory is always 16-byte aligned). */
+        float4 sx0 = ((float4*)&sx[k_base])[0];
+        float4 sx1 = ((float4*)&sx[k_base])[1];
+        float4 sx2 = ((float4*)&sx[k_base])[2];
+        float4 sx3 = ((float4*)&sx[k_base])[3];
 
         acc += scale * (
-            (float)q_lo_bytes[0]  * sx0.x + (float)q_lo_bytes[1]  * sx0.y +
-            (float)q_lo_bytes[2]  * sx0.z + (float)q_lo_bytes[3]  * sx0.w +
-            (float)q_lo_bytes[4]  * sx1.x + (float)q_lo_bytes[5]  * sx1.y +
-            (float)q_lo_bytes[6]  * sx1.z + (float)q_lo_bytes[7]  * sx1.w +
-            (float)q_lo_bytes[8]  * sx2.x + (float)q_lo_bytes[9]  * sx2.y +
-            (float)q_lo_bytes[10] * sx2.z + (float)q_lo_bytes[11] * sx2.w +
-            (float)q_lo_bytes[12] * sx3.x + (float)q_lo_bytes[13] * sx3.y +
-            (float)q_lo_bytes[14] * sx3.z + (float)q_lo_bytes[15] * sx3.w);
+            (float)qvals[0]  * sx0.x + (float)qvals[1]  * sx0.y +
+            (float)qvals[2]  * sx0.z + (float)qvals[3]  * sx0.w +
+            (float)qvals[4]  * sx1.x + (float)qvals[5]  * sx1.y +
+            (float)qvals[6]  * sx1.z + (float)qvals[7]  * sx1.w +
+            (float)qvals[8]  * sx2.x + (float)qvals[9]  * sx2.y +
+            (float)qvals[10] * sx2.z + (float)qvals[11] * sx2.w +
+            (float)qvals[12] * sx3.x + (float)qvals[13] * sx3.y +
+            (float)qvals[14] * sx3.z + (float)qvals[15] * sx3.w);
 
         /* Process second 16 values. */
-        float4 sx4 = ((float4*)&sx[k_base + 16])[0];  /* sx[k_base+16..19] */
-        float4 sx5 = ((float4*)&sx[k_base + 16])[1];  /* sx[k_base+20..23] */
-        float4 sx6 = ((float4*)&sx[k_base + 16])[2];  /* sx[k_base+24..27] */
-        float4 sx7 = ((float4*)&sx[k_base + 16])[3];  /* sx[k_base+28..31] */
+        float4 sx4 = ((float4*)&sx[k_base + 16])[0];
+        float4 sx5 = ((float4*)&sx[k_base + 16])[1];
+        float4 sx6 = ((float4*)&sx[k_base + 16])[2];
+        float4 sx7 = ((float4*)&sx[k_base + 16])[3];
 
         acc += scale * (
-            (float)q_hi_bytes[0]  * sx4.x + (float)q_hi_bytes[1]  * sx4.y +
-            (float)q_hi_bytes[2]  * sx4.z + (float)q_hi_bytes[3]  * sx4.w +
-            (float)q_hi_bytes[4]  * sx5.x + (float)q_hi_bytes[5]  * sx5.y +
-            (float)q_hi_bytes[6]  * sx5.z + (float)q_hi_bytes[7]  * sx5.w +
-            (float)q_hi_bytes[8]  * sx6.x + (float)q_hi_bytes[9]  * sx6.y +
-            (float)q_hi_bytes[10] * sx6.z + (float)q_hi_bytes[11] * sx6.w +
-            (float)q_hi_bytes[12] * sx7.x + (float)q_hi_bytes[13] * sx7.y +
-            (float)q_hi_bytes[14] * sx7.z + (float)q_hi_bytes[15] * sx7.w);
+            (float)qvals[16] * sx4.x + (float)qvals[17] * sx4.y +
+            (float)qvals[18] * sx4.z + (float)qvals[19] * sx4.w +
+            (float)qvals[20] * sx5.x + (float)qvals[21] * sx5.y +
+            (float)qvals[22] * sx5.z + (float)qvals[23] * sx5.w +
+            (float)qvals[24] * sx6.x + (float)qvals[25] * sx6.y +
+            (float)qvals[26] * sx6.z + (float)qvals[27] * sx6.w +
+            (float)qvals[28] * sx7.x + (float)qvals[29] * sx7.y +
+            (float)qvals[30] * sx7.z + (float)qvals[31] * sx7.w);
     }
 
     /* Warp shuffle reduction. */
