@@ -2910,7 +2910,12 @@ func (e *GPUEngine[T]) mmapDevicePtr(ms *tensor.MmapStorage) (unsafe.Pointer, fu
 		return ptr, func() {}, nil
 	}
 	// Fallback: upload on the fly.
-	rawBytes := ms.RawBytesGPU()
+	// Copy mmap bytes to heap first -- cudaMemcpy from mmap'd pages
+	// can fail with misaligned address on ARM64 (GB10/Grace Hopper)
+	// when the tensor offset within the GGUF file is not page-aligned.
+	mmapBytes := ms.RawBytesGPU()
+	rawBytes := make([]byte, len(mmapBytes))
+	copy(rawBytes, mmapBytes)
 	devPtr, err := e.pool.Alloc(e.deviceID, len(rawBytes))
 	if err != nil {
 		return nil, nil, err
