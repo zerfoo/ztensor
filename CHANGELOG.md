@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.3](https://github.com/zerfoo/ztensor/compare/v1.1.2...v1.1.3) (2026-04-01)
+
+
+### Bug Fixes
+
+* **compute:** add Q5_0Storage B-weight handling to CPU MatMul ([e7927e5](https://github.com/zerfoo/ztensor/commit/e7927e57896d3b79d2d084eb0a71322ee608192c))
+* **compute:** Q5_0 GEMV byte-wise loads for ARM64 alignment ([5c7ec7a](https://github.com/zerfoo/ztensor/commit/5c7ec7a7eeba9e7e691ca34e77adb03023e401b4))
+* **compute:** skip Q4Storage in UploadWeights F32 loop (revert overaggressive skip) ([2e91650](https://github.com/zerfoo/ztensor/commit/2e91650f3aed1161c892bcd81cbb6dbe05e8f58f))
+* **compute:** skip transpose reshape fast-path for square matrices ([eab19d0](https://github.com/zerfoo/ztensor/commit/eab19d078a49e38f88a4247ddbc96324b2c50595))
+
 ## [1.1.2](https://github.com/zerfoo/ztensor/compare/v1.1.1...v1.1.2) (2026-03-31)
 
 
