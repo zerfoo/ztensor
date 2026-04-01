@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.0](https://github.com/zerfoo/ztensor/compare/v1.1.3...v1.2.0) (2026-04-01)
+
+
+### Features
+
+* **cuda:** add Q6_K, Q5_K, Q5_0 GPU dequant kernels for M&gt;1 prefill ([d57e37e](https://github.com/zerfoo/ztensor/commit/d57e37edd9effe535125f30c45b3f03859bc57da))
+* **cuda:** add Q8 Gather kernel for GPU embedding lookup ([30eb9c4](https://github.com/zerfoo/ztensor/commit/30eb9c4b79226b4461e75dde38819eb9735fef22))
+* **tensor:** add QuantizeQ4K for float32 to Q4_K quantization ([d0d3a82](https://github.com/zerfoo/ztensor/commit/d0d3a82ea5bdeb5a92c0966275f59d9bdfd88c1b))
+
+
+### Bug Fixes
+
+* **compute:** add Q4KStorage to UploadWeights F32 skip list ([cc071b6](https://github.com/zerfoo/ztensor/commit/cc071b6ed4ae3398c0db2a9d8af1734db408a0b1))
+* **compute:** CPU dequant fallback for Q4_K when K%256!=0 ([f50ffa7](https://github.com/zerfoo/ztensor/commit/f50ffa7b09eae8a88a2a594f04419d3af74d7720))
+* **compute:** use dequant+cuBLAS for Q4_K when K%256!=0 ([5f21cbb](https://github.com/zerfoo/ztensor/commit/5f21cbbbb91d8e72677e637f0de09aff7452bd20))
+* **compute:** use pool-backed GPUStorage for pool allocations ([4367330](https://github.com/zerfoo/ztensor/commit/43673306d83c4c1b089ca0932a26da81176ed695))
+* **cuda:** byte-wise loads in Q5_0 GEMV for ARM64 alignment ([5f19e54](https://github.com/zerfoo/ztensor/commit/5f19e546feea3498de2b7b32b52f18fe9d2aa99f))
+* **kernels:** check null function pointer in FusedSoftmaxVMulF32 ([935ad61](https://github.com/zerfoo/ztensor/commit/935ad613e27350a2c479ef071285aa0172f7b9ba))
+
+
+### Performance Improvements
+
+* **cuda:** separated GPU layout for Q5_0 GEMV ([d456c39](https://github.com/zerfoo/ztensor/commit/d456c3972f484634c3f0a8d6702d519aa7d748c1))
+
 ## [1.1.3](https://github.com/zerfoo/ztensor/compare/v1.1.2...v1.1.3) (2026-04-01)
 
 
