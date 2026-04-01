@@ -2386,6 +2386,31 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 			}
 		}
 		return true
+	case *tensor.Q5_0Storage:
+		// Q5_0 on B: dequantize to F32 and transpose for correct GemmF32.
+		// The Q5_0 data is in physical [N, K] layout. Virtual transpose makes the
+		// tensor shape [K, N], but Data()/Slice() returns [N, K] order. We must
+		// physically transpose before GemmF32 which reads B in shape-order [K, N].
+		aF := any(a.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		bF32 := make([]float32, n*k)
+		qsB.Dequantize(bF32) // [N, K] physical layout
+		bT := make([]float32, k*n)
+		for r := range n {
+			for c := range k {
+				bT[c*n+r] = bF32[r*k+c]
+			}
+		}
+		if batchSize == 1 {
+			xblas.SgemmSimd(m, n, k, aF, bT, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.SgemmSimd(m, n, k, aF[aOff:aOff+m*k], bT, rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	case *tensor.Q6KStorage:
 		// Q6_K on B: direct dequant+GEMV without re-quantizing to Q4_0.
 		// This avoids the lossy Q6_K→Q4_0 intermediate and reduces memory traffic.
