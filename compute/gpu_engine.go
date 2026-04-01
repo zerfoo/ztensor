@@ -569,6 +569,16 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			"device", fmt.Sprintf("%d", e.deviceID),
 			"method", method)
 	}
+	// Check for sticky CUDA errors after UploadWeights.
+	if debugGPU || os.Getenv("UPLOAD_TRACE") == "1" {
+		if e.stream != nil {
+			if syncErr := e.stream.Synchronize(); syncErr != nil {
+				fmt.Fprintf(os.Stderr, "[UPLOAD] CUDA sync error after UploadWeights: %v\n", syncErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "[UPLOAD] CUDA context clean after UploadWeights\n")
+			}
+		}
+	}
 	return nil
 }
 
@@ -3411,6 +3421,9 @@ func (e *GPUEngine[T]) gatherQ8(
 	devQ8 unsafe.Pointer,
 ) error {
 	e.setDevice()
+	if debugGPU || os.Getenv("UPLOAD_TRACE") == "1" {
+		fmt.Fprintf(os.Stderr, "[GATHER_Q8] called: V=%d D=%d devQ8=%p\n", params.Shape()[0], params.Shape()[1], devQ8)
+	}
 
 	pShape := params.Shape()
 	V := pShape[0]
@@ -3448,8 +3461,14 @@ func (e *GPUEngine[T]) gatherQ8(
 
 	// Launch Q8 gather kernel.
 	if err := e.kernels.GatherQ8F32(devQ8, devIdx, devOut, N, D, V, e.stream); err != nil {
+		if debugGPU || os.Getenv("UPLOAD_TRACE") == "1" {
+			fmt.Fprintf(os.Stderr, "[GATHER_Q8] kernel FAILED: %v — fallback to CPU\n", err)
+		}
 		e.pool.Free(e.deviceID, devOut, outBytes)
 		return e.cpu.Gather(context.Background(), params, indices, output)
+	}
+	if debugGPU || os.Getenv("UPLOAD_TRACE") == "1" {
+		fmt.Fprintf(os.Stderr, "[GATHER_Q8] kernel OK, devOut=%p elems=%d\n", devOut, outElems)
 	}
 
 	// Write result into output tensor as GPUStorage (pool-backed).
