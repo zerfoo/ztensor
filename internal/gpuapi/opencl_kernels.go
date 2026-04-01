@@ -304,3 +304,7 @@ func (k *OpenCLKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _
 var _ KernelRunner = (*OpenCLKernels)(nil)
 
 func (k *OpenCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+
+func (k *OpenCLKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *OpenCLKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *OpenCLKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }

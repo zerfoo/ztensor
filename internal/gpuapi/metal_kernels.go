@@ -577,3 +577,7 @@ func (k *MetalKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream)
 var _ KernelRunner = (*MetalKernels)(nil)
 
 func (k *MetalKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+
+func (k *MetalKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *MetalKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *MetalKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }

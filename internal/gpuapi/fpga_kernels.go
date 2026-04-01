@@ -287,3 +287,7 @@ func (k *FPGAKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, 
 var _ KernelRunner = (*FPGAKernels)(nil)
 
 func (k *FPGAKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+
+func (k *FPGAKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *FPGAKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *FPGAKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }

@@ -71,6 +71,9 @@ type KernelRunner interface {
 	// src is raw Q4_K super-blocks for matrix [rows, K]. dst is [rows, K] float32.
 	// K must be a multiple of 256. Used for non-GEMV cuBLAS path.
 	DequantQ4KF32(src, dst unsafe.Pointer, rows, K int, stream Stream) error
+	DequantQ5KF32(src, dst unsafe.Pointer, rows, K int, stream Stream) error
+	DequantQ6KF32(src, dst unsafe.Pointer, rows, K int, stream Stream) error
+	DequantQ5_0F32(src, dst unsafe.Pointer, rows, K int, stream Stream) error
 
 	// GemmQ8F32 performs Q8_0 dequant-GEMM: C = dequant(A_q8) * B.
 	// A_q8 is packed Q8_0 blocks (36 bytes per 32 values), B is [K,N] float32, C is [M,N] float32.

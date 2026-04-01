@@ -67,8 +67,11 @@ type KernelLib struct {
 	// gemv_q5_0 (fused dequant+GEMV for Q5_0)
 	launchGemvQ5_0F32 uintptr
 
-	// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
+	// dequant kernels (quantized to F32 for non-GEMV cuBLAS path)
 	launchDequantQ4KF32 uintptr
+	launchDequantQ5KF32 uintptr
+	launchDequantQ6KF32 uintptr
+	launchDequantQ5_0F32 uintptr
 
 	// gemm_q8
 	launchGemmQ8F32 uintptr
@@ -262,8 +265,11 @@ func openKernelLib() (*KernelLib, error) {
 			{"gemv_q6k_f32", &k.launchGemvQ6KF32},
 			// gemv_q5_0 (fused dequant+GEMV for Q5_0)
 			{"gemv_q5_0_f32", &k.launchGemvQ5_0F32},
-			// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
+			// dequant kernels (quantized to F32 for non-GEMV cuBLAS path)
 			{"dequant_q4k_f32", &k.launchDequantQ4KF32},
+			{"dequant_q5k_f32", &k.launchDequantQ5KF32},
+			{"dequant_q6k_f32", &k.launchDequantQ6KF32},
+			{"dequant_q5_0_f32", &k.launchDequantQ5_0F32},
 			// gemm_q8
 			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
@@ -377,6 +383,9 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_gemv_warp_f16":             true,
 			"launch_repeat_interleave_f32":    true,
 			"launch_gather_q8_f32":            true,
+			"dequant_q5k_f32":                true,
+			"dequant_q6k_f32":                true,
+			"dequant_q5_0_f32":               true,
 			"launch_fused_softmax_vmul_f32":   true,
 			"ternary_gemv_f32":                true,
 			"nsa_attention_f32":               true,

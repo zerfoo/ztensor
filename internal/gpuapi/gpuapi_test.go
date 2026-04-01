@@ -303,3 +303,7 @@ func TestInterfaceStubs(t *testing.T) {
 }
 
 func (stubKernelRunner) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ gpuapi.Stream) error { return nil }
+
+func (stubKernelRunner) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }
+func (stubKernelRunner) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }
+func (stubKernelRunner) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }

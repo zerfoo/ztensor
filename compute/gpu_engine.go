@@ -1860,13 +1860,8 @@ func (e *GPUEngine[T]) matMulQ6KBWeight(ctx context.Context, a *tensor.TensorNum
 		return makeGPUResult[T](e, outShape, devY, n, dst...)
 	}
 
-	// General GEMM: dequantize Q6_K to F32 on CPU, upload, cuBLAS.
-	// Q6_K data is [N, K]. Dequantize gives F32 [N, K].
-	// We need C[M,N] = A[M,K] * B^T where B = dequant(B_q6k)[N,K].
+	// General GEMM: dequantize Q6_K to F32 on GPU, then cuBLAS.
 	f32Size := int(unsafe.Sizeof(float32(0)))
-	dequant := make([]float32, n*k)
-	qs.Dequantize(dequant)
-
 	dequantSize := n * k * f32Size
 	devBF32, err := e.pool.Alloc(e.deviceID, dequantSize)
 	if err != nil {
@@ -1874,8 +1869,13 @@ func (e *GPUEngine[T]) matMulQ6KBWeight(ctx context.Context, a *tensor.TensorNum
 	}
 	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
 
-	if err := e.runtime.Memcpy(devBF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+	if err := e.kernels.DequantQ6KF32(devQ6K, devBF32, n, k, e.stream); err != nil {
+		// GPU dequant failed — fall back to CPU dequant + upload.
+		dequant := make([]float32, n*k)
+		qs.Dequantize(dequant)
+		if err := e.runtime.Memcpy(devBF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
 	}
 
 	// Upload A to GPU.
@@ -2023,10 +2023,6 @@ func (e *GPUEngine[T]) matMulQ5KBWeight(ctx context.Context, a *tensor.TensorNum
 	copy(outShape, aShape[:len(aShape)-1])
 	outShape[len(outShape)-1] = n
 
-	if m != 1 {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
 	e.setDevice()
 
 	var devQ5K unsafe.Pointer
@@ -2049,25 +2045,63 @@ func (e *GPUEngine[T]) matMulQ5KBWeight(ctx context.Context, a *tensor.TensorNum
 	}
 	defer freeQ5K()
 
-	devX, cleanupX, err := getDevicePtr(e, a)
-	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-	defer cleanupX()
+	if m == 1 {
+		devX, cleanupX, err := getDevicePtr(e, a)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		defer cleanupX()
 
+		f32Size := int(unsafe.Sizeof(float32(0)))
+		cSize := n * f32Size
+		devY, err := e.pool.Alloc(e.deviceID, cSize)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		if err := e.kernels.GemvQ5KF32(devQ5K, devX, devY, n, k, e.stream); err != nil {
+			e.pool.Free(e.deviceID, devY, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		return makeGPUResult[T](e, outShape, devY, n, dst...)
+	}
+
+	// General GEMM (M>1): dequantize Q5_K to F32 on GPU, then cuBLAS SgemmNT.
 	f32Size := int(unsafe.Sizeof(float32(0)))
-	cSize := n * f32Size
-	devY, err := e.pool.Alloc(e.deviceID, cSize)
+	dequantSize := n * k * f32Size
+	devBF32, err := e.pool.Alloc(e.deviceID, dequantSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
+
+	if err := e.kernels.DequantQ5KF32(devQ5K, devBF32, n, k, e.stream); err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupA()
+
+	cSize := m * n * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	if err := e.kernels.GemvQ5KF32(devQ5K, devX, devY, n, k, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devY, cSize)
-		return e.cpu.MatMul(ctx, a, b, dst...)
+	if ntBLAS, ok := e.blas.(gpuapi.BLASTransposeB); ok {
+		if err := ntBLAS.SgemmNT(m, n, k, 1.0, devA, devBF32, 0.0, devC); err != nil {
+			e.pool.Free(e.deviceID, devC, cSize)
+			return nil, fmt.Errorf("matMulQ5KBWeight: SgemmNT: %w", err)
+		}
+		return makeGPUResult[T](e, outShape, devC, m*n, dst...)
 	}
 
-	return makeGPUResult[T](e, outShape, devY, n, dst...)
+	e.pool.Free(e.deviceID, devC, cSize)
+	return e.cpu.MatMul(ctx, a, b, dst...)
 }
 
 // matMulQ5_0 handles GPU Q5_0 dequant-GEMM when Q5_0 storage is on A.
@@ -2244,10 +2278,8 @@ func (e *GPUEngine[T]) matMulQ5_0BWeight(ctx context.Context, a *tensor.TensorNu
 		return makeGPUResult[T](e, outShape, devY, n, dst...)
 	}
 
+	// General GEMM (M>1): dequantize Q5_0 to F32 on GPU, then cuBLAS SgemmNT.
 	f32Size := int(unsafe.Sizeof(float32(0)))
-	dequant := make([]float32, n*k)
-	qs.Dequantize(dequant)
-
 	dequantSize := n * k * f32Size
 	devBF32, err := e.pool.Alloc(e.deviceID, dequantSize)
 	if err != nil {
@@ -2255,8 +2287,13 @@ func (e *GPUEngine[T]) matMulQ5_0BWeight(ctx context.Context, a *tensor.TensorNu
 	}
 	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
 
-	if err := e.runtime.Memcpy(devBF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+	if dqErr := e.kernels.DequantQ5_0F32(devQ5_0, devBF32, n, k, e.stream); dqErr != nil {
+		// GPU dequant failed — fall back to CPU dequant + upload.
+		dequant := make([]float32, n*k)
+		qs.Dequantize(dequant)
+		if err := e.runtime.Memcpy(devBF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
 	}
 
 	devA, cleanupA, err := getDevicePtr(e, a)
