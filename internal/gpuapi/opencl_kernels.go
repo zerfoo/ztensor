@@ -132,7 +132,7 @@ func (k *OpenCLKernels) GemvQ6KF32(wQ6K, x, y unsafe.Pointer, M, K int, _ Stream
 	return fmt.Errorf("GemvQ6KF32: not implemented for OpenCL")
 }
 
-func (k *OpenCLKernels) GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K int, _ Stream) error {
+func (k *OpenCLKernels) GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K, qhOffset, qsOffset int, _ Stream) error {
 	return fmt.Errorf("GemvQ5_0F32: not implemented for OpenCL")
 }
 

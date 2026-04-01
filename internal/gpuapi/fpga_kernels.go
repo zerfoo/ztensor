@@ -115,7 +115,7 @@ func (k *FPGAKernels) GemvQ6KF32(_, _, _ unsafe.Pointer, _, _ int, _ Stream) err
 	return fmt.Errorf("GemvQ6KF32: not implemented for FPGA")
 }
 
-func (k *FPGAKernels) GemvQ5_0F32(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+func (k *FPGAKernels) GemvQ5_0F32(_, _, _ unsafe.Pointer, _, _, _, _ int, _ Stream) error {
 	return fmt.Errorf("GemvQ5_0F32: not implemented for FPGA")
 }
 

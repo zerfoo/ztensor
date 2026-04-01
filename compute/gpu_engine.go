@@ -393,13 +393,14 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
-		// Upload Q5_0 raw bytes to GPU for fused GEMV kernel.
-		// Q5_0 blocks (22 bytes per 32 values) are uploaded contiguously.
+		// Upload Q5_0 in separated GPU layout (scales | qh | qs) for fast GEMV.
+		// The separated layout aligns fp16 and uint32 fields naturally, avoiding
+		// byte-wise loads on ARM64 Grace Hopper.
 		if qs, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
 			if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 				continue // already on GPU
 			}
-			rawBytes := qs.RawBytes()
+			rawBytes := qs.RawBytesGPU()
 			devPtr, err := e.allocWeight(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q5_0 GPU (shape %v): %w", t.Shape(), err)
@@ -2133,11 +2134,12 @@ func (e *GPUEngine[T]) matMulQ5_0(ctx context.Context, qs *tensor.Q5_0Storage, a
 
 	var devW unsafe.Pointer
 	var freeW func()
+	nBlocks := qs.NumBlocks()
 	if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 		devW = ptr
 		freeW = func() {}
 	} else {
-		rawBytes := qs.RawBytes()
+		rawBytes := qs.RawBytesGPU()
 		var err error
 		devW, err = e.pool.Alloc(e.deviceID, len(rawBytes))
 		if err != nil {
@@ -2150,6 +2152,9 @@ func (e *GPUEngine[T]) matMulQ5_0(ctx context.Context, qs *tensor.Q5_0Storage, a
 		}
 	}
 	defer freeW()
+
+	qhOff := tensor.Q5_0GPUQhOffset(nBlocks)
+	qsOff := tensor.Q5_0GPUQsOffset(nBlocks)
 
 	if n == 1 {
 		devX, cleanupX, err := getDevicePtr(e, b)
@@ -2165,7 +2170,7 @@ func (e *GPUEngine[T]) matMulQ5_0(ctx context.Context, qs *tensor.Q5_0Storage, a
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		if err := e.kernels.GemvQ5_0F32(devW, devX, devY, m, k, e.stream); err != nil {
+		if err := e.kernels.GemvQ5_0F32(devW, devX, devY, m, k, qhOff, qsOff, e.stream); err != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
@@ -2240,11 +2245,12 @@ func (e *GPUEngine[T]) matMulQ5_0BWeight(ctx context.Context, a *tensor.TensorNu
 
 	var devQ5_0 unsafe.Pointer
 	var freeQ5_0 func()
+	nBlocks := qs.NumBlocks()
 	if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 		devQ5_0 = ptr
 		freeQ5_0 = func() {}
 	} else {
-		rawBytes := qs.RawBytes()
+		rawBytes := qs.RawBytesGPU()
 		var err error
 		devQ5_0, err = e.pool.Alloc(e.deviceID, len(rawBytes))
 		if err != nil {
@@ -2257,6 +2263,9 @@ func (e *GPUEngine[T]) matMulQ5_0BWeight(ctx context.Context, a *tensor.TensorNu
 		}
 	}
 	defer freeQ5_0()
+
+	qhOff := tensor.Q5_0GPUQhOffset(nBlocks)
+	qsOff := tensor.Q5_0GPUQsOffset(nBlocks)
 
 	if m == 1 {
 		devX, cleanupX, err := getDevicePtr(e, a)
@@ -2272,7 +2281,7 @@ func (e *GPUEngine[T]) matMulQ5_0BWeight(ctx context.Context, a *tensor.TensorNu
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		if err := e.kernels.GemvQ5_0F32(devQ5_0, devX, devY, n, k, e.stream); err != nil {
+		if err := e.kernels.GemvQ5_0F32(devQ5_0, devX, devY, n, k, qhOff, qsOff, e.stream); err != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}

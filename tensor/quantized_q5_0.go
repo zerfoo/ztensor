@@ -104,6 +104,65 @@ func (q *Q5_0Storage) DeviceType() device.Type { return device.CPU }
 // The layout is contiguous blocks, each 22 bytes.
 func (q *Q5_0Storage) RawBytes() []byte { return q.raw }
 
+// RawBytesGPU returns Q5_0 data in a separated GPU-optimized layout.
+// Instead of interleaved 22-byte blocks [d(2) | qh(4) | qs(16)], the data
+// is separated into three contiguous regions:
+//
+//	[all scales (fp16, 2B each)] pad to 16B
+//	[all qh values (uint32, 4B each)] pad to 16B
+//	[all qs values (16B each)]
+//
+// This ensures natural alignment: fp16 scales at 2-byte boundaries,
+// uint32 qh at 4-byte boundaries. Eliminates the byte-wise __ldg loads
+// required for the interleaved layout on ARM64 Grace Hopper.
+func (q *Q5_0Storage) RawBytesGPU() []byte {
+	nBlocks := (q.len + q5_0BlockSize - 1) / q5_0BlockSize
+	scaleBytes := nBlocks * 2
+	paddedScaleBytes := (scaleBytes + 15) &^ 15 // align to 16B
+	qhBytes := nBlocks * 4
+	paddedQhBytes := (qhBytes + 15) &^ 15 // align to 16B
+	qsBytes := nBlocks * 16
+	totalSize := paddedScaleBytes + paddedQhBytes + qsBytes
+
+	out := make([]byte, totalSize)
+
+	// Region 1: all fp16 scales contiguously.
+	for i := range nBlocks {
+		blk := q.raw[i*q5_0BlockBytes : (i+1)*q5_0BlockBytes]
+		copy(out[i*2:i*2+2], blk[0:2]) // fp16 d
+	}
+	// Region 2: all uint32 qh values contiguously.
+	qhOff := paddedScaleBytes
+	for i := range nBlocks {
+		blk := q.raw[i*q5_0BlockBytes : (i+1)*q5_0BlockBytes]
+		copy(out[qhOff+i*4:qhOff+i*4+4], blk[2:6]) // uint32 qh
+	}
+	// Region 3: all packed nibbles contiguously.
+	qsOff := paddedScaleBytes + paddedQhBytes
+	for i := range nBlocks {
+		blk := q.raw[i*q5_0BlockBytes : (i+1)*q5_0BlockBytes]
+		copy(out[qsOff+i*16:qsOff+i*16+16], blk[6:22]) // 16 bytes qs
+	}
+	return out
+}
+
+// Q5_0GPUQhOffset returns the byte offset where the qh region starts
+// in the RawBytesGPU layout, given the total number of blocks.
+func Q5_0GPUQhOffset(totalBlocks int) int {
+	scaleBytes := totalBlocks * 2
+	return (scaleBytes + 15) &^ 15
+}
+
+// Q5_0GPUQsOffset returns the byte offset where the qs region starts
+// in the RawBytesGPU layout, given the total number of blocks.
+func Q5_0GPUQsOffset(totalBlocks int) int {
+	scaleBytes := totalBlocks * 2
+	paddedScaleBytes := (scaleBytes + 15) &^ 15
+	qhBytes := totalBlocks * 4
+	paddedQhBytes := (qhBytes + 15) &^ 15
+	return paddedScaleBytes + paddedQhBytes
+}
+
 // NumBlocks returns the number of Q5_0 blocks.
 func (q *Q5_0Storage) NumBlocks() int {
 	return (q.len + q5_0BlockSize - 1) / q5_0BlockSize

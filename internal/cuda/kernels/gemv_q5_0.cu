@@ -1,13 +1,13 @@
 /* Q5_0 fused dequant-GEMV kernel for single-token decode (batch=1).
  *
- * Reads Q5_0 blocks directly, dequantizes in registers (no global
- * memory intermediary), multiplies by the activation vector, and accumulates
- * in FP32. This halves memory traffic compared to separate dequant + GEMV.
+ * GPU-optimized SEPARATED layout (from Q5_0Storage.RawBytesGPU):
+ *   Region 1: [nBlocks * 2 bytes] fp16 scales, padded to 16-byte boundary
+ *   Region 2: [nBlocks * 4 bytes] uint32 qh values, padded to 16-byte boundary
+ *   Region 3: [nBlocks * 16 bytes] packed nibbles (qs)
  *
- * Q5_0 block (22 bytes, 32 values):
- *   [0:2]   fp16 d      -- block scale
- *   [2:6]   uint32 qh   -- 32 high bits (one per element)
- *   [6:22]  16 bytes qs  -- packed nibbles (two 4-bit values per byte)
+ * This layout ensures natural alignment: fp16 at 2-byte, uint32 at 4-byte.
+ * Eliminates the byte-wise loads required for the interleaved 22-byte layout
+ * on ARM64 Grace Hopper.
  *
  * Dequantization (matching llama.cpp dequantize_row_q5_0):
  *   For j in 0..15:
@@ -25,26 +25,22 @@
 #include <stdint.h>
 
 #define Q5_0_BLOCK_SIZE  32
-#define Q5_0_BLOCK_BYTES 22
 #define Q5_0_WARPS_PER_BLOCK 4
 #define Q5_0_WARP_SIZE       32
 
-/* ---------- Fused GEMV kernel ----------
+/* ---------- Fused GEMV kernel (separated GPU layout) ----------
  *
  * y[row] = sum_k dequant(W_q5_0[row, k]) * x[k]
  *
- * Strategy:
- *   - Load input vector x into shared memory (all threads cooperate).
- *   - One warp per row for simplicity and good occupancy.
- *   - Each lane processes a strided subset of blocks.
- *   - Within each block, 16 packed bytes yield 32 dequantized values.
- *   - Warp shuffle reduction produces the final dot product.
+ * W_q5_0 points to the separated layout base. qhOffset and qsOffset
+ * are byte offsets to the qh and qs regions respectively.
  */
 __global__ void gemv_q5_0_kernel(
     const uint8_t* __restrict__ W_q5_0,
     const float*   __restrict__ x,
     float*         __restrict__ y,
-    int M, int K)
+    int M, int K,
+    int qhOffset, int qsOffset)
 {
     extern __shared__ float sx[];
 
@@ -62,27 +58,20 @@ __global__ void gemv_q5_0_kernel(
     if (row >= M) return;
 
     int blocks_per_row = K / Q5_0_BLOCK_SIZE;
-    const uint8_t* row_data = W_q5_0 + (size_t)row * blocks_per_row * Q5_0_BLOCK_BYTES;
+
+    /* Pointers to the three separated regions for this row. */
+    const __half*    row_scales = (const __half*)(W_q5_0 + row * blocks_per_row * 2);
+    const uint32_t*  row_qh    = (const uint32_t*)(W_q5_0 + qhOffset + row * blocks_per_row * 4);
+    const uint8_t*   row_qs    = W_q5_0 + qsOffset + (size_t)row * blocks_per_row * 16;
 
     float acc = 0.0f;
 
     /* Each lane handles a strided subset of blocks. */
     for (int bi = lane_id; bi < blocks_per_row; bi += Q5_0_WARP_SIZE) {
-        const uint8_t* blk = row_data + bi * Q5_0_BLOCK_BYTES;
-
-        /* Read fp16 d using byte-wise load (ARM64 alignment safety).
-         * Q5_0 blocks are 22 bytes — not a multiple of 4, so blk may
-         * be misaligned for uint16/uint32 casts after the first block. */
-        uint16_t d_bits = (uint16_t)__ldg(&blk[0]) | ((uint16_t)__ldg(&blk[1]) << 8);
-        float d = __half2float(*reinterpret_cast<const __half*>(&d_bits));
-
-        /* Read qh (32 high bits) using byte-wise load. */
-        uint32_t qh = (uint32_t)__ldg(&blk[2])
-                     | ((uint32_t)__ldg(&blk[3]) << 8)
-                     | ((uint32_t)__ldg(&blk[4]) << 16)
-                     | ((uint32_t)__ldg(&blk[5]) << 24);
-
-        const uint8_t* qs = blk + 6;
+        /* All loads are naturally aligned in the separated layout. */
+        float d = __half2float(__ldg(&row_scales[bi]));
+        uint32_t qh = __ldg(&row_qh[bi]);
+        const uint8_t* qs = row_qs + bi * 16;
         int k_base = bi * Q5_0_BLOCK_SIZE;
 
         /* Process 16 packed bytes -> 32 dequantized values. */
@@ -119,6 +108,7 @@ __global__ void gemv_q5_0_kernel(
 extern "C" cudaError_t gemv_q5_0_f32(
     const void* W_q5_0, const float* x, float* y,
     int M, int K,
+    int qhOffset, int qsOffset,
     cudaStream_t stream)
 {
     if (K % Q5_0_BLOCK_SIZE != 0) {
@@ -130,7 +120,7 @@ extern "C" cudaError_t gemv_q5_0_f32(
     int smem = K * sizeof(float);
 
     gemv_q5_0_kernel<<<grid, threads, smem, stream>>>(
-        (const uint8_t*)W_q5_0, x, y, M, K);
+        (const uint8_t*)W_q5_0, x, y, M, K, qhOffset, qsOffset);
 
     return cudaGetLastError();
 }

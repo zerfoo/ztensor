@@ -63,9 +63,10 @@ type KernelRunner interface {
 	GemvQ6KF32(wQ6K, x, y unsafe.Pointer, M, K int, stream Stream) error
 
 	// GemvQ5_0F32 performs Q5_0 fused dequant-GEMV: y = dequant(W_q5_0) * x.
-	// W_q5_0 is raw Q5_0 blocks for matrix [M, K]. x is [K] float32.
+	// W_q5_0 is the separated GPU layout (scales | qh | qs). x is [K] float32.
 	// y is [M] float32. K must be a multiple of 32. Batch=1 only.
-	GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K int, stream Stream) error
+	// qhOffset and qsOffset are byte offsets to the qh and qs regions.
+	GemvQ5_0F32(wQ5_0, x, y unsafe.Pointer, M, K, qhOffset, qsOffset int, stream Stream) error
 
 	// DequantQ4KF32 dequantizes Q4_K super-blocks to FP32 in global memory.
 	// src is raw Q4_K super-blocks for matrix [rows, K]. dst is [rows, K] float32.
