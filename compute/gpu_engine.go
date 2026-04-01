@@ -1439,11 +1439,6 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 	k := aShape[1]
 	n := bShape[1]
 
-	// K must be a multiple of 256 for Q4_K super-blocks.
-	if k%256 != 0 {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
 	e.setDevice()
 
 	// Get Q4_K device pointer (pre-uploaded or upload now).
@@ -1467,8 +1462,8 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 	}
 	defer freeW()
 
-	// Fused GEMV path: y = dequant(W_q4k) * x, when n==1.
-	if n == 1 {
+	// Fused GEMV path: y = dequant(W_q4k) * x, when n==1 and K is 256-aligned.
+	if n == 1 && k%256 == 0 {
 		devX, cleanupX, err := getDevicePtr(e, b)
 		if err != nil {
 			return e.cpu.MatMul(ctx, a, b, dst...)
@@ -1554,11 +1549,6 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 	}
 	n := bShape[1] // columns of B (after virtual transpose)
 
-	// K must be a multiple of 256 for Q4_K super-blocks.
-	if k%256 != 0 {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
 	// Build output shape: [batch..., m_last, n].
 	outShape := make([]int, len(aShape))
 	copy(outShape, aShape[:len(aShape)-1])
@@ -1589,7 +1579,9 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 	defer freeQ4K()
 
 	// Fused GEMV path: y[n] = sum_k dequant(B_q4k[n, k]) * x[k], when m==1.
-	if m == 1 {
+	// Requires K % 256 == 0 for Q4_K super-block alignment.
+	// When K is not aligned, falls through to the general dequant+cuBLAS path.
+	if m == 1 && k%256 == 0 {
 		devX, cleanupX, err := getDevicePtr(e, a)
 		if err != nil {
 			return e.cpu.MatMul(ctx, a, b, dst...)
