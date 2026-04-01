@@ -3436,6 +3436,7 @@ func (e *GPUEngine[T]) gatherQ8(
 	}
 
 	// Upload indices as int32 to GPU.
+	trace := debugGPU || os.Getenv("UPLOAD_TRACE") == "1"
 	idx32 := make([]int32, N)
 	for i, id := range idxData {
 		idx32[i] = int32(id)
@@ -3443,11 +3444,17 @@ func (e *GPUEngine[T]) gatherQ8(
 	idxBytes := N * 4
 	devIdx, err := e.pool.Alloc(e.deviceID, idxBytes)
 	if err != nil {
+		if trace {
+			fmt.Fprintf(os.Stderr, "[GATHER_Q8] pool.Alloc(idx %d) FAILED: %v — CPU fallback\n", idxBytes, err)
+		}
 		return e.cpu.Gather(context.Background(), params, indices, output)
 	}
 	defer e.pool.Free(e.deviceID, devIdx, idxBytes)
 
 	if err := e.runtime.Memcpy(devIdx, unsafe.Pointer(&idx32[0]), idxBytes, gpuapi.MemcpyHostToDevice); err != nil {
+		if trace {
+			fmt.Fprintf(os.Stderr, "[GATHER_Q8] Memcpy(idx H2D %d bytes) FAILED: %v — CPU fallback\n", idxBytes, err)
+		}
 		return e.cpu.Gather(context.Background(), params, indices, output)
 	}
 
@@ -3456,6 +3463,9 @@ func (e *GPUEngine[T]) gatherQ8(
 	outBytes := outElems * f32Size
 	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
+		if trace {
+			fmt.Fprintf(os.Stderr, "[GATHER_Q8] pool.Alloc(out %d) FAILED: %v — CPU fallback\n", outBytes, err)
+		}
 		return e.cpu.Gather(context.Background(), params, indices, output)
 	}
 
