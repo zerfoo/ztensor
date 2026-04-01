@@ -484,8 +484,22 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if _, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
 			continue
 		}
-		// Skip Q4_0: already uploaded as raw Q4 bytes by the Q4 handler above.
+		// Skip quantized types with dedicated GPU upload handlers above.
+		// Without this skip, the F32 loop dequantizes and REPLACES the
+		// storage, destroying the native format and blocking GEMV dispatch.
 		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q4KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5_0Storage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q5KStorage); ok {
+			continue
+		}
+		if _, ok := any(t.GetStorage()).(*tensor.Q6KStorage); ok {
 			continue
 		}
 		data := t.Data()
