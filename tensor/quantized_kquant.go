@@ -102,6 +102,136 @@ func (q *Q4KStorage) DequantizeSubBlock(blkIdx, subIdx int, dst []float32) {
 	}
 }
 
+// QuantizeQ4K quantizes float32 values into Q4_K format.
+// Q4_K uses asymmetric quantization with per-sub-block 6-bit scales and mins,
+// shared fp16 super-block scale and dmin. 256 values per super-block, 144 bytes.
+func QuantizeQ4K(src []float32) *Q4KStorage {
+	n := len(src)
+	nBlocks := (n + q4KSuperBlockSize - 1) / q4KSuperBlockSize
+	raw := make([]byte, nBlocks*q4KBlockBytes)
+
+	for bi := range nBlocks {
+		off := bi * q4KSuperBlockSize
+		var values [q4KSuperBlockSize]float32
+		end := off + q4KSuperBlockSize
+		if end > n {
+			end = n
+		}
+		copy(values[:], src[off:end])
+
+		// Compute per-sub-block scale and min.
+		var subScales, subMins [q4KNumSubBlocks]float32
+		for sb := range q4KNumSubBlocks {
+			sOff := sb * q4KSubBlockSize
+			minVal, maxVal := values[sOff], values[sOff]
+			for j := 1; j < q4KSubBlockSize; j++ {
+				v := values[sOff+j]
+				if v < minVal {
+					minVal = v
+				}
+				if v > maxVal {
+					maxVal = v
+				}
+			}
+			if minVal > 0 {
+				minVal = 0
+			}
+			subScales[sb] = (maxVal - minVal) / 15.0
+			subMins[sb] = -minVal
+		}
+
+		// Super-block scale and dmin from max sub-block values.
+		var maxScale, maxMin float32
+		for sb := range q4KNumSubBlocks {
+			if subScales[sb] > maxScale {
+				maxScale = subScales[sb]
+			}
+			if subMins[sb] > maxMin {
+				maxMin = subMins[sb]
+			}
+		}
+
+		d := maxScale / 63.0
+		dmin := maxMin / 63.0
+
+		// Quantize sub-block scales and mins to 6-bit.
+		var scalesQ, minsQ [q4KNumSubBlocks]uint8
+		for sb := range q4KNumSubBlocks {
+			if d > 0 {
+				v := int(float64(subScales[sb]/d) + 0.5)
+				if v > 63 {
+					v = 63
+				}
+				scalesQ[sb] = uint8(v)
+			}
+			if dmin > 0 {
+				v := int(float64(subMins[sb]/dmin) + 0.5)
+				if v > 63 {
+					v = 63
+				}
+				minsQ[sb] = uint8(v)
+			}
+		}
+
+		blk := raw[bi*q4KBlockBytes : (bi+1)*q4KBlockBytes]
+
+		// fp16 d and dmin.
+		dFP16 := float16.FromFloat32(d)
+		dminFP16 := float16.FromFloat32(dmin)
+		binary.LittleEndian.PutUint16(blk[0:2], dFP16.Bits())
+		binary.LittleEndian.PutUint16(blk[2:4], dminFP16.Bits())
+
+		// Pack 6-bit scales and mins into 12 bytes at blk[4:16].
+		for i := range 4 {
+			blk[4+i] = (scalesQ[i] & 63) | ((scalesQ[4+i] >> 4) << 6)
+			blk[8+i] = (minsQ[i] & 63) | ((minsQ[4+i] >> 4) << 6)
+		}
+		for i := range 4 {
+			blk[12+i] = (scalesQ[4+i] & 0xF) | ((minsQ[4+i] & 0xF) << 4)
+		}
+
+		// Quantize values to 4-bit per sub-block pair.
+		dRT := dFP16.ToFloat32()
+		dminRT := dminFP16.ToFloat32()
+		for group := range 4 {
+			sb0, sb1 := group*2, group*2+1
+			sc0 := dRT * float32(scalesQ[sb0])
+			mn0 := dminRT * float32(minsQ[sb0])
+			sc1 := dRT * float32(scalesQ[sb1])
+			mn1 := dminRT * float32(minsQ[sb1])
+
+			var invScale0, invScale1 float32
+			if sc0 > 0 {
+				invScale0 = 1.0 / sc0
+			}
+			if sc1 > 0 {
+				invScale1 = 1.0 / sc1
+			}
+
+			baseOut := group * 64
+			baseQ := group * 32
+			for l := range 32 {
+				v0 := values[baseOut+l]
+				v1 := values[baseOut+l+32]
+				q0 := int(float64((v0+mn0)*invScale0) + 0.5)
+				q1 := int(float64((v1+mn1)*invScale1) + 0.5)
+				if q0 < 0 {
+					q0 = 0
+				} else if q0 > 15 {
+					q0 = 15
+				}
+				if q1 < 0 {
+					q1 = 0
+				} else if q1 > 15 {
+					q1 = 15
+				}
+				blk[16+baseQ+l] = byte(q0) | (byte(q1) << 4)
+			}
+		}
+	}
+	return &Q4KStorage{raw: raw, len: n}
+}
+
 // Q4KStorage holds Q4_K quantized tensor data on CPU.
 type Q4KStorage struct {
 	raw []byte // raw super-block data
