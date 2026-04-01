@@ -484,8 +484,7 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if _, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
 			continue
 		}
-		// Skip Q4Storage — already uploaded as raw Q4 bytes by the Q4 handler
-		// above (line ~272). Q4 GEMV reads quantized data directly (0.5 bytes/weight).
+		// Skip Q4_0: already uploaded as raw Q4 bytes by the Q4 handler above.
 		if _, ok := any(t.GetStorage()).(*tensor.Q4Storage); ok {
 			continue
 		}
