@@ -494,6 +494,9 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if n == 0 {
 			continue
 		}
+		if debugGPU || os.Getenv("UPLOAD_TRACE") == "1" {
+			fmt.Fprintf(os.Stderr, "[UPLOAD_F32] shape=%v len=%d storage=%T\n", t.Shape(), n, t.GetStorage())
+		}
 		byteSize := n * f32Size
 		devPtr, err := e.allocWeight(byteSize)
 		if err != nil {
