@@ -877,7 +877,7 @@ func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], 
 		return err
 	}
 
-	gs, err := tensor.NewGPUStorageFromPtr[T](devPtr, n, e.deviceID)
+	gs, err := tensor.NewGPUStorageFromPool[T](devPtr, n, e.pool, e.deviceID)
 	if err != nil {
 		e.pool.Free(e.deviceID, devPtr, byteSize)
 

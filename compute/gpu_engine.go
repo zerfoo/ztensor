@@ -355,16 +355,18 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		}
 		// Upload Q5_K raw bytes to GPU for fused GEMV kernel.
 		// Q5_K super-blocks (176 bytes per 256 values) are uploaded contiguously.
+		// Uses allocWeight/uploadBytes for consistency with other weight uploads
+		// (managed memory on DGX Spark avoids H2D memcpy alignment issues).
 		if qs, ok := any(t.GetStorage()).(*tensor.Q5KStorage); ok {
 			if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 				continue // already on GPU
 			}
 			rawBytes := qs.RawBytes()
-			devPtr, err := e.runtime.Malloc(len(rawBytes))
+			devPtr, err := e.allocWeight(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q5_K GPU (shape %v): %w", t.Shape(), err)
 			}
-			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
 				_ = e.runtime.Free(devPtr)
 				return fmt.Errorf("upload Q5_K (shape %v): %w", t.Shape(), err)
 			}
@@ -379,11 +381,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				continue // already on GPU
 			}
 			rawBytes := qs.RawBytes()
-			devPtr, err := e.runtime.Malloc(len(rawBytes))
+			devPtr, err := e.allocWeight(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q6_K GPU (shape %v): %w", t.Shape(), err)
 			}
-			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
 				_ = e.runtime.Free(devPtr)
 				return fmt.Errorf("upload Q6_K (shape %v): %w", t.Shape(), err)
 			}
@@ -398,11 +400,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				continue // already on GPU
 			}
 			rawBytes := qs.RawBytes()
-			devPtr, err := e.runtime.Malloc(len(rawBytes))
+			devPtr, err := e.allocWeight(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q5_0 GPU (shape %v): %w", t.Shape(), err)
 			}
-			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
 				_ = e.runtime.Free(devPtr)
 				return fmt.Errorf("upload Q5_0 (shape %v): %w", t.Shape(), err)
 			}
@@ -3388,8 +3390,8 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 		return nil
 	}
 
-	// Set output storage to GPU.
-	gs, err := tensor.NewGPUStorageFromPtr[T](devOut, N*D, e.deviceID)
+	// Set output storage to GPU (pool-backed so Free returns to pool, not cudaFree).
+	gs, err := tensor.NewGPUStorageFromPool[T](devOut, N*D, e.pool, e.deviceID)
 	if err != nil {
 		e.pool.Free(e.deviceID, devOut, outByteSize)
 		return err
@@ -3450,8 +3452,8 @@ func (e *GPUEngine[T]) gatherQ8(
 		return e.cpu.Gather(context.Background(), params, indices, output)
 	}
 
-	// Write result into output tensor as GPUStorage.
-	gs, err := tensor.NewGPUStorageFromPtr[float32](devOut, outElems, e.deviceID)
+	// Write result into output tensor as GPUStorage (pool-backed).
+	gs, err := tensor.NewGPUStorageFromPool[float32](devOut, outElems, e.pool, e.deviceID)
 	if err != nil {
 		e.pool.Free(e.deviceID, devOut, outBytes)
 		return fmt.Errorf("gatherQ8: create GPU storage: %w", err)
@@ -3829,7 +3831,7 @@ func (e *GPUEngine[T]) ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tens
 		return nil, fmt.Errorf("ConvertFP16ToF32: kernel: %w", err)
 	}
 
-	gs, err := tensor.NewGPUStorageFromPtr[float32](f32Ptr, nElems, e.deviceID)
+	gs, err := tensor.NewGPUStorageFromPool[float32](f32Ptr, nElems, e.pool, e.deviceID)
 	if err != nil {
 		e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
 		return nil, fmt.Errorf("ConvertFP16ToF32: gpu storage: %w", err)
