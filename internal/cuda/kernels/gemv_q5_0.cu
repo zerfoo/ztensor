@@ -70,11 +70,17 @@ __global__ void gemv_q5_0_kernel(
     for (int bi = lane_id; bi < blocks_per_row; bi += Q5_0_WARP_SIZE) {
         const uint8_t* blk = row_data + bi * Q5_0_BLOCK_BYTES;
 
-        /* Read fp16 d. */
-        float d = __half2float(__ldg((const __half*)(blk)));
+        /* Read fp16 d using byte-wise load (ARM64 alignment safety).
+         * Q5_0 blocks are 22 bytes — not a multiple of 4, so blk may
+         * be misaligned for uint16/uint32 casts after the first block. */
+        uint16_t d_bits = (uint16_t)__ldg(&blk[0]) | ((uint16_t)__ldg(&blk[1]) << 8);
+        float d = __half2float(*reinterpret_cast<const __half*>(&d_bits));
 
-        /* Read qh (32 high bits). */
-        uint32_t qh = __ldg((const uint32_t*)(blk + 2));
+        /* Read qh (32 high bits) using byte-wise load. */
+        uint32_t qh = (uint32_t)__ldg(&blk[2])
+                     | ((uint32_t)__ldg(&blk[3]) << 8)
+                     | ((uint32_t)__ldg(&blk[4]) << 16)
+                     | ((uint32_t)__ldg(&blk[5]) << 24);
 
         const uint8_t* qs = blk + 6;
         int k_base = bi * Q5_0_BLOCK_SIZE;
