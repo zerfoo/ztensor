@@ -575,3 +575,5 @@ func (k *MetalKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream)
 
 // Compile-time interface assertion.
 var _ KernelRunner = (*MetalKernels)(nil)
+
+func (k *MetalKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }

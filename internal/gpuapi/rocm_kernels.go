@@ -292,3 +292,5 @@ func (k *ROCmKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, 
 
 // Compile-time interface assertion.
 var _ KernelRunner = (*ROCmKernels)(nil)
+
+func (k *ROCmKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }

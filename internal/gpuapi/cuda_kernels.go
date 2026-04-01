@@ -185,6 +185,10 @@ func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int,
 	return kernels.Gather(table, indices, output, N, D, V, streamPtr(s))
 }
 
+func (k *CUDAKernels) GatherQ8F32(q8Table, indices, output unsafe.Pointer, N, D, V int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.GatherQ8F32(q8Table, indices, output, N, D, V, streamPtr(s))
+}
+
 func (k *CUDAKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.RMSNorm(input, weight, output, scales, eps, rows, D, streamPtr(s))
 }

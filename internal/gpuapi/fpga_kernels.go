@@ -285,3 +285,5 @@ func (k *FPGAKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, 
 
 // Compile-time interface assertion.
 var _ KernelRunner = (*FPGAKernels)(nil)
+
+func (k *FPGAKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }

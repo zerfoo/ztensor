@@ -100,6 +100,9 @@ type KernelRunner interface {
 	// Gather performs embedding table lookup: output[i,:] = table[indices[i],:].
 	// table: [V, D], indices: [N] int64 on device, output: [N, D].
 	Gather(table, indices, output unsafe.Pointer, N, D, V int, stream Stream) error
+	// GatherQ8F32 performs Q8_0 embedding gather: dequantizes only the requested rows.
+	// q8Table: raw Q8_0 bytes on device, indices: [N] int32, output: [N, D] float32.
+	GatherQ8F32(q8Table, indices, output unsafe.Pointer, N, D, V int, stream Stream) error
 
 	// RMSNorm computes fused RMSNorm: output = input * rsqrt(mean(input^2) + eps) * weight.
 	// input: [rows, D], weight: [D], output: [rows, D], scales: [rows] (per-row rsqrt values for backward).

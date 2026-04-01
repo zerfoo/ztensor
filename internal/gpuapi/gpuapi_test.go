@@ -301,3 +301,5 @@ func TestInterfaceStubs(t *testing.T) {
 	// at compile time; this function exists so `go test` has something to run.
 	t.Log("all GRAL interface stubs satisfy their interfaces")
 }
+
+func (stubKernelRunner) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ gpuapi.Stream) error { return nil }

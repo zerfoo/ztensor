@@ -36,3 +36,18 @@ func GatherI32(table unsafe.Pointer, indices unsafe.Pointer,
 		uintptr(N), uintptr(D), uintptr(V), uintptr(s))
 	return checkKernel(ret, "gather_i32")
 }
+
+// GatherQ8F32 launches the Q8_0 embedding gather kernel.
+// q8Table: raw Q8_0 bytes [V * (D/32) * 34], indices: [N] int32, output: [N, D] float32.
+// Dequantizes only the requested rows on GPU (no full table decode).
+func GatherQ8F32(q8Table unsafe.Pointer, indices unsafe.Pointer,
+	output unsafe.Pointer, N, D, V int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil || k.launchGatherQ8F32 == 0 {
+		return fmt.Errorf("gather_q8_f32 kernel: not available")
+	}
+	ret := cuda.Ccall(k.launchGatherQ8F32,
+		uintptr(q8Table), uintptr(indices), uintptr(output),
+		uintptr(N), uintptr(D), uintptr(V), uintptr(s))
+	return checkKernel(ret, "gather_q8_f32")
+}

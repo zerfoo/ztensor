@@ -39,8 +39,9 @@ type KernelLib struct {
 	launchRMSNorm uintptr
 
 	// gather
-	launchGather    uintptr
-	launchGatherI32 uintptr
+	launchGather      uintptr
+	launchGatherI32   uintptr
+	launchGatherQ8F32 uintptr
 
 	// transpose
 	launchTranspose2D, launchTransposeND uintptr
@@ -241,6 +242,7 @@ func openKernelLib() (*KernelLib, error) {
 			// gather
 			{"launch_gather", &k.launchGather},
 			{"launch_gather_i32", &k.launchGatherI32},
+			{"launch_gather_q8_f32", &k.launchGatherQ8F32},
 			// transpose
 			{"launch_transpose_2d", &k.launchTranspose2D},
 			{"launch_transpose_nd", &k.launchTransposeND},
@@ -374,6 +376,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_gemv_warp_f32":             true,
 			"launch_gemv_warp_f16":             true,
 			"launch_repeat_interleave_f32":    true,
+			"launch_gather_q8_f32":            true,
 			"launch_fused_softmax_vmul_f32":   true,
 			"ternary_gemv_f32":                true,
 			"nsa_attention_f32":               true,

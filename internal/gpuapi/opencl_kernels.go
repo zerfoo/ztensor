@@ -302,3 +302,5 @@ func (k *OpenCLKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _
 
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)
+
+func (k *OpenCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }

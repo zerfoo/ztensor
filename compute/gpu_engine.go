@@ -3223,6 +3223,13 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
 
+	// Q8 GPU gather: dequantize only the requested rows on GPU.
+	if qs, ok := any(params.GetStorage()).(*tensor.Q8Storage); ok {
+		if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+			return e.gatherQ8(params, indices, output, qs, ptr)
+		}
+	}
+
 	// Check whether params are GPU-resident (F32 or FP16 storage).
 	_, isGPU := params.GetStorage().(*tensor.GPUStorage[T])
 	var fp16Stor *tensor.Float16Storage
@@ -3338,6 +3345,67 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 	}
 	output.SetStorage(gs)
 
+	return nil
+}
+
+// gatherQ8 performs Q8_0 embedding gather on GPU using the Q8 gather kernel.
+// Dequantizes only the requested rows, keeping the full Q8 table compressed.
+func (e *GPUEngine[T]) gatherQ8(
+	params *tensor.TensorNumeric[T],
+	indices *tensor.TensorNumeric[int],
+	output *tensor.TensorNumeric[T],
+	qs *tensor.Q8Storage,
+	devQ8 unsafe.Pointer,
+) error {
+	e.setDevice()
+
+	pShape := params.Shape()
+	V := pShape[0]
+	D := pShape[1]
+
+	idxData := indices.Data()
+	N := len(idxData)
+	if N == 0 {
+		return nil
+	}
+
+	// Upload indices as int32 to GPU.
+	idx32 := make([]int32, N)
+	for i, id := range idxData {
+		idx32[i] = int32(id)
+	}
+	idxBytes := N * 4
+	devIdx, err := e.pool.Alloc(e.deviceID, idxBytes)
+	if err != nil {
+		return e.cpu.Gather(context.Background(), params, indices, output)
+	}
+	defer e.pool.Free(e.deviceID, devIdx, idxBytes)
+
+	if err := e.runtime.Memcpy(devIdx, unsafe.Pointer(&idx32[0]), idxBytes, gpuapi.MemcpyHostToDevice); err != nil {
+		return e.cpu.Gather(context.Background(), params, indices, output)
+	}
+
+	// Allocate output [N, D] on GPU.
+	outElems := N * D
+	outBytes := outElems * f32Size
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return e.cpu.Gather(context.Background(), params, indices, output)
+	}
+
+	// Launch Q8 gather kernel.
+	if err := e.kernels.GatherQ8F32(devQ8, devIdx, devOut, N, D, V, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return e.cpu.Gather(context.Background(), params, indices, output)
+	}
+
+	// Write result into output tensor as GPUStorage.
+	gs, err := tensor.NewGPUStorageFromPtr[float32](devOut, outElems, e.deviceID)
+	if err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return fmt.Errorf("gatherQ8: create GPU storage: %w", err)
+	}
+	output.SetStorage(any(gs).(tensor.Storage[T]))
 	return nil
 }
 
