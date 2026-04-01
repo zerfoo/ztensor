@@ -19,8 +19,8 @@ func FusedSoftmaxVMulF32(
 	stream unsafe.Pointer,
 ) error {
 	k := klib()
-	if k == nil {
-		return fmt.Errorf("fused_softmax_vmul_f32 kernel: kernels not available")
+	if k == nil || k.launchFusedSoftmaxVMulF32 == 0 {
+		return fmt.Errorf("fused_softmax_vmul_f32 kernel: not available")
 	}
 	scaleBits := math.Float32bits(scale)
 	ret := cuda.Ccall(k.launchFusedSoftmaxVMulF32,
