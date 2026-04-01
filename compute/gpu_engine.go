@@ -1497,8 +1497,16 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 	}
 	defer e.pool.Free(e.deviceID, devAF32, dequantSize)
 
-	if err := e.kernels.DequantQ4KF32(devW, devAF32, m, k, e.stream); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+	if k%256 == 0 {
+		if err := e.kernels.DequantQ4KF32(devW, devAF32, m, k, e.stream); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	} else {
+		dequant := make([]float32, m*k)
+		qs.Dequantize(dequant)
+		if err := e.runtime.Memcpy(devAF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
 	}
 
 	// Upload B to GPU.
@@ -1617,8 +1625,18 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 	}
 	defer e.pool.Free(e.deviceID, devBF32, dequantSize)
 
-	if err := e.kernels.DequantQ4KF32(devQ4K, devBF32, n, k, e.stream); err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+	if k%256 == 0 {
+		// GPU dequant when K is super-block aligned.
+		if err := e.kernels.DequantQ4KF32(devQ4K, devBF32, n, k, e.stream); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	} else {
+		// CPU dequant for unaligned K (super-block boundary doesn't match row boundary).
+		dequant := make([]float32, n*k)
+		qs.Dequantize(dequant)
+		if err := e.runtime.Memcpy(devBF32, unsafe.Pointer(&dequant[0]), dequantSize, gpuapi.MemcpyHostToDevice); err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
 	}
 
 	// Upload A to GPU.
