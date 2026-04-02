@@ -7,7 +7,6 @@ import (
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
-	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
 // ElementType mirrors the PJRT_Buffer_Type enum from the PJRT C API.
@@ -224,22 +223,22 @@ func BufferFromHost[T any](client *Client, data []T, shape []int, device *Device
 	//   done_with_host_buffer     uintptr  (out: PJRT_Event*)
 	//   buffer                    uintptr  (out: PJRT_Buffer*)
 	type bufferFromHostArgs struct {
-		structSize            uintptr
-		client                uintptr
-		data                  uintptr
-		typ                   int32
-		_                     [4]byte
-		dims                  uintptr
-		numDims               uintptr
-		byteStrides           uintptr
-		numByteStrides        uintptr
-		hostBufferSemantics   int32
-		_                     [4]byte
-		device                uintptr
-		memory                uintptr
-		deviceLayout          uintptr
-		doneWithHostBuffer    uintptr
-		buffer                uintptr
+		structSize          uintptr
+		client              uintptr
+		data                uintptr
+		typ                 int32
+		_                   [4]byte
+		dims                uintptr
+		numDims             uintptr
+		byteStrides         uintptr
+		numByteStrides      uintptr
+		hostBufferSemantics int32
+		_                   [4]byte
+		device              uintptr
+		memory              uintptr
+		deviceLayout        uintptr
+		doneWithHostBuffer  uintptr
+		buffer              uintptr
 	}
 
 	args := bufferFromHostArgs{
@@ -253,7 +252,7 @@ func BufferFromHost[T any](client *Client, data []T, shape []int, device *Device
 		device:              device.handle,
 	}
 
-	errPtr := cuda.Ccall(lib.PJRT_Client_BufferFromHostBuffer, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(lib.PJRT_Client_BufferFromHostBuffer, uintptr(unsafe.Pointer(&args)))
 	if err := lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Client_BufferFromHostBuffer: %w", err)
 	}
@@ -315,7 +314,7 @@ func (b *Buffer) ToHost(dst []byte) error {
 		dstSize:    uintptr(len(dst)),
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_ToHostBuffer, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_ToHostBuffer, uintptr(unsafe.Pointer(&args)))
 	if err := b.lib.checkError(errPtr); err != nil {
 		return fmt.Errorf("PJRT_Buffer_ToHostBuffer: %w", err)
 	}
@@ -366,7 +365,7 @@ func (b *Buffer) Dtype() (ElementType, error) {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_ElementType, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_ElementType, uintptr(unsafe.Pointer(&args)))
 	if err := b.lib.checkError(errPtr); err != nil {
 		return ElementTypeInvalid, fmt.Errorf("PJRT_Buffer_ElementType: %w", err)
 	}
@@ -399,7 +398,7 @@ func (b *Buffer) Shape() ([]int, error) {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_Dimensions, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_Dimensions, uintptr(unsafe.Pointer(&args)))
 	if err := b.lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Buffer_Dimensions: %w", err)
 	}
@@ -440,7 +439,7 @@ func (b *Buffer) OnDeviceSizeInBytes() (int64, error) {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_OnDeviceSizeInBytes, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_OnDeviceSizeInBytes, uintptr(unsafe.Pointer(&args)))
 	if err := b.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_Buffer_OnDeviceSizeInBytes: %w", err)
 	}
@@ -473,7 +472,7 @@ func (b *Buffer) ReadyEvent() (uintptr, error) {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_ReadyEvent, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_ReadyEvent, uintptr(unsafe.Pointer(&args)))
 	if err := b.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_Buffer_ReadyEvent: %w", err)
 	}
@@ -505,7 +504,7 @@ func (b *Buffer) Delete() error {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_Delete, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_Delete, uintptr(unsafe.Pointer(&args)))
 	return b.lib.checkError(errPtr)
 }
 
@@ -533,7 +532,7 @@ func (b *Buffer) Close() error {
 		buffer:     b.handle,
 	}
 
-	errPtr := cuda.Ccall(b.lib.PJRT_Buffer_Destroy, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(b.lib.PJRT_Buffer_Destroy, uintptr(unsafe.Pointer(&args)))
 	b.handle = 0
 	return b.lib.checkError(errPtr)
 }
@@ -562,7 +561,7 @@ func (lib *PJRTLib) awaitEvent(event uintptr) error {
 		event:      event,
 	}
 
-	errPtr := cuda.Ccall(lib.PJRT_Event_Await, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(lib.PJRT_Event_Await, uintptr(unsafe.Pointer(&args)))
 	return lib.checkError(errPtr)
 }
 
@@ -584,7 +583,7 @@ func (lib *PJRTLib) destroyEvent(event uintptr) {
 		structSize: unsafe.Sizeof(destroyArgs{}),
 		event:      event,
 	}
-	cuda.Ccall(lib.PJRT_Event_Destroy, uintptr(unsafe.Pointer(&args)))
+	ccall(lib.PJRT_Event_Destroy, uintptr(unsafe.Pointer(&args)))
 }
 
 // BufferOption configures BufferFromHost behavior.
