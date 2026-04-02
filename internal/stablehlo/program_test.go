@@ -246,6 +246,235 @@ func TestEmitProgram_Reshape(t *testing.T) {
 	}
 }
 
+func TestEmitKVCacheProgram_Prefill(t *testing.T) {
+	// Simulate a simple prefill: matmul produces logits, a separate op produces KV cache.
+	// Slots: 0=input_tokens, 1=weights, 2=kv_weights, 3=matmul_out(logits), 4=kv_out
+	ops := []ProgramOp{
+		{
+			OpName:      "MatMul",
+			InputSlots:  []int{0, 1},
+			OutputSlot:  3,
+			InputShapes: [][]int{{1, 2048}, {2048, 32000}},
+			OutputShape: []int{1, 32000},
+			Dtype:       DTypeF32,
+		},
+		{
+			OpName:      "MatMul",
+			InputSlots:  []int{0, 2},
+			OutputSlot:  4,
+			InputShapes: [][]int{{1, 2048}, {2048, 128}},
+			OutputShape: []int{1, 128},
+			Dtype:       DTypeF32,
+		},
+	}
+
+	kvSlots := []KVCacheSlot{
+		{InputSlot: 5, OutputSlot: 4, Shape: []int{32, 2048, 128}, SeqAxis: 1},
+	}
+
+	mlir, err := EmitKVCacheProgram(ops, []int{0, 1, 2}, [][]int{{1, 2048}, {2048, 32000}, {2048, 128}}, kvSlots, DTypeF32, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have tuple return type: (logits, kv_cache).
+	if !strings.Contains(mlir, "-> (") {
+		t.Errorf("expected tuple return type:\n%s", mlir)
+	}
+
+	// KV cache input should appear as a function argument.
+	if !strings.Contains(mlir, "%arg3:") {
+		t.Errorf("expected KV cache input arg (%%arg3):\n%s", mlir)
+	}
+
+	// Return should have two values.
+	lines := strings.Split(mlir, "\n")
+	var returnLine string
+	for _, l := range lines {
+		if strings.Contains(l, "return ") {
+			returnLine = l
+			break
+		}
+	}
+	if returnLine == "" {
+		t.Fatal("no return statement found")
+	}
+	// Should return two comma-separated values.
+	returnParts := strings.SplitN(returnLine, ":", 2)
+	if len(returnParts) < 2 {
+		t.Fatalf("malformed return line: %s", returnLine)
+	}
+	returnValues := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(returnParts[0]), "return"))
+	commaCount := strings.Count(returnValues, ",")
+	if commaCount != 1 {
+		t.Errorf("expected 2 return values (1 comma), got %d commas in %q", commaCount, returnValues)
+	}
+}
+
+func TestEmitKVCacheProgram_Decode(t *testing.T) {
+	// Decode program: single token + KV cache -> logits + updated KV cache.
+	// Slots: 0=token, 1=weights, 2=matmul_out(logits), 3=kv_step
+	ops := []ProgramOp{
+		{
+			OpName:      "MatMul",
+			InputSlots:  []int{0, 1},
+			OutputSlot:  2,
+			InputShapes: [][]int{{1, 128}, {128, 32000}},
+			OutputShape: []int{1, 32000},
+			Dtype:       DTypeF32,
+		},
+		{
+			OpName:      "MatMul",
+			InputSlots:  []int{0, 1},
+			OutputSlot:  3,
+			InputShapes: [][]int{{1, 128}, {128, 128}},
+			OutputShape: []int{1, 128},
+			Dtype:       DTypeF32,
+		},
+	}
+
+	kvSlots := []KVCacheSlot{
+		{InputSlot: 10, OutputSlot: 3, Shape: []int{32, 64, 128}, SeqAxis: 1},
+	}
+
+	mlir, err := EmitKVCacheProgram(ops, []int{0, 1}, [][]int{{1, 128}, {128, 32000}}, kvSlots, DTypeF32, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Decode should emit a concatenate for KV cache.
+	if !strings.Contains(mlir, "stablehlo.concatenate") {
+		t.Errorf("decode program should contain stablehlo.concatenate:\n%s", mlir)
+	}
+
+	// KV cache arg should be present.
+	if !strings.Contains(mlir, "%arg2: tensor<32x64x128xf32>") {
+		t.Errorf("expected KV cache input arg with shape 32x64x128:\n%s", mlir)
+	}
+
+	// Return should have (logits, updated_kv) = 2 values.
+	lines := strings.Split(mlir, "\n")
+	var returnLine string
+	for _, l := range lines {
+		if strings.Contains(l, "return ") {
+			returnLine = l
+			break
+		}
+	}
+	if returnLine == "" {
+		t.Fatal("no return statement found")
+	}
+	returnParts := strings.SplitN(returnLine, ":", 2)
+	if len(returnParts) < 2 {
+		t.Fatalf("malformed return line: %s", returnLine)
+	}
+	returnValues := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(returnParts[0]), "return"))
+	commaCount := strings.Count(returnValues, ",")
+	if commaCount != 1 {
+		t.Errorf("expected 2 return values (1 comma), got %d commas in %q", commaCount, returnValues)
+	}
+
+	// The updated KV shape should be seq_len+1 along the seq axis.
+	if !strings.Contains(mlir, "tensor<32x65x128xf32>") {
+		t.Errorf("expected updated KV cache shape 32x65x128 (seq_len 64+1):\n%s", mlir)
+	}
+}
+
+func TestEmitKVCacheProgram_MultiLayer(t *testing.T) {
+	// Two KV cache layers (like a 2-layer transformer).
+	ops := []ProgramOp{
+		{
+			OpName:      "Add",
+			InputSlots:  []int{0, 1},
+			OutputSlot:  4,
+			InputShapes: [][]int{{1, 64}, {1, 64}},
+			OutputShape: []int{1, 64},
+			Dtype:       DTypeF32,
+		},
+		{
+			OpName:      "Add",
+			InputSlots:  []int{0, 1},
+			OutputSlot:  5,
+			InputShapes: [][]int{{1, 64}, {1, 64}},
+			OutputShape: []int{1, 64},
+			Dtype:       DTypeF32,
+		},
+	}
+
+	kvSlots := []KVCacheSlot{
+		{InputSlot: 10, OutputSlot: 4, Shape: []int{8, 32, 64}, SeqAxis: 1},
+		{InputSlot: 11, OutputSlot: 5, Shape: []int{8, 32, 64}, SeqAxis: 1},
+	}
+
+	mlir, err := EmitKVCacheProgram(ops, []int{0, 1}, [][]int{{1, 64}, {1, 64}}, kvSlots, DTypeF32, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 4 function args: 2 regular + 2 KV cache.
+	for _, arg := range []string{"%arg0:", "%arg1:", "%arg2:", "%arg3:"} {
+		if !strings.Contains(mlir, arg) {
+			t.Errorf("expected arg %s in signature:\n%s", arg, mlir)
+		}
+	}
+
+	// Return should have 3 values: primary + 2 KV outputs.
+	lines := strings.Split(mlir, "\n")
+	var returnLine string
+	for _, l := range lines {
+		if strings.Contains(l, "return ") {
+			returnLine = l
+			break
+		}
+	}
+	if returnLine == "" {
+		t.Fatal("no return statement found")
+	}
+	returnParts := strings.SplitN(returnLine, ":", 2)
+	returnValues := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(returnParts[0]), "return"))
+	commaCount := strings.Count(returnValues, ",")
+	if commaCount != 2 {
+		t.Errorf("expected 3 return values (2 commas), got %d commas in %q", commaCount, returnValues)
+	}
+}
+
+func TestEmitKVCacheProgram_ErrorCases(t *testing.T) {
+	baseOps := []ProgramOp{
+		{OpName: "Add", InputSlots: []int{0, 1}, OutputSlot: 2,
+			InputShapes: [][]int{{2}, {2}}, OutputShape: []int{2}, Dtype: DTypeF32},
+	}
+
+	t.Run("no ops", func(t *testing.T) {
+		_, err := EmitKVCacheProgram(nil, nil, nil, []KVCacheSlot{{InputSlot: 0, OutputSlot: 1, Shape: []int{2}}}, DTypeF32, false)
+		if err == nil {
+			t.Fatal("expected error for empty ops")
+		}
+	})
+
+	t.Run("no kv slots", func(t *testing.T) {
+		_, err := EmitKVCacheProgram(baseOps, []int{0, 1}, [][]int{{2}, {2}}, nil, DTypeF32, false)
+		if err == nil {
+			t.Fatal("expected error for nil KV slots")
+		}
+	})
+
+	t.Run("mismatched input slots and shapes", func(t *testing.T) {
+		_, err := EmitKVCacheProgram(baseOps, []int{0}, [][]int{{2}, {2}},
+			[]KVCacheSlot{{InputSlot: 3, OutputSlot: 2, Shape: []int{2}}}, DTypeF32, false)
+		if err == nil {
+			t.Fatal("expected error for mismatched slots/shapes")
+		}
+	})
+
+	t.Run("undefined kv output slot", func(t *testing.T) {
+		_, err := EmitKVCacheProgram(baseOps, []int{0, 1}, [][]int{{2}, {2}},
+			[]KVCacheSlot{{InputSlot: 3, OutputSlot: 99, Shape: []int{2}}}, DTypeF32, false)
+		if err == nil {
+			t.Fatal("expected error for undefined KV output slot")
+		}
+	})
+}
+
 func TestEmitProgram_ReduceSum(t *testing.T) {
 	ops := []ProgramOp{
 		{
