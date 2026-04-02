@@ -132,7 +132,7 @@ func Load(pluginName string) (*PJRTLib, error) {
 	lib := &PJRTLib{}
 	var lastErr string
 	for _, path := range candidates {
-		h, err := cuda.DlopenPath(path)
+		h, err := dlopenPath(path)
 		if err == nil {
 			lib.handle = h
 			break
@@ -144,14 +144,14 @@ func Load(pluginName string) (*PJRTLib, error) {
 	}
 
 	// Resolve the single entry point.
-	getPjrtApi, err := cuda.Dlsym(lib.handle, "GetPjrtApi")
+	getPjrtApi, err := dlsym(lib.handle, "GetPjrtApi")
 	if err != nil {
 		lib.Close()
 		return nil, fmt.Errorf("pjrt: dlsym GetPjrtApi: %w", err)
 	}
 
 	// Call GetPjrtApi() -> *PJRT_Api.
-	apiPtr := cuda.Ccall(getPjrtApi)
+	apiPtr := ccall(getPjrtApi)
 	if apiPtr == 0 {
 		lib.Close()
 		return nil, fmt.Errorf("pjrt: GetPjrtApi returned null")
@@ -240,7 +240,7 @@ func (lib *PJRTLib) errorMessage(errPtr uintptr) string {
 		structSize: unsafe.Sizeof(errorMessageArgs{}),
 		error:      errPtr,
 	}
-	cuda.Ccall(lib.PJRT_Error_Message, uintptr(unsafe.Pointer(&args)))
+	ccall(lib.PJRT_Error_Message, uintptr(unsafe.Pointer(&args)))
 
 	if args.message == 0 || args.messageLen == 0 {
 		return "unknown PJRT error"
@@ -261,7 +261,7 @@ func (lib *PJRTLib) destroyError(errPtr uintptr) {
 		structSize: unsafe.Sizeof(destroyArgs{}),
 		error:      errPtr,
 	}
-	cuda.Ccall(lib.PJRT_Error_Destroy, uintptr(unsafe.Pointer(&args)))
+	ccall(lib.PJRT_Error_Destroy, uintptr(unsafe.Pointer(&args)))
 }
 
 // checkError converts a PJRT_Error pointer to a Go error.
@@ -273,6 +273,23 @@ func (lib *PJRTLib) checkError(errPtr uintptr) error {
 	msg := lib.errorMessage(errPtr)
 	lib.destroyError(errPtr)
 	return fmt.Errorf("pjrt: %s", msg)
+}
+
+// ccall calls a C function pointer with the given arguments.
+// Centralizes the internal/cuda dependency so other files in this
+// package do not need to import it directly.
+func ccall(fn uintptr, args ...uintptr) uintptr {
+	return cuda.Ccall(fn, args...)
+}
+
+// dlopenPath opens a shared library at the given path.
+func dlopenPath(path string) (uintptr, error) {
+	return cuda.DlopenPath(path)
+}
+
+// dlsym resolves a symbol from a dlopen handle.
+func dlsym(handle uintptr, name string) (uintptr, error) {
+	return cuda.Dlsym(handle, name)
 }
 
 // goStringN converts a C string pointer and length to a Go string.
