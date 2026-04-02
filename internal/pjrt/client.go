@@ -3,8 +3,6 @@ package pjrt
 import (
 	"fmt"
 	"unsafe"
-
-	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
 // Client wraps a PJRT_Client handle and provides Go-friendly methods
@@ -57,7 +55,7 @@ func NewClient(lib *PJRTLib, opts ...ClientOption) (*Client, error) {
 		createOptions: cfg.createOptions,
 	}
 
-	errPtr := cuda.Ccall(lib.PJRT_Client_Create, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(lib.PJRT_Client_Create, uintptr(unsafe.Pointer(&args)))
 	if err := lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Client_Create: %w", err)
 	}
@@ -83,7 +81,7 @@ func (c *Client) Close() error {
 		structSize: unsafe.Sizeof(destroyArgs{}),
 		client:     c.handle,
 	}
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_Destroy, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_Destroy, uintptr(unsafe.Pointer(&args)))
 	c.handle = 0
 	return c.lib.checkError(errPtr)
 }
@@ -105,7 +103,7 @@ func (c *Client) PlatformName() (string, error) {
 		structSize: unsafe.Sizeof(platformNameArgs{}),
 		client:     c.handle,
 	}
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_PlatformName, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_PlatformName, uintptr(unsafe.Pointer(&args)))
 	if err := c.lib.checkError(errPtr); err != nil {
 		return "", fmt.Errorf("PJRT_Client_PlatformName: %w", err)
 	}
@@ -124,7 +122,7 @@ func (c *Client) PlatformVersion() (string, error) {
 		structSize: unsafe.Sizeof(platformVersionArgs{}),
 		client:     c.handle,
 	}
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_PlatformVersion, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_PlatformVersion, uintptr(unsafe.Pointer(&args)))
 	if err := c.lib.checkError(errPtr); err != nil {
 		return "", fmt.Errorf("PJRT_Client_PlatformVersion: %w", err)
 	}
@@ -148,7 +146,7 @@ func (c *Client) Devices() ([]*Device, error) {
 		structSize: unsafe.Sizeof(devicesArgs{}),
 		client:     c.handle,
 	}
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_Devices, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_Devices, uintptr(unsafe.Pointer(&args)))
 	if err := c.lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Client_Devices: %w", err)
 	}
@@ -167,7 +165,7 @@ func (c *Client) AddressableDevices() ([]*Device, error) {
 		structSize: unsafe.Sizeof(addressableDevicesArgs{}),
 		client:     c.handle,
 	}
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_AddressableDevices, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_AddressableDevices, uintptr(unsafe.Pointer(&args)))
 	if err := c.lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Client_AddressableDevices: %w", err)
 	}
