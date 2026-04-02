@@ -3,8 +3,6 @@ package pjrt
 import (
 	"fmt"
 	"unsafe"
-
-	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
 // Device wraps a PJRT_Device handle and provides methods for
@@ -37,7 +35,7 @@ func (d *Device) ID() (int, error) {
 		structSize:        unsafe.Sizeof(idArgs{}),
 		deviceDescription: desc,
 	}
-	errPtr := cuda.Ccall(d.lib.PJRT_DeviceDescription_Id, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(d.lib.PJRT_DeviceDescription_Id, uintptr(unsafe.Pointer(&args)))
 	if err := d.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_DeviceDescription_Id: %w", err)
 	}
@@ -66,7 +64,7 @@ func (d *Device) Kind() (string, error) {
 		structSize:        unsafe.Sizeof(kindArgs{}),
 		deviceDescription: desc,
 	}
-	errPtr := cuda.Ccall(d.lib.PJRT_DeviceDescription_Kind, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(d.lib.PJRT_DeviceDescription_Kind, uintptr(unsafe.Pointer(&args)))
 	if err := d.lib.checkError(errPtr); err != nil {
 		return "", fmt.Errorf("PJRT_DeviceDescription_Kind: %w", err)
 	}
@@ -90,7 +88,7 @@ func (d *Device) IsAddressable() (bool, error) {
 		structSize: unsafe.Sizeof(isAddressableArgs{}),
 		device:     d.handle,
 	}
-	errPtr := cuda.Ccall(d.lib.PJRT_Device_IsAddressable, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(d.lib.PJRT_Device_IsAddressable, uintptr(unsafe.Pointer(&args)))
 	if err := d.lib.checkError(errPtr); err != nil {
 		return false, fmt.Errorf("PJRT_Device_IsAddressable: %w", err)
 	}
@@ -114,7 +112,7 @@ func (d *Device) LocalHardwareId() (int, error) {
 		structSize: unsafe.Sizeof(localHWIDArgs{}),
 		device:     d.handle,
 	}
-	errPtr := cuda.Ccall(d.lib.PJRT_Device_LocalHardwareId, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(d.lib.PJRT_Device_LocalHardwareId, uintptr(unsafe.Pointer(&args)))
 	if err := d.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_Device_LocalHardwareId: %w", err)
 	}
@@ -142,7 +140,7 @@ func (d *Device) getDescription() (uintptr, error) {
 		structSize: unsafe.Sizeof(getDescArgs{}),
 		device:     d.handle,
 	}
-	errPtr := cuda.Ccall(d.lib.PJRT_Device_GetDescription, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(d.lib.PJRT_Device_GetDescription, uintptr(unsafe.Pointer(&args)))
 	if err := d.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_Device_GetDescription: %w", err)
 	}
