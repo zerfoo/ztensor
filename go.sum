@@ -2,5 +2,3 @@ github.com/zerfoo/float16 v0.2.0 h1:5U//Bxzp5nWogOpVa1H7ik4SGx9H5EVGdZeREP83NpE=
 github.com/zerfoo/float16 v0.2.0/go.mod h1:2x2TSUN8sIoaijvE0wN9jk8ZQP/EX9i4Rohx56tqcfM=
 github.com/zerfoo/float8 v0.2.0 h1:BNCIWZOY/9WYs4bn6hu7MY2tuChz+6K6O2dChuKMUeg=
 github.com/zerfoo/float8 v0.2.0/go.mod h1:c4BhjOqt3H+jq6iRhNd3anLmXRDLuIsJGoswscWFPvw=
-gonum.org/v1/gonum v0.17.0 h1:VbpOemQlsSMrYmn7T2OUvQ4dqxQXU+ouZFQsZOx50z4=
-gonum.org/v1/gonum v0.17.0/go.mod h1:El3tOrEuMpv2UdMrbNlKEh9vd86bmQ6vqIcDwxEOc1E=
