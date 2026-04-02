@@ -129,6 +129,95 @@ func TestSgemmSimd_OddDimensions(t *testing.T) {
 	}
 }
 
+func TestGemmF64_Identity(t *testing.T) {
+	// I * B = B
+	a := []float64{1, 0, 0, 1}
+	b := []float64{3, 4, 5, 6}
+	c := make([]float64, 4)
+
+	GemmF64(2, 2, 2, a, b, c)
+
+	want := []float64{3, 4, 5, 6}
+	for i := range c {
+		if math.Abs(c[i]-want[i]) > 1e-12 {
+			t.Errorf("c[%d] = %v, want %v", i, c[i], want[i])
+		}
+	}
+}
+
+func TestGemmF64_KnownProduct(t *testing.T) {
+	// [1 2; 3 4] * [5 6; 7 8] = [19 22; 43 50]
+	a := []float64{1, 2, 3, 4}
+	b := []float64{5, 6, 7, 8}
+	c := make([]float64, 4)
+
+	GemmF64(2, 2, 2, a, b, c)
+
+	want := []float64{19, 22, 43, 50}
+	for i := range c {
+		if math.Abs(c[i]-want[i]) > 1e-12 {
+			t.Errorf("c[%d] = %v, want %v", i, c[i], want[i])
+		}
+	}
+}
+
+func TestGemmF64_NonSquare(t *testing.T) {
+	// [1 2 3] * [4; 5; 6] = [32]  (1x3 * 3x1 = 1x1)
+	a := []float64{1, 2, 3}
+	b := []float64{4, 5, 6}
+	c := make([]float64, 1)
+
+	GemmF64(1, 1, 3, a, b, c)
+
+	want := 32.0 // 1*4 + 2*5 + 3*6
+	if math.Abs(c[0]-want) > 1e-12 {
+		t.Errorf("c[0] = %v, want %v", c[0], want)
+	}
+
+	// Also test 2x3 * 3x2 = 2x2
+	// [1 2 3; 4 5 6] * [7 8; 9 10; 11 12] = [58 64; 139 154]
+	a2 := []float64{1, 2, 3, 4, 5, 6}
+	b2 := []float64{7, 8, 9, 10, 11, 12}
+	c2 := make([]float64, 4)
+
+	GemmF64(2, 2, 3, a2, b2, c2)
+
+	want2 := []float64{58, 64, 139, 154}
+	for i := range c2 {
+		if math.Abs(c2[i]-want2[i]) > 1e-12 {
+			t.Errorf("c2[%d] = %v, want %v", i, c2[i], want2[i])
+		}
+	}
+}
+
+func TestGemmF64_LargeMatrix(t *testing.T) {
+	m, n, k := 64, 48, 128
+
+	a := make([]float64, m*k)
+	b := make([]float64, k*n)
+	for i := range a {
+		a[i] = float64(i%7-3) * 0.1
+	}
+	for i := range b {
+		b[i] = float64(i%5-2) * 0.1
+	}
+
+	c := make([]float64, m*n)
+	GemmF64(m, n, k, a, b, c)
+
+	// Verify against a manual dot-product for a few spot-checked elements.
+	for _, idx := range []struct{ i, j int }{{0, 0}, {1, 5}, {m - 1, n - 1}, {m / 2, n / 2}} {
+		var want float64
+		for p := range k {
+			want += a[idx.i*k+p] * b[p*n+idx.j]
+		}
+		got := c[idx.i*n+idx.j]
+		if math.Abs(got-want) > 1e-8 {
+			t.Errorf("c[%d,%d] = %v, want %v (diff=%v)", idx.i, idx.j, got, want, got-want)
+		}
+	}
+}
+
 func BenchmarkSgemm_1024(b *testing.B) {
 	m, n, k := 1024, 1024, 1024
 	a := make([]float32, m*k)
@@ -141,7 +230,7 @@ func BenchmarkSgemm_1024(b *testing.B) {
 	}
 	c := make([]float32, m*n)
 
-	b.Run("gonum", func(b *testing.B) {
+	b.Run("GemmF32", func(b *testing.B) {
 		for range b.N {
 			GemmF32(m, n, k, a, bm, c)
 		}
@@ -165,7 +254,7 @@ func BenchmarkSgemm_512(b *testing.B) {
 	}
 	c := make([]float32, m*n)
 
-	b.Run("gonum", func(b *testing.B) {
+	b.Run("GemmF32", func(b *testing.B) {
 		for range b.N {
 			GemmF32(m, n, k, a, bm, c)
 		}

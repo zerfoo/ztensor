@@ -73,50 +73,6 @@ func TestGemmF32_ZeroMatrix(t *testing.T) {
 	}
 }
 
-func TestGemmF64_Identity(t *testing.T) {
-	a := []float64{1, 0, 0, 1}
-	b := []float64{3, 4, 5, 6}
-	c := make([]float64, 4)
-
-	GemmF64(2, 2, 2, a, b, c)
-
-	want := []float64{3, 4, 5, 6}
-	for i, v := range c {
-		if v != want[i] {
-			t.Errorf("c[%d] = %v, want %v", i, v, want[i])
-		}
-	}
-}
-
-func TestGemmF64_KnownProduct(t *testing.T) {
-	a := []float64{1, 2, 3, 4}
-	b := []float64{5, 6, 7, 8}
-	c := make([]float64, 4)
-
-	GemmF64(2, 2, 2, a, b, c)
-
-	want := []float64{19, 22, 43, 50}
-	for i, v := range c {
-		if v != want[i] {
-			t.Errorf("c[%d] = %v, want %v", i, v, want[i])
-		}
-	}
-}
-
-func TestGemmF64_ZeroMatrix(t *testing.T) {
-	a := []float64{0, 0, 0, 0}
-	b := []float64{1, 2, 3, 4}
-	c := make([]float64, 4)
-
-	GemmF64(2, 2, 2, a, b, c)
-
-	for i, v := range c {
-		if v != 0 {
-			t.Errorf("c[%d] = %v, want 0", i, v)
-		}
-	}
-}
-
 func TestGemmF16_KnownProduct(t *testing.T) {
 	// A = [[1, 2], [3, 4]]
 	// B = [[5, 6], [7, 8]]
