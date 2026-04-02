@@ -3,8 +3,6 @@ package pjrt
 import (
 	"fmt"
 	"unsafe"
-
-	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
 // LoadedExecutable wraps a PJRT_LoadedExecutable handle returned by
@@ -79,7 +77,7 @@ func (c *Client) Compile(stablehloMLIR string) (*LoadedExecutable, error) {
 		program:    uintptr(unsafe.Pointer(&program)),
 	}
 
-	errPtr := cuda.Ccall(c.lib.PJRT_Client_Compile, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(c.lib.PJRT_Client_Compile, uintptr(unsafe.Pointer(&args)))
 	if err := c.lib.checkError(errPtr); err != nil {
 		return nil, fmt.Errorf("PJRT_Client_Compile: %w", err)
 	}
@@ -140,9 +138,156 @@ func (e *LoadedExecutable) Close() error {
 		structSize: unsafe.Sizeof(destroyArgs{}),
 		executable: e.handle,
 	}
-	errPtr := cuda.Ccall(e.lib.PJRT_LoadedExecutable_Destroy, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(e.lib.PJRT_LoadedExecutable_Destroy, uintptr(unsafe.Pointer(&args)))
 	e.handle = 0
 	return e.lib.checkError(errPtr)
+}
+
+// ExecOption configures Execute behavior.
+type ExecOption func(*execConfig)
+
+type execConfig struct {
+	// device ordinal to execute on (0 = first addressable device).
+	deviceOrdinal int
+	// donateInputs indicates that the runtime may take ownership of
+	// input buffers, avoiding a copy. The caller must not use the
+	// donated buffers after Execute returns.
+	donateInputs []bool
+}
+
+// WithDeviceOrdinal selects which device to execute on.
+func WithDeviceOrdinal(ordinal int) ExecOption {
+	return func(c *execConfig) {
+		c.deviceOrdinal = ordinal
+	}
+}
+
+// WithInputDonation marks specific inputs for buffer donation.
+// donated[i] == true means input i may be consumed by the runtime.
+func WithInputDonation(donated []bool) ExecOption {
+	return func(c *execConfig) {
+		c.donateInputs = donated
+	}
+}
+
+// Execute runs the compiled program with the given input buffers and
+// returns the output buffers. The caller owns the returned buffers and
+// must close them when done.
+//
+//go:nocheckptr
+func (e *LoadedExecutable) Execute(inputs []*Buffer, opts ...ExecOption) ([]*Buffer, error) {
+	if e.handle == 0 {
+		return nil, fmt.Errorf("pjrt: cannot execute closed executable")
+	}
+	if e.lib.PJRT_LoadedExecutable_Execute == 0 {
+		return nil, fmt.Errorf("pjrt: plugin does not support PJRT_LoadedExecutable_Execute")
+	}
+
+	var cfg execConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	// Build the flat array of input buffer handles.
+	numInputs := len(inputs)
+	inputHandles := make([]uintptr, numInputs)
+	for i, buf := range inputs {
+		if buf == nil || buf.Handle() == 0 {
+			return nil, fmt.Errorf("pjrt: input buffer %d is nil or closed", i)
+		}
+		inputHandles[i] = buf.Handle()
+	}
+
+	var inputHandlesPtr uintptr
+	if numInputs > 0 {
+		inputHandlesPtr = uintptr(unsafe.Pointer(&inputHandles[0]))
+	}
+
+	// Allocate output buffer handle slots. PJRT writes one PJRT_Buffer*
+	// per output per device. We execute on a single device.
+	numOutputs := e.numOutputs
+	outputHandles := make([]uintptr, numOutputs)
+	var outputHandlesPtr uintptr
+	if numOutputs > 0 {
+		outputHandlesPtr = uintptr(unsafe.Pointer(&outputHandles[0]))
+	}
+
+	// PJRT expects a pointer-to-pointer for the output list (one list
+	// per device). We execute on one device, so we have a single list.
+	outputListPtr := outputHandlesPtr
+	outputListsPtr := uintptr(unsafe.Pointer(&outputListPtr))
+
+	// PJRT_LoadedExecutable_Execute_Args:
+	//   struct_size           uintptr
+	//   executable            uintptr  (PJRT_LoadedExecutable*)
+	//   options               uintptr  (PJRT_ExecuteOptions*, may be 0)
+	//   argument_lists        uintptr  (PJRT_Buffer* const* const*, one list per device)
+	//   num_devices           uintptr  (size_t)
+	//   num_args              uintptr  (size_t)
+	//   output_lists          uintptr  (PJRT_Buffer** const*, out: one list per device)
+	//   device_complete_events uintptr (out: PJRT_Event**, one per device)
+	//   execute_device        uintptr  (PJRT_Device*, optional single-device execute)
+	type executeArgs struct {
+		structSize            uintptr
+		executable            uintptr
+		options               uintptr
+		argumentLists         uintptr
+		numDevices            uintptr
+		numArgs               uintptr
+		outputLists           uintptr
+		deviceCompleteEvents  uintptr
+		executeDevice         uintptr
+	}
+
+	// Build the argument list pointer (one list for one device).
+	argListPtr := inputHandlesPtr
+	argListsPtr := uintptr(unsafe.Pointer(&argListPtr))
+
+	// Allocate event output slot (one per device).
+	var event uintptr
+	eventPtr := uintptr(unsafe.Pointer(&event))
+
+	args := executeArgs{
+		structSize:           unsafe.Sizeof(executeArgs{}),
+		executable:           e.handle,
+		argumentLists:        argListsPtr,
+		numDevices:           1,
+		numArgs:              uintptr(numInputs),
+		outputLists:          outputListsPtr,
+		deviceCompleteEvents: eventPtr,
+	}
+
+	errPtr := ccall(e.lib.PJRT_LoadedExecutable_Execute, uintptr(unsafe.Pointer(&args)))
+	if err := e.lib.checkError(errPtr); err != nil {
+		return nil, fmt.Errorf("PJRT_LoadedExecutable_Execute: %w", err)
+	}
+
+	// Wait for execution to complete.
+	if event != 0 {
+		if err := e.lib.awaitEvent(event); err != nil {
+			return nil, fmt.Errorf("pjrt: await execution: %w", err)
+		}
+		e.lib.destroyEvent(event)
+	}
+
+	// Wrap output handles in Buffer structs.
+	outputs := make([]*Buffer, numOutputs)
+	for i, h := range outputHandles {
+		if h == 0 {
+			// Clean up already-wrapped outputs on error.
+			for j := 0; j < i; j++ {
+				outputs[j].Close()
+			}
+			return nil, fmt.Errorf("pjrt: execution returned null output buffer at index %d", i)
+		}
+		outputs[i] = &Buffer{
+			lib:    e.lib,
+			client: 0, // output buffers don't need the client handle for readback
+			handle: h,
+		}
+	}
+
+	return outputs, nil
 }
 
 // Handle returns the raw PJRT_LoadedExecutable pointer.
@@ -194,7 +339,7 @@ func (e *LoadedExecutable) queryNumOutputs() (int, error) {
 		structSize: unsafe.Sizeof(numOutputsArgs{}),
 		executable: e.handle,
 	}
-	errPtr := cuda.Ccall(e.lib.PJRT_Executable_NumOutputs, uintptr(unsafe.Pointer(&args)))
+	errPtr := ccall(e.lib.PJRT_Executable_NumOutputs, uintptr(unsafe.Pointer(&args)))
 	if err := e.lib.checkError(errPtr); err != nil {
 		return 0, fmt.Errorf("PJRT_Executable_NumOutputs: %w", err)
 	}
