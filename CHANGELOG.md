@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.0](https://github.com/zerfoo/ztensor/compare/v1.2.0...v1.3.0) (2026-04-03)
+
+
+### Features
+
+* **graph:** add CompilePJRT for PJRT backend compilation ([dfd77a4](https://github.com/zerfoo/ztensor/commit/dfd77a4f5631337f8ca8145d2b7f4bdcc3a1f807))
+* **pjrt:** add buffer management (host-device transfer, readback, lifecycle) ([9b5dc75](https://github.com/zerfoo/ztensor/commit/9b5dc7552cafa8d5adf9845cba716490aeb4055a))
+* **pjrt:** add KV cache I/O rewriting and executable cache ([c8decc5](https://github.com/zerfoo/ztensor/commit/c8decc52143a3f9796e7d82e65885ef525df6571))
+* **pjrt:** add PJRT C API purego bindings for plugin loading, client, and device ([c675807](https://github.com/zerfoo/ztensor/commit/c675807eda36afc536e674f30eecb7ef81358006))
+* **pjrt:** add program execution, serialization, and full StableHLO emitter ([382ea0a](https://github.com/zerfoo/ztensor/commit/382ea0ab9bc8e0adcdf15b63b5bcbe2313642238))
+* **pjrt:** add StableHLO program compilation wrapper ([7fcdde7](https://github.com/zerfoo/ztensor/commit/7fcdde7d88bcbce353430965a98ee94cebef0b07))
+* **stablehlo:** add emitter for element-wise and unary ops ([499cef2](https://github.com/zerfoo/ztensor/commit/499cef258811e227c714563c8185c31a8718f70f))
+* **stablehlo:** add emitter for MatMul and structural ops ([13d87df](https://github.com/zerfoo/ztensor/commit/13d87df291ef872a5ab73f8334c441177068af4f))
+* **stablehlo:** add emitter for reductions and Softmax decomposition ([c07b287](https://github.com/zerfoo/ztensor/commit/c07b287f657c1eb9ce5978e5bd94240fd7ccb7eb))
+* **stablehlo:** add MLIR type system and SSA naming ([7c68d1e](https://github.com/zerfoo/ztensor/commit/7c68d1e19f3ba13c3d541f9ab6e85fe02b54ec32))
+* **stablehlo:** add shape inference for arithmetic ops ([cac094e](https://github.com/zerfoo/ztensor/commit/cac094e507b9135e58f211094926fa68907e6458))
+* **stablehlo:** add shape inference for structural ops ([8bf132c](https://github.com/zerfoo/ztensor/commit/8bf132cbf4443ff32e195e530cd1af1d0865399c))
+
+
+### Bug Fixes
+
+* **pjrt:** centralize internal/cuda import in pjrt.go ([aa8c170](https://github.com/zerfoo/ztensor/commit/aa8c1701a0f4f5fd5fc4c9c9621808075c59e8e8))
+* **pjrt:** remove duplicate ccall/goStringN declarations ([3e5fba9](https://github.com/zerfoo/ztensor/commit/3e5fba995e92b565dcf23f132166553b27ee8c7e))
+
 ## [1.2.0](https://github.com/zerfoo/ztensor/compare/v1.1.3...v1.2.0) (2026-04-01)
 
 
