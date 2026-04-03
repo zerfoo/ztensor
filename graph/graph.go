@@ -77,6 +77,27 @@ func (g *Graph[T]) ResetStatefulNodes() {
 	g.cachedRefCount = nil
 }
 
+// KVPairInfo describes a KV cache pair for external consumers (e.g., PJRT
+// compilation). It exposes the input and output nodes so callers can
+// resolve their slot indices after tracing.
+type KVPairInfo[T tensor.Numeric] struct {
+	Input  Node[T] // the stateful input node (also satisfies StatefulInputNode)
+	Output Node[T] // the output node whose result feeds back into Input
+}
+
+// KVPairs returns the registered KV cache pairs. Each pair links a
+// stateful input node to the output node that produces its next state.
+func (g *Graph[T]) KVPairs() []KVPairInfo[T] {
+	pairs := make([]KVPairInfo[T], len(g.kvPairs))
+	for i, kv := range g.kvPairs {
+		pairs[i] = KVPairInfo[T]{
+			Input:  kv.input.(Node[T]),
+			Output: kv.output,
+		}
+	}
+	return pairs
+}
+
 // AddKVPair registers a stateful input node that should receive the output
 // of another node after each forward pass. Used for ONNX KV cache feedback.
 func (g *Graph[T]) AddKVPair(input StatefulInputNode[T], output Node[T]) {
