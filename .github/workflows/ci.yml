@@ -18,5 +18,5 @@ jobs:
           # Run go vet on all packages except those with intentional
           # unsafe.Pointer usage for GPU runtime bindings via purego/dlopen.
           # These warnings are expected and documented in docs/QUALITY.md.
-          go vet $(go list ./... | grep -v '/internal/cuda$' | grep -v '/internal/hip$' | grep -v '/internal/opencl$' | grep -v '/internal/cudnn$' | grep -v '/internal/tensorrt$' | grep -v '/internal/fpga$' | grep -v '/internal/sycl$')
+          go vet $(go list ./... | grep -v '/internal/cuda$' | grep -v '/internal/hip$' | grep -v '/internal/opencl$' | grep -v '/internal/cudnn$' | grep -v '/internal/tensorrt$' | grep -v '/internal/fpga$' | grep -v '/internal/sycl$' | grep -v '/internal/metal$' | grep -v '/internal/pjrt$')
       - run: go test -race -timeout 300s ./...
