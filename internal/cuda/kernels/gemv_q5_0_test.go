@@ -9,6 +9,30 @@ import (
 	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
+// q5_0ToGPULayout converts standard Q5_0 block data (22 bytes/block: [d(2)|qh(4)|qs(16)])
+// to the GPU-separated layout: scales(2*N, padded) | qh(4*N, padded) | qs(16*N).
+func q5_0ToGPULayout(raw []byte, nBlocks int) []byte {
+	const blockBytes = 22
+	scaleBytes := nBlocks * 2
+	paddedScaleBytes := (scaleBytes + 15) &^ 15
+	qhBytes := nBlocks * 4
+	paddedQhBytes := (qhBytes + 15) &^ 15
+	qsBytes := nBlocks * 16
+	total := paddedScaleBytes + paddedQhBytes + qsBytes
+
+	out := make([]byte, total)
+	for i := range nBlocks {
+		blockOff := i * blockBytes
+		// scale: 2 bytes at blockOff+0
+		copy(out[i*2:i*2+2], raw[blockOff:blockOff+2])
+		// qh: 4 bytes at blockOff+2
+		copy(out[paddedScaleBytes+i*4:paddedScaleBytes+i*4+4], raw[blockOff+2:blockOff+6])
+		// qs: 16 bytes at blockOff+6
+		copy(out[paddedScaleBytes+paddedQhBytes+i*16:paddedScaleBytes+paddedQhBytes+i*16+16], raw[blockOff+6:blockOff+22])
+	}
+	return out
+}
+
 // dequantizeQ5_0 dequantizes one Q5_0 block (22 bytes) into 32 float32 values.
 // Inlined here to avoid an import cycle with the tensor package.
 func dequantizeQ5_0(raw []byte, dst []float32) {
@@ -153,12 +177,6 @@ func TestGemvQ5_0F32_Parity(t *testing.T) {
 	}
 	defer func() { _ = stream.Destroy() }()
 
-	devW, err := cuda.Malloc(len(raw))
-	if err != nil {
-		t.Fatalf("cuda.Malloc W: %v", err)
-	}
-	defer func() { _ = cuda.Free(devW) }()
-
 	devX, err := cuda.Malloc(K * 4)
 	if err != nil {
 		t.Fatalf("cuda.Malloc x: %v", err)
@@ -171,14 +189,30 @@ func TestGemvQ5_0F32_Parity(t *testing.T) {
 	}
 	defer func() { _ = cuda.Free(devY) }()
 
-	if err := cuda.Memcpy(devW, unsafe.Pointer(&raw[0]), len(raw), cuda.MemcpyHostToDevice); err != nil {
-		t.Fatalf("Memcpy W: %v", err)
-	}
 	if err := cuda.Memcpy(devX, unsafe.Pointer(&x[0]), K*4, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy x: %v", err)
 	}
 
-	if err := GemvQ5_0F32(devW, devX, devY, M, K, stream.Ptr()); err != nil {
+	// Convert standard Q5_0 blocks to GPU-separated layout (scales | qh | qs)
+	// and compute region offsets for the kernel.
+	nBlocks := M * (K / 32)
+	gpuRaw := q5_0ToGPULayout(raw, nBlocks)
+	scaleBytes := nBlocks * 2
+	qhOffset := (scaleBytes + 15) &^ 15
+	qhBytes := nBlocks * 4
+	qsOffset := qhOffset + (qhBytes+15)&^15
+
+	// Re-upload GPU-layout data.
+	devWGPU, err := cuda.Malloc(len(gpuRaw))
+	if err != nil {
+		t.Fatalf("cuda.Malloc W GPU: %v", err)
+	}
+	defer func() { _ = cuda.Free(devWGPU) }()
+	if err := cuda.Memcpy(devWGPU, unsafe.Pointer(&gpuRaw[0]), len(gpuRaw), cuda.MemcpyHostToDevice); err != nil {
+		t.Fatalf("Memcpy W GPU: %v", err)
+	}
+
+	if err := GemvQ5_0F32(devWGPU, devX, devY, M, K, qhOffset, qsOffset, stream.Ptr()); err != nil {
 		t.Fatalf("GemvQ5_0F32: %v", err)
 	}
 
@@ -241,12 +275,6 @@ func TestGemvQ5_0F32_MultipleSizes(t *testing.T) {
 			}
 			defer func() { _ = stream.Destroy() }()
 
-			devW, err := cuda.Malloc(len(raw))
-			if err != nil {
-				t.Fatalf("cuda.Malloc W: %v", err)
-			}
-			defer func() { _ = cuda.Free(devW) }()
-
 			devX, err := cuda.Malloc(tc.K * 4)
 			if err != nil {
 				t.Fatalf("cuda.Malloc x: %v", err)
@@ -259,14 +287,27 @@ func TestGemvQ5_0F32_MultipleSizes(t *testing.T) {
 			}
 			defer func() { _ = cuda.Free(devY) }()
 
-			if err := cuda.Memcpy(devW, unsafe.Pointer(&raw[0]), len(raw), cuda.MemcpyHostToDevice); err != nil {
-				t.Fatalf("Memcpy W: %v", err)
+			// Convert to GPU-separated layout and compute offsets.
+			nBlocks := tc.M * (tc.K / 32)
+			gpuRaw := q5_0ToGPULayout(raw, nBlocks)
+			scaleBytes := nBlocks * 2
+			qhOffset := (scaleBytes + 15) &^ 15
+			qhBytes := nBlocks * 4
+			qsOffset := qhOffset + (qhBytes+15)&^15
+
+			devWGPU, err := cuda.Malloc(len(gpuRaw))
+			if err != nil {
+				t.Fatalf("cuda.Malloc W GPU: %v", err)
+			}
+			defer func() { _ = cuda.Free(devWGPU) }()
+			if err := cuda.Memcpy(devWGPU, unsafe.Pointer(&gpuRaw[0]), len(gpuRaw), cuda.MemcpyHostToDevice); err != nil {
+				t.Fatalf("Memcpy W GPU: %v", err)
 			}
 			if err := cuda.Memcpy(devX, unsafe.Pointer(&x[0]), tc.K*4, cuda.MemcpyHostToDevice); err != nil {
 				t.Fatalf("Memcpy x: %v", err)
 			}
 
-			if err := GemvQ5_0F32(devW, devX, devY, tc.M, tc.K, stream.Ptr()); err != nil {
+			if err := GemvQ5_0F32(devWGPU, devX, devY, tc.M, tc.K, qhOffset, qsOffset, stream.Ptr()); err != nil {
 				t.Fatalf("GemvQ5_0F32: %v", err)
 			}
 
@@ -318,19 +359,26 @@ func BenchmarkGemvQ5_0F32_4096(b *testing.B) {
 	}
 	defer func() { _ = stream.Destroy() }()
 
-	devW, _ := cuda.Malloc(len(raw))
+	nBlocks := M * (K / 32)
+	gpuRaw := q5_0ToGPULayout(raw, nBlocks)
+	scaleBytes := nBlocks * 2
+	qhOffset := (scaleBytes + 15) &^ 15
+	qhBytes := nBlocks * 4
+	qsOffset := qhOffset + (qhBytes+15)&^15
+
+	devW, _ := cuda.Malloc(len(gpuRaw))
 	defer func() { _ = cuda.Free(devW) }()
 	devX, _ := cuda.Malloc(K * 4)
 	defer func() { _ = cuda.Free(devX) }()
 	devY, _ := cuda.Malloc(M * 4)
 	defer func() { _ = cuda.Free(devY) }()
 
-	_ = cuda.Memcpy(devW, unsafe.Pointer(&raw[0]), len(raw), cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devW, unsafe.Pointer(&gpuRaw[0]), len(gpuRaw), cuda.MemcpyHostToDevice)
 	_ = cuda.Memcpy(devX, unsafe.Pointer(&x[0]), K*4, cuda.MemcpyHostToDevice)
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = GemvQ5_0F32(devW, devX, devY, M, K, stream.Ptr())
+		_ = GemvQ5_0F32(devW, devX, devY, M, K, qhOffset, qsOffset, stream.Ptr())
 	}
 	_ = stream.Synchronize()
 
