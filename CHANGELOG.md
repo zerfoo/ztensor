@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/zerfoo/ztensor/compare/v1.3.0...v1.4.0) (2026-04-06)
+
+
+### Features
+
+* **graph:** add NewPJRTClient for external PJRT usage ([c8db036](https://github.com/zerfoo/ztensor/commit/c8db036b51820dae1a80886dbcca64f10328f945))
+* **graph:** add PJRTPlan execution wrapper with KV cache state management ([3e5cb40](https://github.com/zerfoo/ztensor/commit/3e5cb40ca34b3f041c7eae25e30fbd16188f1482))
+
+
+### Bug Fixes
+
+* **ci:** exclude metal and pjrt from go vet ([5a7fdc3](https://github.com/zerfoo/ztensor/commit/5a7fdc30334582019f62721780fda29d62ab76bc))
+* **kernels:** update GemvQ5_0F32 test to match qhOffset/qsOffset signature ([70f8fd5](https://github.com/zerfoo/ztensor/commit/70f8fd590785a0b76489c58619f431bb39f0c5b2))
+
 ## [1.3.0](https://github.com/zerfoo/ztensor/compare/v1.2.0...v1.3.0) (2026-04-03)
 
 
