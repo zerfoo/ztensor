@@ -1,4 +1,5 @@
-// Package nccl provides CGo bindings for the NVIDIA Collective Communications
-// Library (NCCL). All functional code requires the "cuda" build tag and a
-// working NCCL installation.
+// Package nccl provides a zero-CGo binding for the NVIDIA Collective
+// Communications Library (NCCL). The library is loaded at runtime via dlopen
+// (see nccl_purego.go); a legacy CGo implementation is retained behind the
+// `nccl_cgo` build tag for opt-in fallback (nccl_cgo.go).
 package nccl
