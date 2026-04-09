@@ -1,5 +1,58 @@
 # ztensor Development Log
 
+## 2026-04-09: Issue #79 not reproducible at ztensor primitive level
+
+**Type:** investigation
+**Tags:** gpu, issue-79, patchtst, dgx-gb10
+
+**Problem:** zerfoo PatchTST GPU training freezes at deterministic loss
+0.268357 on DGX GB10. Issue #79 hypothesized the fault lies in ztensor's
+GPU engine dst-output routing (`makeGPUResult` / `SetStorage` /
+`GPUStorage.Slice()`). Four hypotheses (alpha/beta/gamma/delta) were
+logged in the issue.
+
+**Investigation:** Added `TestGPUEngine_PatchTSTBackward_DstRoundTrip`
+(compute/gpu_dst_roundtrip_test.go) porting the exact op sequence from
+`zerfoo/timeseries/patchtst_gpu_train.go:1022-1031`:
+Transpose -> Zero -> MatMul(patchesT, dX, dPEW) -> in-place Add
+accumulate into pre-seeded gradW -> gradW.Data() read. Ran on DGX GB10
+via Spark pod `ztensor-issue79-repro-1775759440` (manifest at
+`docs/bench/manifests/issue-79-repro.yaml`, commit 3e538e6 of
+`fix/issue-79-matmul-accumulate-repro`).
+
+Full test suite on DGX:
+```
+TestGPUEngine_Add_DstRoundTrip_OutOfPlace        PASS
+TestGPUEngine_Add_DstRoundTrip_InPlace           PASS
+TestGPUEngine_Add_DstRoundTrip_RepeatedInPlace   PASS
+TestGPUEngine_Add_DstRoundTrip_NoExplicitSync    PASS
+TestGPUEngine_PatchTSTBackward_DstRoundTrip      PASS
+```
+
+**Root cause:** Not in ztensor primitives. The
+`Transpose -> Zero -> MatMul -> in-place Add` chain with a pre-seeded
+CPU-wrapper dst does NOT reproduce zero readback on small shapes
+(totalRows=4, patchLen=3, dModel=2). None of the four hypotheses from
+the issue body is triggered at this level.
+
+**Fix:** N/A. Investigation narrows the search to factors the ztensor
+test does not exercise:
+1. Shape regime -- production PatchTST uses thousands of rows / dModel in
+   the hundreds; bug may only manifest under larger allocations or
+   specific arena pressure.
+2. Interaction with `encoderBackward` and multi-op state carried across
+   the full batch, not just the patch-embedding backward slice.
+3. The CPU-loop posEmb update at `patchtst_gpu_train.go:1012-1019`
+   interleaved with GPU ops on the same stream.
+4. zerfoo-side gradTs wrapper rebuild logic affecting how `.Data()`
+   resolves after many accumulations.
+
+**Impact:** Rules out ztensor engine primitive routing as the direct
+cause of the frozen-loss signature. Next debugging must happen
+zerfoo-side with a large-shape reproducer that closer matches the real
+training configuration, or by instrumenting `trainWindowedGPU` itself
+rather than trying to lift primitives into ztensor tests.
+
 ## 2026-03-29 -- v1.0.0 Benchmark Baseline
 
 Pre-v1 benchmark baseline recorded on Apple M4 (darwin/arm64, 10 cores).

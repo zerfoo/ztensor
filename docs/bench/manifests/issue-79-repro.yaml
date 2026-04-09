@@ -1,0 +1,54 @@
+# Issue #79 reproduction pod.
+#
+# Runs `go test -tags cuda` against ztensor branch
+# fix/issue-79-matmul-accumulate-repro on DGX GB10.
+#
+# Spark silently drops long args[i] strings, so the test driver script
+# lives on the host at /var/lib/zerfoo/bench-out/issue79-run.sh and is
+# mounted into the container. Args stay short.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue79-repro-${RUN_ID}
+  labels:
+    app: ztensor-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: docker.io/library/golang:1.25-bookworm
+      workingDir: /work
+      args:
+        - "bash"
+        - "/var/lib/zerfoo/bench-out/issue79-run.sh"
+        - "${RUN_ID}"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: bench-out
+          mountPath: /var/lib/zerfoo/bench-out
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: bench-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate

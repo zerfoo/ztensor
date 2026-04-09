@@ -64,7 +64,7 @@ Out of scope: New GPU features, perf work, unrelated kernel changes.
 - [ ] T2.2 Add a test exercising `engine.Add(ctx, a, b, a)` (in-place aliasing, hypothesis δ). Owner: TBD. Est: 30m. verifies: [UC-79]
 - [ ] T2.3 Add a test where `dst` is a freshly-allocated CPUStorage wrapper that gets flipped to GPUStorage by `makeGPUResult`, then read via `.Data()` immediately and after `engine.Sync()`. Owner: TBD. Est: 45m. verifies: [UC-79]
 - [ ] T2.4 Submit reproducer as a Spark Job manifest to `192.168.86.250:8080`; capture logs. Owner: TBD. Est: 30m. verifies: [UC-79]
-- [ ] T2.5 If still not reproduced, port the failing `trainWindowedGPU` first-batch path to a standalone `ztensor/compute` integration test (vendored minimal graph). Owner: TBD. Est: 2h. verifies: [UC-79]
+- [x] T2.5 Port `trainWindowedGPU` patch-embedding backward op sequence to a standalone compute test. 2026 04 09. Added TestGPUEngine_PatchTSTBackward_DstRoundTrip on branch fix/issue-79-matmul-accumulate-repro. All 5 dst-routing tests PASS on DGX GB10 via Spark pod ztensor-issue79-repro-1775759440. Bug not reproducible at ztensor primitive level. See docs/devlog.md 2026-04-09 entry.
 
 ### E3 — Diagnose #79
 
