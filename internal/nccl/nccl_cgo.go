@@ -1,9 +1,8 @@
-//go:build cuda
+//go:build cuda && cgo && nccl_cgo
 
-// Package nccl provides CGo bindings for the NVIDIA Collective Communications
-// Library (NCCL). It exposes communicator lifecycle, all-reduce, and broadcast
-// operations needed for multi-GPU gradient synchronization and tensor
-// distribution.
+// Legacy CGo binding for libnccl, retained as an opt-in fallback. Build with
+// `-tags "cuda nccl_cgo"` to use this implementation instead of the default
+// purego/dlopen path in nccl_purego.go.
 package nccl
 
 /*
