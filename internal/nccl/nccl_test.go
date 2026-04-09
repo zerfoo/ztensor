@@ -1,5 +1,3 @@
-//go:build cuda
-
 package nccl
 
 import (
@@ -10,7 +8,49 @@ import (
 	"github.com/zerfoo/ztensor/internal/cuda"
 )
 
+// requireNccl skips the test when libnccl.so.2 cannot be dlopen'd. Pure
+// constant/marshaling tests do not need this guard and should not call it.
+func requireNccl(t *testing.T) {
+	t.Helper()
+	if !Available() {
+		t.Skip("libnccl.so.2 not available on this host")
+	}
+}
+
+func TestConstants(t *testing.T) {
+	if Float32 != 7 || Float64 != 8 || Int32 != 2 || Int64 != 4 {
+		t.Fatalf("unexpected NCCL DataType ABI constants: f32=%d f64=%d i32=%d i64=%d",
+			Float32, Float64, Int32, Int64)
+	}
+	if Sum != 0 || Avg != 4 || Max != 2 || Min != 3 {
+		t.Fatalf("unexpected NCCL ReduceOp ABI constants: sum=%d avg=%d max=%d min=%d",
+			Sum, Avg, Max, Min)
+	}
+}
+
+func TestUniqueIDFromBytesRoundTripNoLib(t *testing.T) {
+	// This exercises the pure-Go marshaling path and runs on every platform.
+	src := make([]byte, 128)
+	for i := range src {
+		src[i] = byte(i)
+	}
+	uid, err := UniqueIDFromBytes(src)
+	if err != nil {
+		t.Fatalf("UniqueIDFromBytes: %v", err)
+	}
+	out := uid.Bytes()
+	if len(out) != 128 {
+		t.Fatalf("Bytes length = %d, want 128", len(out))
+	}
+	for i := range src {
+		if out[i] != src[i] {
+			t.Fatalf("byte %d: got %d want %d", i, out[i], src[i])
+		}
+	}
+}
+
 func TestGetUniqueID(t *testing.T) {
+	requireNccl(t)
 	uid, err := GetUniqueID()
 	if err != nil {
 		t.Fatalf("GetUniqueID: %v", err)
@@ -22,6 +62,7 @@ func TestGetUniqueID(t *testing.T) {
 }
 
 func TestUniqueIDRoundTrip(t *testing.T) {
+	requireNccl(t)
 	uid, err := GetUniqueID()
 	if err != nil {
 		t.Fatalf("GetUniqueID: %v", err)
@@ -50,6 +91,7 @@ func TestUniqueIDFromBytesInvalidLength(t *testing.T) {
 }
 
 func TestSingleRankInitDestroy(t *testing.T) {
+	requireNccl(t)
 	count, err := cuda.GetDeviceCount()
 	if err != nil || count < 1 {
 		t.Skip("requires at least 1 CUDA device")
@@ -74,6 +116,7 @@ func TestSingleRankInitDestroy(t *testing.T) {
 }
 
 func TestSingleRankAllReduce(t *testing.T) {
+	requireNccl(t)
 	count, err := cuda.GetDeviceCount()
 	if err != nil || count < 1 {
 		t.Skip("requires at least 1 CUDA device")
@@ -134,6 +177,7 @@ func TestSingleRankAllReduce(t *testing.T) {
 }
 
 func TestTwoGPUAllReduce(t *testing.T) {
+	requireNccl(t)
 	count, err := cuda.GetDeviceCount()
 	if err != nil || count < 2 {
 		t.Skip("requires at least 2 CUDA devices")
@@ -231,6 +275,7 @@ func TestTwoGPUAllReduce(t *testing.T) {
 }
 
 func TestTwoGPUBroadcast(t *testing.T) {
+	requireNccl(t)
 	count, err := cuda.GetDeviceCount()
 	if err != nil || count < 2 {
 		t.Skip("requires at least 2 CUDA devices")
@@ -326,6 +371,7 @@ func TestTwoGPUBroadcast(t *testing.T) {
 }
 
 func TestGroupStartEnd(t *testing.T) {
+	requireNccl(t)
 	// GroupStart/GroupEnd can be called without a communicator.
 	if err := GroupStart(); err != nil {
 		t.Fatalf("GroupStart: %v", err)
