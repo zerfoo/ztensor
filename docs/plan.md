@@ -52,10 +52,10 @@ Out of scope: New GPU features, perf work, unrelated kernel changes.
 
 ### E1 — Close #78 (NCCL purego)
 
-- [ ] T1.1 Re-check PR #80 CI on latest push. Owner: TBD. Est: 10m. verifies: [infrastructure]
-- [ ] T1.2 Rebase PR #80 onto `main` if needed. Owner: TBD. Est: 15m. verifies: [infrastructure]
-- [ ] T1.3 Rebase-and-merge PR #80, confirm #78 auto-closes. Owner: TBD. Est: 10m. verifies: [infrastructure]
-- [ ] T1.4 Verify `go build ./...` (no tags) on `main` post-merge. Owner: TBD. Est: 5m. verifies: [infrastructure]
+- [x] T1.1 Re-check PR #80 CI on latest push. 2026 04 09. CI green (test/COMPLETED/SUCCESS).
+- [x] T1.2 Rebase PR #80 onto `main` if needed. 2026 04 09. mergeStateStatus=CLEAN, no rebase needed.
+- [x] T1.3 Rebase-and-merge PR #80, confirm #78 auto-closes. 2026 04 09. Merged as af8af73; #78 CLOSED.
+- [x] T1.4 Verify `go build ./...` (no tags) on `main` post-merge. 2026 04 09. Build OK.
 - [ ] T1.5 Open tracking issue in zerfoo to drop its duplicate `internal/nccl` and import from ztensor. Owner: TBD. Est: 15m. verifies: [infrastructure]
 
 ### E2 — Reproduce #79 at ztensor level
