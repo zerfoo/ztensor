@@ -319,3 +319,131 @@ func TestGPUEngine_PatchTSTBackward_DstRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// runPatchTSTBackwardRepro runs the PatchTST patch-embedding backward op
+// sequence (Transpose -> Zero -> MatMul -> in-place Add) for a given shape
+// configuration and a given number of iterations. gradW is pre-seeded so a
+// silent-zero readback is detectable. After each iteration the function
+// asserts gradW.Data() is not all-zero and that a sample of positions
+// matches the analytical expected value within tolerance.
+func runPatchTSTBackwardRepro(t *testing.T, eng *GPUEngine[float32], totalRows, patchLen, dModel, iters int) {
+	t.Helper()
+	ctx := context.Background()
+
+	patchesData := make([]float32, totalRows*patchLen)
+	for i := range patchesData {
+		patchesData[i] = float32((i%7)+1) * 0.01
+	}
+	dXData := make([]float32, totalRows*dModel)
+	for i := range dXData {
+		dXData[i] = float32((i%5)+1) * 0.01
+	}
+	gradWSeed := make([]float32, patchLen*dModel)
+	for i := range gradWSeed {
+		gradWSeed[i] = float32(i+1) * 0.001
+	}
+
+	patches, err := tensor.New[float32]([]int{totalRows, patchLen}, patchesData)
+	if err != nil {
+		t.Fatalf("tensor.New patches: %v", err)
+	}
+	patchesT, err := tensor.New[float32]([]int{patchLen, totalRows}, make([]float32, patchLen*totalRows))
+	if err != nil {
+		t.Fatalf("tensor.New patchesT: %v", err)
+	}
+	dX, err := tensor.New[float32]([]int{totalRows, dModel}, dXData)
+	if err != nil {
+		t.Fatalf("tensor.New dX: %v", err)
+	}
+	dPEW, err := tensor.New[float32]([]int{patchLen, dModel}, make([]float32, patchLen*dModel))
+	if err != nil {
+		t.Fatalf("tensor.New dPEW: %v", err)
+	}
+	gradW, err := tensor.New[float32]([]int{patchLen, dModel}, append([]float32(nil), gradWSeed...))
+	if err != nil {
+		t.Fatalf("tensor.New gradW: %v", err)
+	}
+
+	// Single-batch analytical contribution: patchesT @ dX.
+	contrib := make([]float32, patchLen*dModel)
+	for i := 0; i < patchLen; i++ {
+		for j := 0; j < dModel; j++ {
+			var acc float32
+			for k := 0; k < totalRows; k++ {
+				acc += patchesData[k*patchLen+i] * dXData[k*dModel+j]
+			}
+			contrib[i*dModel+j] = acc
+		}
+	}
+
+	for iter := 0; iter < iters; iter++ {
+		if _, err := eng.Transpose(ctx, patches, []int{1, 0}, patchesT); err != nil {
+			t.Fatalf("iter %d Transpose: %v", iter, err)
+		}
+		if err := eng.Zero(ctx, dPEW); err != nil {
+			t.Fatalf("iter %d Zero: %v", iter, err)
+		}
+		if _, err := eng.MatMul(ctx, patchesT, dX, dPEW); err != nil {
+			t.Fatalf("iter %d MatMul: %v", iter, err)
+		}
+		if _, err := eng.Add(ctx, gradW, dPEW, gradW); err != nil {
+			t.Fatalf("iter %d Add: %v", iter, err)
+		}
+		if err := eng.Sync(); err != nil {
+			t.Fatalf("iter %d Sync: %v", iter, err)
+		}
+
+		got := gradW.Data()
+		if len(got) != patchLen*dModel {
+			t.Fatalf("iter %d: gradW.Data len = %d, want %d", iter, len(got), patchLen*dModel)
+		}
+		allZero := true
+		for _, v := range got {
+			if v != 0 {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			t.Fatalf("iter %d: gradW.Data() is ALL-ZERO -- Issue #79 REPRODUCED at shape totalRows=%d patchLen=%d dModel=%d",
+				iter, totalRows, patchLen, dModel)
+		}
+		nIter := float32(iter + 1)
+		for _, idx := range []int{0, 1, patchLen*dModel/2, patchLen*dModel - 1} {
+			w := gradWSeed[idx] + nIter*contrib[idx]
+			cur := got[idx]
+			tol := float32(1e-2) * (1 + float32(iter))
+			diff := cur - w
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > tol {
+				t.Fatalf("iter %d gradW[%d] = %v, want %v (tol=%v, diff=%v)",
+					iter, idx, cur, w, tol, diff)
+			}
+		}
+	}
+}
+
+// TestGPUEngine_PatchTSTBackward_RealisticShapes matches the default
+// cmd/bench_train/main.go config (PatchLength=8, Stride=4, DModel=64,
+// BatchSize=64, Channels=5, NumPatches=5 -> totalRows=1600) and runs
+// 20 backward accumulations to exercise arena/alias state that may only
+// manifest after many GPU-kernel output routings into the same wrapper.
+func TestGPUEngine_PatchTSTBackward_RealisticShapes(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	eng := newTestGPUEngine(t)
+	runPatchTSTBackwardRepro(t, eng, 1600, 8, 64, 20)
+}
+
+// TestGPUEngine_PatchTSTBackward_LargerBatch pushes totalRows to 3200 to
+// match bench-spark -samples 5000 -channels 10 style configurations.
+func TestGPUEngine_PatchTSTBackward_LargerBatch(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	eng := newTestGPUEngine(t)
+	runPatchTSTBackwardRepro(t, eng, 3200, 8, 64, 20)
+}
