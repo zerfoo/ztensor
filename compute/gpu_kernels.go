@@ -115,6 +115,35 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 	return devPtr, cleanup, nil
 }
 
+// tryReuseDstPtr checks whether dst[0] already has a GPUStorage with at least
+// neededElems capacity. If so, it returns the existing device pointer so the
+// caller can write kernel output directly into it, avoiding a pool.Alloc and
+// the resulting GC-pressure from orphaned GPUStorage objects. See ztensor#84.
+func tryReuseDstPtr[T tensor.Numeric](neededElems int, dst []*tensor.TensorNumeric[T]) (unsafe.Pointer, bool) {
+	if len(dst) == 0 || dst[0] == nil {
+		return nil, false
+	}
+	gs, ok := dst[0].GetStorage().(*tensor.GPUStorage[T])
+	if !ok || gs.Len() < neededElems {
+		return nil, false
+	}
+	return gs.Ptr(), true
+}
+
+// finishReusedDst updates dst's shape and strides in place after a kernel has
+// written into dst's existing device memory. No new GPUStorage is created.
+func finishReusedDst[T tensor.Numeric](dst *tensor.TensorNumeric[T], shape []int) *tensor.TensorNumeric[T] {
+	strides := make([]int, len(shape))
+	stride := 1
+	for i := len(shape) - 1; i >= 0; i-- {
+		strides[i] = stride
+		stride *= shape[i]
+	}
+	dst.SetShape(shape)
+	dst.SetStrides(strides)
+	return dst
+}
+
 // makeGPUResult creates a tensor with pool-backed GPUStorage wrapping the given
 // device pointer. When the tensor is freed, the pointer is returned to the pool
 // for reuse instead of calling cudaFree.
@@ -522,17 +551,26 @@ func gpuBinaryOp[T tensor.Numeric](
 
 	byteSize := n * f32Size
 
-	devC, err := e.pool.Alloc(e.deviceID, byteSize)
-	if err != nil {
-		return nil, err
+	// Reuse dst's existing GPU memory when possible (#84).
+	devC, reused := tryReuseDstPtr[T](n, dst)
+	if !reused {
+		devC, err = e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := kernelFn(devA, devB, devC, n, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devC, byteSize)
+		if !reused {
+			e.pool.Free(e.deviceID, devC, byteSize)
+		}
 
 		return nil, err
 	}
 
+	if reused {
+		return finishReusedDst[T](dst[0], a.Shape()), nil
+	}
 	return makeGPUResult[T](e, a.Shape(), devC, n, dst...)
 }
 
@@ -559,17 +597,26 @@ func gpuUnaryOp[T tensor.Numeric](
 
 	byteSize := n * f32Size
 
-	devC, err := e.pool.Alloc(e.deviceID, byteSize)
-	if err != nil {
-		return nil, err
+	// Reuse dst's existing GPU memory when possible (#84).
+	devC, reused := tryReuseDstPtr[T](n, dst)
+	if !reused {
+		devC, err = e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := kernelFn(devA, devC, n, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devC, byteSize)
+		if !reused {
+			e.pool.Free(e.deviceID, devC, byteSize)
+		}
 
 		return nil, err
 	}
 
+	if reused {
+		return finishReusedDst[T](dst[0], a.Shape()), nil
+	}
 	return makeGPUResult[T](e, a.Shape(), devC, n, dst...)
 }
 
@@ -597,17 +644,26 @@ func gpuScalarOp[T tensor.Numeric](
 
 	byteSize := n * f32Size
 
-	devC, err := e.pool.Alloc(e.deviceID, byteSize)
-	if err != nil {
-		return nil, err
+	// Reuse dst's existing GPU memory when possible (#84).
+	devC, reused := tryReuseDstPtr[T](n, dst)
+	if !reused {
+		devC, err = e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := kernelFn(devA, scalar, devC, n, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devC, byteSize)
+		if !reused {
+			e.pool.Free(e.deviceID, devC, byteSize)
+		}
 
 		return nil, err
 	}
 
+	if reused {
+		return finishReusedDst[T](dst[0], a.Shape()), nil
+	}
 	return makeGPUResult[T](e, a.Shape(), devC, n, dst...)
 }
 
@@ -957,20 +1013,29 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 
 	outByteSize := numStripes * f32Size
 
-	devOut, err := e.pool.Alloc(e.deviceID, outByteSize)
-	if err != nil {
-		e.oomFallbackCount.Add(1)
-		e.logger.Warn("Sum: GPU output alloc failed, falling back to CPU", "error", err.Error())
+	// Reuse dst's existing GPU memory when possible (#84).
+	devOut, reused := tryReuseDstPtr[T](numStripes, dst)
+	if !reused {
+		devOut, err = e.pool.Alloc(e.deviceID, outByteSize)
+		if err != nil {
+			e.oomFallbackCount.Add(1)
+			e.logger.Warn("Sum: GPU output alloc failed, falling back to CPU", "error", err.Error())
 
-		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+			return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+		}
 	}
 
 	if err := e.kernels.SumAxis(devIn, devOut, outer, inner, axisSize, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devOut, outByteSize)
+		if !reused {
+			e.pool.Free(e.deviceID, devOut, outByteSize)
+		}
 
 		return nil, err
 	}
 
+	if reused {
+		return finishReusedDst[T](dst[0], newShape), nil
+	}
 	return makeGPUResult[T](e, newShape, devOut, numStripes, dst...)
 }
 
