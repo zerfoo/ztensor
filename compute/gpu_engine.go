@@ -1269,7 +1269,8 @@ func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b 
 // matMulQ4BWeight handles MatMul where B has Q4 storage (virtual-transposed weight).
 // B's shape after virtual transpose is [K, N], but the Q4 data is laid out as [N, K].
 // We compute C[M, N] = A[M, K] * dequant(B)^T by reformulating as:
-//   C_temp[N, M] = gemm_q4(B_q4[N, K], A^T[K, M])
+//
+//	C_temp[N, M] = gemm_q4(B_q4[N, K], A^T[K, M])
 //
 // For GEMV (M=1), A^T[K,1] is just A's data as a column, and C_temp[N,1]
 // can be reshaped to [1, N] without a physical transpose.
