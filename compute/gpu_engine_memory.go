@@ -636,16 +636,42 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 	// Float16Storage: zero-copy reshape (same GPU pointer, new shape).
 	if e.dtype != DTypeF32 {
 		if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok && newSize == currentSize {
-			return tensor.NewWithStorage[T](inferredShape, any(fs).(tensor.Storage[T]))
+			storage := any(fs).(tensor.Storage[T])
+			if len(dst) > 0 && dst[0] != nil {
+				aliasReshapeDst(dst[0], inferredShape, storage)
+				return dst[0], nil
+			}
+			return tensor.NewWithStorage[T](inferredShape, storage)
 		}
 	}
 
 	// GPUStorage[T]: zero-copy reshape.
 	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && isFloat32[T]() && newSize == currentSize {
-		return tensor.NewWithStorage[T](inferredShape, gs.View(gs.Len()))
+		view := gs.View(gs.Len())
+		if len(dst) > 0 && dst[0] != nil {
+			aliasReshapeDst(dst[0], inferredShape, view)
+			return dst[0], nil
+		}
+		return tensor.NewWithStorage[T](inferredShape, view)
 	}
 
 	return e.cpu.Reshape(ctx, a, shape, dst...)
+}
+
+// aliasReshapeDst mutates dst to alias the given storage under inferredShape,
+// honoring the compute.Engine Reshape contract when a caller-provided dst is
+// passed. Fixes the silent-zero trap where the GPU zero-copy fast-path used to
+// drop dst, leaving its pre-allocated storage stale. See zerfoo/ztensor#81.
+func aliasReshapeDst[T tensor.Numeric](dst *tensor.TensorNumeric[T], inferredShape []int, storage tensor.Storage[T]) {
+	strides := make([]int, len(inferredShape))
+	stride := 1
+	for i := len(inferredShape) - 1; i >= 0; i-- {
+		strides[i] = stride
+		stride *= inferredShape[i]
+	}
+	dst.SetStorage(storage)
+	dst.SetShape(inferredShape)
+	dst.SetStrides(strides)
 }
 
 // ConvertFP16ToF32 converts a tensor with Float16Storage to a regular float32
