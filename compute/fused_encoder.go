@@ -17,6 +17,13 @@ type FusedEncoderProvider interface {
 	// FusedEncoderAvailable returns true if the fused encoder kernel is loaded.
 	FusedEncoderAvailable() bool
 
+	// AllocDeviceFloat32 allocates numElements float32s on the GPU and returns
+	// the device pointer. Memory is pool-managed and freed when the engine closes.
+	AllocDeviceFloat32(numElements int) (unsafe.Pointer, error)
+
+	// CopyToDevice copies len(src) float32 values from host to a device pointer.
+	CopyToDevice(dst unsafe.Pointer, src []float32) error
+
 	// FusedEncoderForward executes one encoder layer forward pass.
 	// weights: [16]unsafe.Pointer to layer weights.
 	// bufs: [16]unsafe.Pointer to pre-allocated forward cache buffers.

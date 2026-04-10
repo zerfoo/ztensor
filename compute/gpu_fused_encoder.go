@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cublas"
+	"github.com/zerfoo/ztensor/internal/gpuapi"
 )
 
 // blasHandlePtr extracts the raw cuBLAS handle pointer from the BLAS interface.
@@ -66,6 +67,18 @@ func (e *GPUEngine[T]) FusedEncoderBackward(
 	return e.kernels.FusedEncoderBwdF32(h, weights, &wt16, fwdBufs, bwdBufs, grads,
 		dOutput, dInput, input,
 		totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches, e.stream)
+}
+
+// AllocDeviceFloat32 allocates GPU memory for numElements float32 values.
+func (e *GPUEngine[T]) AllocDeviceFloat32(numElements int) (unsafe.Pointer, error) {
+	e.setDevice()
+	return e.pool.Alloc(e.deviceID, numElements*4)
+}
+
+// CopyToDevice copies float32 data from host to device.
+func (e *GPUEngine[T]) CopyToDevice(dst unsafe.Pointer, src []float32) error {
+	e.setDevice()
+	return e.runtime.Memcpy(dst, unsafe.Pointer(&src[0]), len(src)*4, gpuapi.MemcpyHostToDevice)
 }
 
 // Compile-time check that GPUEngine implements FusedEncoderProvider.
