@@ -978,13 +978,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return nil, err
 	}
 
-	// Allocate device output.
-	devCTotal, err := e.pool.Alloc(e.deviceID, outputBytes)
-	if err != nil {
-		e.oomFallbackCount.Add(1)
-		e.logger.Warn("MatMul: GPU output alloc failed, falling back to CPU", "error", err.Error())
+	// Reuse dst's existing GPU memory when possible (#84).
+	devCTotal, reusedC := tryReuseDstPtr[T](batchSize*cMatSize, dst)
+	if !reusedC {
+		devCTotal, err = e.pool.Alloc(e.deviceID, outputBytes)
+		if err != nil {
+			e.oomFallbackCount.Add(1)
+			e.logger.Warn("MatMul: GPU output alloc failed, falling back to CPU", "error", err.Error())
 
-		return e.cpu.MatMul(ctx, a, b, dst...)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
 	}
 
 	// Use strided batched GEMM when available for float32 with batch > 1.
@@ -1013,8 +1016,13 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 			if err := batched.SgemmStridedBatched(m, n, k, 1.0,
 				devA, strideA, devB, strideBVal, 0.0,
 				devCTotal, strideC, batchSize); err != nil {
-				e.pool.Free(e.deviceID, devCTotal, outputBytes)
+				if !reusedC {
+					e.pool.Free(e.deviceID, devCTotal, outputBytes)
+				}
 				return nil, fmt.Errorf("MatMul: batched GEMM: %w", err)
+			}
+			if reusedC {
+				return finishReusedDst[T](dst[0], outShape), nil
 			}
 			return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
 		}
@@ -1052,12 +1060,17 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		}
 
 		if blasErr != nil {
-			e.pool.Free(e.deviceID, devCTotal, outputBytes)
+			if !reusedC {
+				e.pool.Free(e.deviceID, devCTotal, outputBytes)
+			}
 
 			return nil, fmt.Errorf("MatMul: BLAS batch %d: %w", batch, blasErr)
 		}
 	}
 
+	if reusedC {
+		return finishReusedDst[T](dst[0], outShape), nil
+	}
 	return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
 }
 

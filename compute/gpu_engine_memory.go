@@ -132,9 +132,14 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	}
 
 	byteSize := total * f32Size
-	devOut, err := e.pool.Alloc(e.deviceID, byteSize)
-	if err != nil {
-		return e.cpu.Transpose(ctx, a, axes, dst...)
+
+	// Reuse dst's existing GPU memory when possible (#84).
+	devOut, reused := tryReuseDstPtr[T](total, dst)
+	if !reused {
+		devOut, err = e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return e.cpu.Transpose(ctx, a, axes, dst...)
+		}
 	}
 
 	// Fast path: 2D transpose.
@@ -145,8 +150,13 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 				"cols", fmt.Sprintf("%d", shape[1]))
 		}
 		if err := e.kernels.Transpose2D(devIn, devOut, shape[0], shape[1], e.stream); err != nil {
-			e.pool.Free(e.deviceID, devOut, byteSize)
+			if !reused {
+				e.pool.Free(e.deviceID, devOut, byteSize)
+			}
 			return nil, err
+		}
+		if reused {
+			return finishReusedDst[T](dst[0], outShape), nil
 		}
 		return makeGPUResult[T](e, outShape, devOut, total, dst...)
 	}
@@ -175,10 +185,15 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	}
 
 	if err := e.kernels.TransposeND(devIn, devOut, inStrides32, outStrides32, perm32, rank, total, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devOut, byteSize)
+		if !reused {
+			e.pool.Free(e.deviceID, devOut, byteSize)
+		}
 		return nil, err
 	}
 
+	if reused {
+		return finishReusedDst[T](dst[0], outShape), nil
+	}
 	return makeGPUResult[T](e, outShape, devOut, total, dst...)
 }
 
