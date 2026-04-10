@@ -9,7 +9,7 @@
  *   kernel_gelu_bwd            GELU derivative * upstream gradient
  *   kernel_softmax_bwd         Softmax backward (Jacobian-vector product)
  *   kernel_bias_grad_reduce    Sum rows to compute bias gradients
- *   kernel_add_elementwise     Element-wise addition for residual gradients
+ *   kernel_enc_bwd_add_elementwise     Element-wise addition for residual gradients
  *   kernel_matmul_grad_accum   Accumulate weight gradient: dW += A^T @ B
  *
  * cuBLAS calls (~14 total per layer):
@@ -313,7 +313,7 @@ __global__ void kernel_bias_grad_reduce(
 /*  out[i] = a[i] + b[i]                                              */
 /* ------------------------------------------------------------------ */
 
-__global__ void kernel_add(
+__global__ void kernel_enc_bwd_add(
     const float* __restrict__ a,
     const float* __restrict__ b,
     float* __restrict__ out,
@@ -330,7 +330,7 @@ __global__ void kernel_add(
 /*  out[i] = a[i] + b[i] + c[i]                                       */
 /* ------------------------------------------------------------------ */
 
-__global__ void kernel_add3(
+__global__ void kernel_enc_bwd_add3(
     const float* __restrict__ a,
     const float* __restrict__ b,
     const float* __restrict__ c,
@@ -558,7 +558,7 @@ cudaError_t fused_encoder_bwd_f32(
         dXRes1, dg_norm2W, dg_norm2B, dModel);
 
     /* Add residual skip: dXRes1 += dOutput */
-    kernel_add<<<elemGridTrDm, block256, 0, stream>>>(
+    kernel_enc_bwd_add<<<elemGridTrDm, block256, 0, stream>>>(
         dXRes1, dOutput, dXRes1, trDm);
 
     /* ------------------------------------------------------------ */
@@ -722,7 +722,7 @@ cudaError_t fused_encoder_bwd_f32(
         temp, dg_norm1W, dg_norm1B, dModel);
 
     /* dInput = temp + dXRes1 */
-    kernel_add<<<elemGridTrDm, block256, 0, stream>>>(
+    kernel_enc_bwd_add<<<elemGridTrDm, block256, 0, stream>>>(
         temp, dXRes1, dInput, trDm);
 
     return cudaGetLastError();
