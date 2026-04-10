@@ -311,5 +311,26 @@ func (k *CUDAKernels) FusedSoftmaxVMulF32(scores, V, output unsafe.Pointer, scal
 	return kernels.FusedSoftmaxVMulF32(scores, V, output, scale, BH, seqKV, D, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedEncoderFwdF32(cublasHandle unsafe.Pointer, weights, bufs *[16]unsafe.Pointer, input, output unsafe.Pointer, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int, s Stream) error {
+	return kernels.FusedEncoderFwdF32(cublasHandle, (*[kernels.FEW_COUNT]unsafe.Pointer)(weights), (*[kernels.FEB_COUNT]unsafe.Pointer)(bufs), input, output, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedEncoderBwdF32(cublasHandle unsafe.Pointer, weights, weightT *[16]unsafe.Pointer, fwdBufs *[16]unsafe.Pointer, bwdBufs *[15]unsafe.Pointer, grads *[16]unsafe.Pointer, dOutput, dInput, input unsafe.Pointer, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int, s Stream) error {
+	// Use unsafe.Pointer intermediary for array size conversions (interface uses
+	// fixed sizes; C kernel reads only the elements it needs per enum count).
+	return kernels.FusedEncoderBwdF32(cublasHandle,
+		(*[kernels.FEW_COUNT]unsafe.Pointer)(unsafe.Pointer(weights)),
+		(*[kernels.FEWT_COUNT]unsafe.Pointer)(unsafe.Pointer(weightT)),
+		(*[kernels.FEB_COUNT]unsafe.Pointer)(unsafe.Pointer(fwdBufs)),
+		(*[kernels.FEBB_COUNT]unsafe.Pointer)(unsafe.Pointer(bwdBufs)),
+		(*[kernels.FEG_COUNT]unsafe.Pointer)(unsafe.Pointer(grads)),
+		dOutput, dInput, input,
+		totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedEncoderFwdAvailable() bool {
+	return kernels.FusedEncoderAvailable()
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

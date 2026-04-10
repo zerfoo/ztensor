@@ -317,6 +317,18 @@ func (k *MetalKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _,
 	return fmt.Errorf("FusedSoftmaxVMulF32: not yet implemented for Metal")
 }
 
+func (k *MetalKernels) FusedEncoderFwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderFwdF32: not implemented for Metal")
+}
+
+func (k *MetalKernels) FusedEncoderBwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _ *[16]unsafe.Pointer, _ *[15]unsafe.Pointer, _ *[16]unsafe.Pointer, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderBwdF32: not implemented for Metal")
+}
+
+func (k *MetalKernels) FusedEncoderFwdAvailable() bool {
+	return false
+}
+
 // --- Gather ---
 
 func (k *MetalKernels) Gather(table, indices, output unsafe.Pointer, N, D, _ int, _ Stream) error {

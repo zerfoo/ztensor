@@ -107,6 +107,10 @@ type Handle struct {
 	ptr uintptr // cublasHandle_t is a pointer
 }
 
+// Ptr returns the raw cuBLAS handle pointer for passing to C functions
+// (e.g., the fused encoder kernel orchestrator).
+func (h *Handle) Ptr() unsafe.Pointer { return unsafe.Pointer(h.ptr) }
+
 // CreateHandle creates a new cuBLAS context handle.
 func CreateHandle() (*Handle, error) {
 	lib, err := getCublasLib()

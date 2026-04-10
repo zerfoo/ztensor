@@ -209,6 +209,18 @@ func (k *SYCLKernels) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ floa
 	return fmt.Errorf("FusedQKNormRoPEF32: not implemented for SYCL")
 }
 
+func (k *SYCLKernels) FusedEncoderFwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderFwdF32: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) FusedEncoderBwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _ *[16]unsafe.Pointer, _ *[15]unsafe.Pointer, _ *[16]unsafe.Pointer, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderBwdF32: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) FusedEncoderFwdAvailable() bool {
+	return false
+}
+
 func (k *SYCLKernels) ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
 	if !sycl.ScaledSoftmaxF32Available() {
 		return fmt.Errorf("ScaledSoftmaxF32: SYCL kernel not available")
