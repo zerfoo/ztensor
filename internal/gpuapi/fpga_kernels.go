@@ -207,6 +207,18 @@ func (k *FPGAKernels) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ floa
 	return fmt.Errorf("FusedQKNormRoPEF32: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) FusedEncoderFwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderFwdF32: not implemented for FPGA")
+}
+
+func (k *FPGAKernels) FusedEncoderBwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _ *[16]unsafe.Pointer, _ *[15]unsafe.Pointer, _ *[16]unsafe.Pointer, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedEncoderBwdF32: not implemented for FPGA")
+}
+
+func (k *FPGAKernels) FusedEncoderFwdAvailable() bool {
+	return false
+}
+
 func (k *FPGAKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for FPGA")
 }

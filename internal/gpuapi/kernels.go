@@ -211,4 +211,19 @@ type KernelRunner interface {
 	// Decode-optimized (seqQ=1): avoids materializing the attention weights tensor.
 	// scores: [BH, seqKV], V: [BH, seqKV, D], output: [BH, D].
 	FusedSoftmaxVMulF32(scores, V, output unsafe.Pointer, scale float32, BH, seqKV, D int, stream Stream) error
+
+	// FusedEncoderFwdF32 executes one PatchTST encoder layer forward pass.
+	// Replaces ~78 discrete engine operations with a single orchestrated call.
+	// cublasHandle: raw cuBLAS handle; weights: 16 weight pointers;
+	// bufs: 16 cache buffer pointers; input/output: [totalRows, dModel].
+	FusedEncoderFwdF32(cublasHandle unsafe.Pointer, weights, bufs *[16]unsafe.Pointer, input, output unsafe.Pointer, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int, stream Stream) error
+
+	// FusedEncoderBwdF32 computes all gradients for one encoder layer backward.
+	// weights: 16 weight pointers; weightT: 6 transposed weight pointers;
+	// fwdBufs: 16 forward cache pointers; bwdBufs: 15 scratch pointers;
+	// grads: 16 gradient accumulator pointers.
+	FusedEncoderBwdF32(cublasHandle unsafe.Pointer, weights, weightT *[16]unsafe.Pointer, fwdBufs *[16]unsafe.Pointer, bwdBufs *[15]unsafe.Pointer, grads *[16]unsafe.Pointer, dOutput, dInput, input unsafe.Pointer, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int, stream Stream) error
+
+	// FusedEncoderFwdAvailable returns true if the fused encoder kernel is loaded.
+	FusedEncoderFwdAvailable() bool
 }

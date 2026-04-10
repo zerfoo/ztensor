@@ -180,6 +180,11 @@ type KernelLib struct {
 	launchIQDequantNLF32  uintptr
 	launchIQDequant3SF32  uintptr
 	launchIQDequant2XXSF32 uintptr
+
+	// fused_encoder (PatchTST encoder layer orchestrator)
+	launchFusedEncoderFwdF32        uintptr
+	launchFusedEncoderFwdScratch    uintptr
+	launchFusedEncoderBwdF32        uintptr
 }
 
 var (
@@ -349,6 +354,10 @@ func openKernelLib() (*KernelLib, error) {
 		{"iq_dequant_nl_f32", &k.launchIQDequantNLF32},
 		{"iq_dequant_3s_f32", &k.launchIQDequant3SF32},
 		{"iq_dequant_2xxs_f32", &k.launchIQDequant2XXSF32},
+		// fused_encoder (PatchTST encoder layer orchestrator)
+		{"fused_encoder_fwd_f32", &k.launchFusedEncoderFwdF32},
+		{"fused_encoder_fwd_scratch_bytes", &k.launchFusedEncoderFwdScratch},
+		{"fused_encoder_bwd_f32", &k.launchFusedEncoderBwdF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -394,6 +403,9 @@ func openKernelLib() (*KernelLib, error) {
 			"iq_dequant_nl_f32":               true,
 			"iq_dequant_3s_f32":               true,
 			"iq_dequant_2xxs_f32":             true,
+			"fused_encoder_fwd_f32":           true,
+			"fused_encoder_fwd_scratch_bytes": true,
+			"fused_encoder_bwd_f32":           true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)

@@ -225,6 +225,15 @@ func (stubKernelRunner) FusedNormAddF32(_, _, _, _ unsafe.Pointer, _ float32, _,
 func (stubKernelRunner) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedEncoderFwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) FusedEncoderBwdF32(_ unsafe.Pointer, _, _ *[16]unsafe.Pointer, _ *[16]unsafe.Pointer, _ *[15]unsafe.Pointer, _ *[16]unsafe.Pointer, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) FusedEncoderFwdAvailable() bool {
+	return false
+}
 func (stubKernelRunner) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
 	return nil
 }
