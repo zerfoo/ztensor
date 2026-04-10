@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0](https://github.com/zerfoo/ztensor/compare/v1.4.0...v1.5.0) (2026-04-10)
+
+
+### Features
+
+* **compute:** add AllocDeviceFloat32 and CopyToDevice to FusedEncoderProvider ([8d6c90b](https://github.com/zerfoo/ztensor/commit/8d6c90bbc11342f9ccf021df25c6ee305c90e463))
+* **compute:** add fused PatchTST encoder layer CUDA kernels ([4dfd46e](https://github.com/zerfoo/ztensor/commit/4dfd46e6a45b67c7de453cd30c25ec3716560112))
+
+
+### Bug Fixes
+
+* **compute:** GPUEngine.Reshape honors dst argument ([18a53fe](https://github.com/zerfoo/ztensor/commit/18a53fe45a63b388d52a86bdb32cbaf618f48a5c))
+* **compute:** reuse dst GPU memory instead of allocating per call ([#84](https://github.com/zerfoo/ztensor/issues/84)) ([26bbd49](https://github.com/zerfoo/ztensor/commit/26bbd49de27be8811fa9e5e1176c5f1bbd6ea5eb))
+* **kernels:** rename kernel_add in fused_encoder_bwd to avoid symbol clash ([716bbd6](https://github.com/zerfoo/ztensor/commit/716bbd6103eb9f96dc8eaeaba01b23d387ca4aed))
+
 ## [1.4.0](https://github.com/zerfoo/ztensor/compare/v1.3.0...v1.4.0) (2026-04-06)
 
 
