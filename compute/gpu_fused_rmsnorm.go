@@ -40,7 +40,6 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 		return FusedRMSNorm(input, weight, epsilon)
 	}
 	defer cleanupIn()
-	fusedRMSNormProbe("entry:devIn", e.runtime, e.stream, devIn, total*f32Size)
 
 	// Get weight device pointer. Weight may be Float16Storage (from FP16
 	// weight upload), GPUStorage[float32], or CPU-resident.
@@ -76,14 +75,12 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 		}
 	}
 	defer cleanupWeight()
-	fusedRMSNormProbe("after:weightToGPU", e.runtime, e.stream, devWeight, weight.Size()*f32Size)
 
 	outByteSize := total * f32Size
 	devOut, err := e.pool.Alloc(e.deviceID, outByteSize)
 	if err != nil {
 		return FusedRMSNorm(input, weight, epsilon)
 	}
-	fusedRMSNormProbe("after:allocDevOut", e.runtime, e.stream, devOut, outByteSize)
 
 	scalesByteSize := rows * f32Size
 	devScales, err := e.pool.Alloc(e.deviceID, scalesByteSize)
@@ -91,14 +88,12 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 		e.pool.Free(e.deviceID, devOut, outByteSize)
 		return FusedRMSNorm(input, weight, epsilon)
 	}
-	fusedRMSNormProbe("after:allocDevScales", e.runtime, e.stream, devScales, scalesByteSize)
 
 	if err := e.kernels.RMSNorm(devIn, devWeight, devOut, devScales, epsilon, rows, D, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devOut, outByteSize)
 		e.pool.Free(e.deviceID, devScales, scalesByteSize)
 		return nil, nil, err
 	}
-	fusedRMSNormProbe("after:kernelRMSNorm", e.runtime, e.stream, devOut, outByteSize)
 
 	outTensor, err := makeGPUResult[float32](f32Engine, shape, devOut, total)
 	if err != nil {
