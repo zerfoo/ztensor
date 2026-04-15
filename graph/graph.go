@@ -263,7 +263,14 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 				refCount[dep] = rc
 				if rc == 0 {
 					if t := g.memo[dep]; t != nil {
-						g.pool.Release(t)
+						// Pass-through nodes return their input verbatim;
+						// releasing now would zero GPU storage that the
+						// current node's output still points at. The tensor
+						// will be released when the aliasing memo entry's
+						// refcount expires instead.
+						if t != output {
+							g.pool.Release(t)
+						}
 						delete(g.memo, dep)
 					}
 				}
