@@ -394,6 +394,41 @@ func StreamEndCapture(s *Stream) (*Graph, error) {
 	return &Graph{handle: graphHandle}, nil
 }
 
+// CaptureStatus reports whether a stream is currently capturing.
+// Values mirror CUDA's cudaStreamCaptureStatus enum.
+type CaptureStatus int
+
+const (
+	// CaptureStatusNone indicates the stream is not capturing (cudaStreamCaptureStatusNone).
+	CaptureStatusNone CaptureStatus = 0
+	// CaptureStatusActive indicates the stream is actively capturing (cudaStreamCaptureStatusActive).
+	CaptureStatusActive CaptureStatus = 1
+	// CaptureStatusInvalidated indicates the stream was capturing but an error
+	// invalidated the capture (cudaStreamCaptureStatusInvalidated).
+	CaptureStatusInvalidated CaptureStatus = 2
+)
+
+// StreamCaptureStatus queries the capture status of a stream.
+// Wraps cudaStreamGetCaptureInfo. Returns CaptureStatusNone without error
+// when the CUDA runtime is unavailable (CPU-only builds) — a non-CUDA
+// runtime is never capturing.
+func StreamCaptureStatus(s *Stream) (CaptureStatus, error) {
+	l := lib()
+	if l == nil || l.cudaStreamGetCaptureInfo == 0 {
+		return CaptureStatusNone, nil
+	}
+	var status uint32
+	var id uint64
+	ret := ccall(l.cudaStreamGetCaptureInfo,
+		s.handle,
+		uintptr(unsafe.Pointer(&status)),
+		uintptr(unsafe.Pointer(&id)))
+	if ret != cudaSuccess {
+		return CaptureStatusNone, fmt.Errorf("cudaStreamGetCaptureInfo failed: %s", cudaErrorString(ret))
+	}
+	return CaptureStatus(status), nil
+}
+
 // GraphInstantiate creates an executable graph from a captured graph.
 // The executable graph can be launched repeatedly without re-capturing.
 func GraphInstantiate(g *Graph) (*GraphExec, error) {
