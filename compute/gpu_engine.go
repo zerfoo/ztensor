@@ -578,6 +578,16 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 // without requiring real CUDA hardware.
 var captureStatusFn = cuda.StreamCaptureStatus
 
+// streamBeginCaptureFn and streamEndCaptureFn are indirection points for
+// cuda.StreamBeginCapture and cuda.StreamEndCapture. Tests swap them to
+// exercise WithCapture without real CUDA hardware.
+var (
+	streamBeginCaptureFn = cuda.StreamBeginCapture
+	streamEndCaptureFn   = cuda.StreamEndCapture
+	graphInstantiateFn   = cuda.GraphInstantiate
+	graphDestroyFn       = cuda.GraphDestroy
+)
+
 // ensureNotCapturing returns ErrCaptureIncompatibleAllocation if the
 // engine's stream is currently capturing a CUDA graph. On CPU-only
 // runtimes or when the stream handle is nil, returns nil (no capture
@@ -657,7 +667,7 @@ func (e *GPUEngine[T]) BeginCapture() error {
 		cap.SetCaptureStream(e.Stream())
 	}
 	s := cuda.StreamFromPtr(e.Stream())
-	if err := cuda.StreamBeginCapture(s); err != nil {
+	if err := streamBeginCaptureFn(s); err != nil {
 		// Roll back capture-aware mode on failure.
 		if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok {
 			cap.ClearCaptureStream()
@@ -676,18 +686,42 @@ func (e *GPUEngine[T]) EndCapture() (GraphHandle, error) {
 		defer cap.ClearCaptureStream()
 	}
 	s := cuda.StreamFromPtr(e.Stream())
-	graph, err := cuda.StreamEndCapture(s)
+	graph, err := streamEndCaptureFn(s)
 	if err != nil {
 		return GraphHandle{}, err
 	}
-	exec, err := cuda.GraphInstantiate(graph)
+	exec, err := graphInstantiateFn(graph)
 	if err != nil {
-		cuda.GraphDestroy(graph)
+		_ = graphDestroyFn(graph)
 		return GraphHandle{}, err
 	}
 	// The Graph object is no longer needed after instantiation.
-	cuda.GraphDestroy(graph)
+	_ = graphDestroyFn(graph)
 	return GraphHandle{ptr: exec}, nil
+}
+
+// WithCapture runs fn inside a CUDA graph capture region. It calls
+// BeginCapture before fn and EndCapture after fn returns. If BeginCapture
+// fails, fn is not called and a zero GraphHandle is returned. If fn returns
+// an error, EndCapture is still called and the fn error takes precedence.
+// The CaptureAwareAllocator is active for the duration of fn.
+func (e *GPUEngine[T]) WithCapture(fn func() error) (GraphHandle, error) {
+	if err := e.BeginCapture(); err != nil {
+		return GraphHandle{}, fmt.Errorf("WithCapture begin: %w", err)
+	}
+	fnErr := fn()
+	handle, endErr := e.EndCapture()
+	if fnErr != nil {
+		// fn error takes precedence; destroy the graph if EndCapture succeeded.
+		if endErr == nil {
+			_ = e.DestroyGraph(handle)
+		}
+		return GraphHandle{}, fnErr
+	}
+	if endErr != nil {
+		return GraphHandle{}, fmt.Errorf("WithCapture end: %w", endErr)
+	}
+	return handle, nil
 }
 
 // ReplayGraph executes a previously captured graph on the engine's stream.
