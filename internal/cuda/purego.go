@@ -13,25 +13,25 @@ type CUDALib struct {
 	handle uintptr // dlopen handle for libcudart
 
 	// CUDA runtime function pointers
-	cudaMalloc             uintptr
-	cudaFree               uintptr
-	cudaMemcpy             uintptr
-	cudaMemcpyAsync        uintptr
-	cudaMallocManaged      uintptr
-	cudaStreamCreate       uintptr
-	cudaStreamSynchronize  uintptr
-	cudaStreamDestroy      uintptr
-	cudaGetDeviceCount     uintptr
-	cudaSetDevice          uintptr
-	cudaGetErrorString     uintptr
-	cudaGetDeviceProperties  uintptr
+	cudaMalloc              uintptr
+	cudaFree                uintptr
+	cudaMemcpy              uintptr
+	cudaMemcpyAsync         uintptr
+	cudaMallocManaged       uintptr
+	cudaStreamCreate        uintptr
+	cudaStreamSynchronize   uintptr
+	cudaStreamDestroy       uintptr
+	cudaGetDeviceCount      uintptr
+	cudaSetDevice           uintptr
+	cudaGetErrorString      uintptr
+	cudaGetDeviceProperties uintptr
 	cudaMemcpyPeer          uintptr
 	cudaDeviceGetAttribute  uintptr
 
 	// Async alloc/free (optional, available since CUDA 11.2)
-	cudaMallocAsync  uintptr
-	cudaFreeAsync    uintptr
-	cudaMemsetAsync  uintptr
+	cudaMallocAsync uintptr
+	cudaFreeAsync   uintptr
+	cudaMemsetAsync uintptr
 
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
 	cudaStreamBeginCapture   uintptr
@@ -179,12 +179,12 @@ const (
 // We also check common CUDA installation directories and the ztensor module
 // source tree for development builds.
 var kernelLibPaths = []string{
-	"libkernels.so",                                          // LD_LIBRARY_PATH + system default
-	"./libkernels.so",                                        // current working directory
-	"./internal/cuda/kernels/libkernels.so",                  // ztensor source tree (dev)
-	"/usr/local/lib/libkernels.so",                           // standard local install
-	"/usr/local/cuda/lib64/libkernels.so",                    // CUDA install directory
-	"/opt/zerfoo/lib/libkernels.so",                          // packaged install
+	"libkernels.so",                         // LD_LIBRARY_PATH + system default
+	"./libkernels.so",                       // current working directory
+	"./internal/cuda/kernels/libkernels.so", // ztensor source tree (dev)
+	"/usr/local/lib/libkernels.so",          // standard local install
+	"/usr/local/cuda/lib64/libkernels.so",   // CUDA install directory
+	"/opt/zerfoo/lib/libkernels.so",         // packaged install
 }
 
 // DlopenKernels loads the custom kernels shared library (libkernels.so)

@@ -231,16 +231,16 @@ All estimates are rough; refine when a task starts.
 - [x] T1.2 Add `ensureNotCapturing()` guard to `allocWeight` and `uploadBytes` in `compute/gpu_engine.go`. If status is `Active`, return a typed error `ErrCaptureIncompatibleAllocation`. Owner: task-T1.2. Est: 60m. verifies: [UC-003] Completed: 2026-04-15
   - Acceptance: Existing non-capture tests unaffected. New unit test with a mock stream in `Active` state triggers the error.
   - Dependencies: T1.1.
-- [ ] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10` in `compute/gpu_engine_test.go` gated behind `//go:build dgxgb10` build tag. The test uploads 50 tensors (including a 256x1024 float32 matrix), then invokes `BeginCapture`, runs a MatMul, `EndCapture`. Owner: TBD. Est: 2h. verifies: [UC-001, UC-002]
+- [x] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10` in `compute/gpu_engine_gb10_test.go` gated behind `//go:build dgxgb10` build tag. The test uploads 50 tensors (including a 256x1024 float32 matrix), then invokes `BeginCapture`, runs a MatMul, `EndCapture`. Owner: task-T1.3. Est: 2h. verifies: [UC-001, UC-002] Completed: 2026-04-15
   - Acceptance: Without the fix the test fails with either a hang (caught by a 30s `context.WithTimeout`) or the new typed error.
   - Dependencies: T1.2.
 - [ ] T1.4 Package the test into a Spark manifest `docs/bench/manifests/cuda-graph-gb10-repro.yaml` and submit. Collect logs for evidence. Owner: TBD. Est: 90m. verifies: [UC-002]
   - Acceptance: Manifest submitted via `curl -X POST $SPARK/api/v1/pods ...`; log output includes the hang signature or the new typed error. File one zerfoo-side GitHub issue if a new failure mode surfaces.
   - Dependencies: T1.3.
-- [ ] T1.5 Add unit and integration tests covering T1.1 to T1.3 code paths. Owner: TBD. Est: 60m. verifies: [infrastructure]
+- [x] T1.5 Add unit and integration tests covering T1.1 to T1.3 code paths. Owner: task-T1.5. Est: 60m. verifies: [infrastructure] Completed: 2026-04-15
   - Acceptance: CPU-mock unit tests pass in `go test ./compute/... ./internal/cuda/...`.
   - Dependencies: T1.1, T1.2.
-- [ ] T1.6 Run `gofmt -s -w`, `goimports`, and `golangci-lint run ./...` after the E1 changes. Owner: TBD. Est: 15m. verifies: [infrastructure]
+- [x] T1.6 Run `gofmt -s -w`, `goimports`, and `golangci-lint run ./...` after the E1 changes. Owner: coordinator. Est: 15m. verifies: [infrastructure] Completed: 2026-04-15
   - Dependencies: T1.5.
 
 ### E2 Fix the silent hang path (capture-aware allocation)
@@ -339,9 +339,9 @@ count equals the number of task IDs listed on that wave.
 
 #### Wave 2: Reproduction harness (3 agents)
 
-- [ ] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10`  verifies: [UC-001, UC-002]
-- [ ] T1.5 Unit and integration tests for E1  verifies: [infrastructure]
-- [ ] T1.6 Lint and format E1  verifies: [infrastructure]
+- [x] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10`  verifies: [UC-001, UC-002]  2026-04-15
+- [x] T1.5 Unit and integration tests for E1  verifies: [infrastructure]  2026-04-15
+- [x] T1.6 Lint and format E1  verifies: [infrastructure]  2026-04-15
 
 #### Wave 3: Repro on hardware (1 agent)
 

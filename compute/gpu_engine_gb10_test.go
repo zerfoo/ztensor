@@ -182,4 +182,3 @@ func buildGB10StressTensors(t *testing.T) []*tensor.TensorNumeric[float32] {
 	}
 	return out
 }
-
