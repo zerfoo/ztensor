@@ -16,18 +16,18 @@ type fakeCapturePool struct {
 	capturing bool
 }
 
-func (p *fakeCapturePool) Alloc(int, int) (unsafe.Pointer, error)          { return nil, nil }
-func (p *fakeCapturePool) Free(int, unsafe.Pointer, int)                   {}
-func (p *fakeCapturePool) AllocManaged(int, int) (unsafe.Pointer, error)   { return nil, nil }
-func (p *fakeCapturePool) FreeManaged(int, unsafe.Pointer, int)            {}
-func (p *fakeCapturePool) Drain() error                                    { return nil }
-func (p *fakeCapturePool) Stats() (int, int)                               { return 0, 0 }
-func (p *fakeCapturePool) SetCaptureStream(_ unsafe.Pointer)               { p.capturing = true }
-func (p *fakeCapturePool) ClearCaptureStream()                             { p.capturing = false }
-func (p *fakeCapturePool) IsCapturing() bool                               { return p.capturing }
+func (p *fakeCapturePool) Alloc(int, int) (unsafe.Pointer, error)        { return nil, nil }
+func (p *fakeCapturePool) Free(int, unsafe.Pointer, int)                 {}
+func (p *fakeCapturePool) AllocManaged(int, int) (unsafe.Pointer, error) { return nil, nil }
+func (p *fakeCapturePool) FreeManaged(int, unsafe.Pointer, int)          {}
+func (p *fakeCapturePool) Drain() error                                  { return nil }
+func (p *fakeCapturePool) Stats() (int, int)                             { return 0, 0 }
+func (p *fakeCapturePool) SetCaptureStream(_ unsafe.Pointer)             { p.capturing = true }
+func (p *fakeCapturePool) ClearCaptureStream()                           { p.capturing = false }
+func (p *fakeCapturePool) IsCapturing() bool                             { return p.capturing }
 
 var (
-	_ gpuapi.MemPool              = (*fakeCapturePool)(nil)
+	_ gpuapi.MemPool               = (*fakeCapturePool)(nil)
 	_ gpuapi.CaptureAwareAllocator = (*fakeCapturePool)(nil)
 )
 
@@ -35,12 +35,12 @@ var (
 
 type fakeBasicPool struct{}
 
-func (p *fakeBasicPool) Alloc(int, int) (unsafe.Pointer, error)          { return nil, nil }
-func (p *fakeBasicPool) Free(int, unsafe.Pointer, int)                   {}
-func (p *fakeBasicPool) AllocManaged(int, int) (unsafe.Pointer, error)   { return nil, nil }
-func (p *fakeBasicPool) FreeManaged(int, unsafe.Pointer, int)            {}
-func (p *fakeBasicPool) Drain() error                                    { return nil }
-func (p *fakeBasicPool) Stats() (int, int)                               { return 0, 0 }
+func (p *fakeBasicPool) Alloc(int, int) (unsafe.Pointer, error)        { return nil, nil }
+func (p *fakeBasicPool) Free(int, unsafe.Pointer, int)                 {}
+func (p *fakeBasicPool) AllocManaged(int, int) (unsafe.Pointer, error) { return nil, nil }
+func (p *fakeBasicPool) FreeManaged(int, unsafe.Pointer, int)          {}
+func (p *fakeBasicPool) Drain() error                                  { return nil }
+func (p *fakeBasicPool) Stats() (int, int)                             { return 0, 0 }
 
 var _ gpuapi.MemPool = (*fakeBasicPool)(nil)
 
