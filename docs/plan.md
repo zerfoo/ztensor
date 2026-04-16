@@ -225,10 +225,10 @@ All estimates are rough; refine when a task starts.
 
 ### E1 Reproduce and instrument the hang
 
-- [ ] T1.1 Add `StreamCaptureStatus` purego binding in `internal/cuda/runtime_purego.go` (wraps `cudaStreamGetCaptureInfo`). Owner: TBD. Est: 90m. verifies: [UC-003]
+- [x] T1.1 Add `StreamCaptureStatus` purego binding in `internal/cuda/runtime_purego.go` (wraps `cudaStreamGetCaptureInfo`). Owner: task-T1.1. Est: 90m. verifies: [UC-003] Completed: 2026-04-15
   - Acceptance: Returns the three-valued enum, exported via `cuda.StreamCaptureStatus(stream *Stream) (Status, error)`. Unit test on a non-capturing stream returns `None`.
   - Dependencies: none.
-- [ ] T1.2 Add `ensureNotCapturing()` guard to `allocWeight` and `uploadBytes` in `compute/gpu_engine.go`. If status is `Active`, return a typed error `ErrCaptureIncompatibleAllocation`. Owner: TBD. Est: 60m. verifies: [UC-003]
+- [x] T1.2 Add `ensureNotCapturing()` guard to `allocWeight` and `uploadBytes` in `compute/gpu_engine.go`. If status is `Active`, return a typed error `ErrCaptureIncompatibleAllocation`. Owner: task-T1.2. Est: 60m. verifies: [UC-003] Completed: 2026-04-15
   - Acceptance: Existing non-capture tests unaffected. New unit test with a mock stream in `Active` state triggers the error.
   - Dependencies: T1.1.
 - [ ] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10` in `compute/gpu_engine_test.go` gated behind `//go:build dgxgb10` build tag. The test uploads 50 tensors (including a 256x1024 float32 matrix), then invokes `BeginCapture`, runs a MatMul, `EndCapture`. Owner: TBD. Est: 2h. verifies: [UC-001, UC-002]
@@ -334,8 +334,8 @@ count equals the number of task IDs listed on that wave.
 
 #### Wave 1: Repro and probe (2 agents)
 
-- [ ] T1.1 Add `StreamCaptureStatus` purego binding  verifies: [UC-003]
-- [ ] T1.2 Add `ensureNotCapturing` guard and typed error  verifies: [UC-003]
+- [x] T1.1 Add `StreamCaptureStatus` purego binding  verifies: [UC-003]  2026-04-15
+- [x] T1.2 Add `ensureNotCapturing` guard and typed error  verifies: [UC-003]  2026-04-15
 
 #### Wave 2: Reproduction harness (3 agents)
 
