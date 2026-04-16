@@ -256,10 +256,10 @@ All estimates are rough; refine when a task starts.
 - [ ] T2.1b zerfoo: switch `graph/cuda_graph.go:beginCapture` to use `WithCapture`. Owner: TBD. Est: 45m. verifies: [UC-002]
   - Acceptance: Existing zerfoo GGUF inference tests still pass; gemma4e and gemma3 parity suites unchanged.
   - Dependencies: T2.1a, ztensor version bump merged.
-- [ ] T2.2 Introduce a `managedMem` guard in `allocWeight` that routes to `cudaMallocAsync` on the capture stream when `CaptureAwareAllocator` is active. Otherwise fall back to `MallocManaged`. Owner: TBD. Est: 90m. verifies: [UC-002]
+- [x] T2.2 Introduce a `managedMem` guard in `allocWeight` that routes to `cudaMallocAsync` on the capture stream when `CaptureAwareAllocator` is active. Otherwise fall back to `MallocManaged`. Owner: task-T2.2. Est: 90m. verifies: [UC-002] Completed: 2026-04-16
   - Acceptance: Unit test with a mocked capture stream records an async-alloc node instead of a sync call.
   - Dependencies: T2.1a.
-- [ ] T2.3 Pre-allocate workspace buffers used by `MatMul`, `Add`, and `RMSNorm` variants at `UploadWeights` time so no lazy alloc occurs inside capture for dense float32 workloads. Owner: TBD. Est: 3h. verifies: [UC-001, UC-002]
+- [x] T2.3 Pre-allocate workspace buffers used by `MatMul`, `Add`, and `RMSNorm` variants at `UploadWeights` time so no lazy alloc occurs inside capture for dense float32 workloads. Owner: task-T2.3. Est: 3h. verifies: [UC-001, UC-002] Completed: 2026-04-16
   - Acceptance: Instrument with a counter; capture region records zero `allocWeight` calls for the CrossAsset workload.
   - Dependencies: T1.3, T2.1a.
 - [ ] T2.4 Add unit and integration tests for T2.1 to T2.3. Owner: TBD. Est: 90m. verifies: [infrastructure]
@@ -351,8 +351,8 @@ count equals the number of task IDs listed on that wave.
 #### Wave 4: Fix + fallback in parallel (4 agents)
 
 - [x] T2.1a ztensor `WithCapture` helper  verifies: [UC-002]  2026-04-16
-- [ ] T2.2 Capture-aware `allocWeight` routing  verifies: [UC-002]
-- [ ] T2.3 Pre-allocate forward-pass workspace  verifies: [UC-001, UC-002]
+- [x] T2.2 Capture-aware `allocWeight` routing  verifies: [UC-002]  2026-04-16
+- [x] T2.3 Pre-allocate forward-pass workspace  verifies: [UC-001, UC-002]  2026-04-16
 - [x] T4.1 Capture watchdog  verifies: [UC-005]  2026-04-16
 
 #### Wave 5: Tests, linters, zerfoo pickup (4 agents)
