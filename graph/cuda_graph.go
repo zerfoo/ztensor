@@ -2,9 +2,12 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cuda"
@@ -80,6 +83,101 @@ func isNonCapturable[T tensor.Numeric](plan *ExecutionPlan[T], i int) bool {
 		return true
 	}
 	return false
+}
+
+// Sentinel errors returned by the capture watchdog.
+var (
+	// ErrCaptureTimeout is returned when CUDA graph capture exceeds the watchdog deadline.
+	ErrCaptureTimeout = errors.New("cuda graph capture: watchdog timeout exceeded")
+	// ErrCaptureInvalidated is returned when StreamCaptureStatus reports Invalidated.
+	ErrCaptureInvalidated = errors.New("cuda graph capture: stream capture invalidated")
+)
+
+// defaultCaptureTimeout is the watchdog deadline for CUDA graph capture.
+const defaultCaptureTimeout = 30 * time.Second
+
+// captureWatchdog monitors a CUDA graph capture for stalls and invalidation.
+// It polls StreamCaptureStatus every second on the given stream. If the stream
+// reports CaptureStatusInvalidated, or if the total timeout elapses, the
+// watchdog sends an error on the returned channel and attempts to end the
+// capture via StreamEndCapture.
+//
+// When stream is nil (CPU-only builds), the watchdog is a no-op: cancel is a
+// no-op function and errCh is a closed channel that never sends.
+//
+// The caller must invoke cancel() when capture completes normally to stop the
+// watchdog goroutine and prevent resource leaks.
+func captureWatchdog(stream *cuda.Stream, timeout time.Duration) (cancel func(), errCh <-chan error) {
+	ch := make(chan error, 1)
+	if stream == nil {
+		close(ch)
+		return func() {}, ch
+	}
+
+	ctx, ctxCancel := context.WithTimeout(context.Background(), timeout)
+
+	var once sync.Once
+	cancelFn := func() {
+		once.Do(func() {
+			ctxCancel()
+		})
+	}
+
+	go func() {
+		defer close(ch)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				// Determine whether we timed out or were cancelled normally.
+				if ctx.Err() == context.DeadlineExceeded {
+					log.Printf("cuda graph watchdog: capture timeout (%v) exceeded, forcing end capture", timeout)
+					_, _ = cuda.StreamEndCapture(stream)
+					ch <- ErrCaptureTimeout
+				}
+				return
+
+			case <-ticker.C:
+				// Probe capture health with its own mini-deadline.
+				// If the probe itself blocks for >5s the stream is likely hung.
+				probeDone := make(chan struct{})
+				var status cuda.CaptureStatus
+				var probeErr error
+				go func() {
+					status, probeErr = cuda.StreamCaptureStatus(stream)
+					close(probeDone)
+				}()
+
+				select {
+				case <-probeDone:
+					// Probe returned normally.
+				case <-time.After(5 * time.Second):
+					log.Printf("cuda graph watchdog: StreamCaptureStatus probe stalled >5s, treating as hang")
+					_, _ = cuda.StreamEndCapture(stream)
+					ch <- ErrCaptureTimeout
+					return
+				case <-ctx.Done():
+					// Cancelled while waiting for probe; normal shutdown.
+					return
+				}
+
+				if probeErr != nil {
+					log.Printf("cuda graph watchdog: StreamCaptureStatus error: %v", probeErr)
+					continue
+				}
+				if status == cuda.CaptureStatusInvalidated {
+					log.Printf("cuda graph watchdog: capture invalidated, forcing end capture")
+					_, _ = cuda.StreamEndCapture(stream)
+					ch <- ErrCaptureInvalidated
+					return
+				}
+			}
+		}
+	}()
+
+	return cancelFn, ch
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
@@ -303,6 +401,11 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	}
 	log.Printf("CUDA GRAPH: capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
 
+	// Start watchdog to monitor capture health. The watchdog polls
+	// StreamCaptureStatus every second and force-ends capture if it
+	// detects invalidation or the 30-second deadline elapses.
+	watchdogCancel, watchdogErr := captureWatchdog(g.stream, defaultCaptureTimeout)
+
 	// Run capturable instructions — GPU operations are recorded.
 	var captureErr error
 	if debugGraphCapture {
@@ -320,6 +423,23 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		}
 	} else {
 		captureErr = g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+	}
+
+	// Stop the watchdog before ending capture. If the watchdog already
+	// fired, its error is available on watchdogErr.
+	watchdogCancel()
+
+	// Check whether the watchdog detected a problem. A non-blocking read
+	// from the error channel picks up timeout or invalidation errors.
+	select {
+	case wErr := <-watchdogErr:
+		if wErr != nil {
+			log.Printf("cuda graph: watchdog detected problem: %v", wErr)
+			if captureErr == nil {
+				captureErr = wErr
+			}
+		}
+	default:
 	}
 
 	// End capture.
