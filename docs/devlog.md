@@ -1,5 +1,36 @@
 # ztensor Development Log
 
+## 2026-04-16: T1.4 CUDA graph GB10 repro — capture PASSES on pre-upload workload
+
+**Type:** investigation
+**Tags:** cuda, capture, gb10, e1
+
+**Problem:** Needed hardware evidence for whether TestCUDAGraph_MultiTensorUpload_GB10
+(50 float32 tensors incl. 256x1024, then BeginCapture→MatMul→EndCapture) reproduces the
+silent hang on GB10.
+
+**Root cause:** The test uploads all weights BEFORE entering capture, which is the correct
+ordering. The hang in production (Wolf CrossAsset) occurs when `graph/cuda_graph.go` calls
+`cuda.StreamBeginCapture` without routing through `GPUEngine.BeginCapture` — causing lazy
+allocations to run DURING capture on the managed-memory path. The E1 repro test does not
+trigger this because `UploadWeights` completes before capture starts.
+
+**Fix:** N/A — this confirms E1 probes work and the hang requires E2's fix (capture-aware
+allocation routing in `graph/cuda_graph.go`). The `ensureNotCapturing` guard in `allocWeight`
+did NOT trip, confirming no allocations during capture for the tested flow.
+
+**Evidence:**
+- Pod: `ztensor-cuda-graph-gb10-20260416-084710`
+- Commit: `9bf9723` (ztensor main, post-E1)
+- DGX Spark GB10, CUDA 13.0.2, driver 580.142, golang:1.26-bookworm
+- Result: `PASS: TestCUDAGraph_MultiTensorUpload_GB10 (0.51s)`
+- Log line: `capture completed cleanly in phase=EndCapture; fix is in place`
+
+**Impact:** E2 (Wave 4) remains necessary to fix the production hang. The test will serve
+as a regression gate once E2 lands — it must continue to PASS.
+
+---
+
 ## 2026-04-09: Issue #79 not reproducible at ztensor primitive level
 
 **Type:** investigation

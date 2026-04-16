@@ -1,0 +1,61 @@
+# CUDA graph capture multi-tensor repro on GB10.
+#
+# Runs TestCUDAGraph_MultiTensorUpload_GB10 (build tag dgxgb10) from
+# compute/gpu_engine_gb10_test.go against the current ztensor main.
+#
+# Expected outcomes (pre-E2 fix):
+#   - Test hits 30s timeout and reports "hang detected" via t.Fatal, OR
+#   - ensureNotCapturing fires ErrCaptureIncompatibleAllocation.
+# Expected outcome (post-E2 fix):
+#   - Test passes: capture completes, graph is non-nil.
+#
+# Submit:
+#   RUN_ID=$(date +%Y%m%d-%H%M%S)
+#   sed "s/\${RUN_ID}/$RUN_ID/g" cuda-graph-gb10-repro.yaml | \
+#     curl -X POST http://192.168.86.250:8080/api/v1/pods \
+#       -H 'Content-Type: application/yaml' --data-binary @-
+#
+# Logs:
+#   curl http://192.168.86.250:8080/api/v1/pods/ztensor-cuda-graph-gb10-$RUN_ID/logs
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-cuda-graph-gb10-${RUN_ID}
+  labels:
+    app: ztensor-test
+    epic: e1
+    task: t1.4
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: docker.io/library/golang:1.26-bookworm
+      workingDir: /work
+      args:
+        - "bash"
+        - "/var/lib/zerfoo/bench-out/cuda-graph-gb10-repro.sh"
+        - "${RUN_ID}"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "8"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: bench-out
+          mountPath: /var/lib/zerfoo/bench-out
+          readOnly: true
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: bench-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate

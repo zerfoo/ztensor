@@ -234,8 +234,9 @@ All estimates are rough; refine when a task starts.
 - [x] T1.3 Write `TestCUDAGraph_MultiTensorUpload_GB10` in `compute/gpu_engine_gb10_test.go` gated behind `//go:build dgxgb10` build tag. The test uploads 50 tensors (including a 256x1024 float32 matrix), then invokes `BeginCapture`, runs a MatMul, `EndCapture`. Owner: task-T1.3. Est: 2h. verifies: [UC-001, UC-002] Completed: 2026-04-15
   - Acceptance: Without the fix the test fails with either a hang (caught by a 30s `context.WithTimeout`) or the new typed error.
   - Dependencies: T1.2.
-- [ ] T1.4 Package the test into a Spark manifest `docs/bench/manifests/cuda-graph-gb10-repro.yaml` and submit. Collect logs for evidence. Owner: TBD. Est: 90m. verifies: [UC-002]
+- [x] T1.4 Package the test into a Spark manifest `docs/bench/manifests/cuda-graph-gb10-repro.yaml` and submit. Collect logs for evidence. Owner: coordinator. Est: 90m. verifies: [UC-002] Completed: 2026-04-16
   - Acceptance: Manifest submitted via `curl -X POST $SPARK/api/v1/pods ...`; log output includes the hang signature or the new typed error. File one zerfoo-side GitHub issue if a new failure mode surfaces.
+  - Outcome: PASS — capture completed cleanly (0.51s). Pre-upload workload does not trigger hang. Pod `ztensor-cuda-graph-gb10-20260416-084710`, commit `9bf9723`.
   - Dependencies: T1.3.
 - [x] T1.5 Add unit and integration tests covering T1.1 to T1.3 code paths. Owner: task-T1.5. Est: 60m. verifies: [infrastructure] Completed: 2026-04-15
   - Acceptance: CPU-mock unit tests pass in `go test ./compute/... ./internal/cuda/...`.
@@ -345,7 +346,7 @@ count equals the number of task IDs listed on that wave.
 
 #### Wave 3: Repro on hardware (1 agent)
 
-- [ ] T1.4 Spark manifest and hardware run  verifies: [UC-002]
+- [x] T1.4 Spark manifest and hardware run  verifies: [UC-002]  2026-04-16
 
 #### Wave 4: Fix + fallback in parallel (4 agents)
 
