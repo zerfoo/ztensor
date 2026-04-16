@@ -87,6 +87,12 @@ type GPUEngine[T tensor.Numeric] struct {
 	// when cuBLAS receives very large matrices (e.g., 128256x4096 LM head).
 	// Default: DefaultMaxAllocBytes (4 GB).
 	maxAllocBytes int64
+
+	// captureAllocCount tracks allocWeight calls that occur during an active
+	// CUDA graph capture. A properly pre-allocated workload should see zero.
+	// Incremented atomically in allocWeight when capture is detected;
+	// checked and reset in EndCapture.
+	captureAllocCount atomic.Int64
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -570,6 +576,10 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			"device", fmt.Sprintf("%d", e.deviceID),
 			"method", method)
 	}
+	// Pre-allocate all workspace buffers that would otherwise be lazily
+	// initialized on first use. This ensures no cudaMalloc occurs inside
+	// a subsequent CUDA graph capture region.
+	e.preAllocateWorkspaces()
 	return nil
 }
 
@@ -638,6 +648,7 @@ func (e *GPUEngine[T]) allocWeight(byteSize int) (unsafe.Pointer, error) {
 		return mallocAsyncFn(byteSize, s)
 	}
 	if err := e.ensureNotCapturing(); err != nil {
+		e.captureAllocCount.Add(1)
 		return nil, err
 	}
 	if e.managedMem {
@@ -713,6 +724,10 @@ func (e *GPUEngine[T]) EndCapture() (GraphHandle, error) {
 	// Always clear capture-aware allocation when leaving the capture region.
 	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok {
 		defer cap.ClearCaptureStream()
+	}
+	if n := e.captureAllocCount.Swap(0); n > 0 {
+		e.logger.Warn("allocWeight called during capture",
+			"count", fmt.Sprintf("%d", n))
 	}
 	s := cuda.StreamFromPtr(e.Stream())
 	graph, err := streamEndCaptureFn(s)
@@ -817,6 +832,48 @@ func (e *GPUEngine[T]) Close() error {
 	}
 
 	return firstErr
+}
+
+// CaptureAllocCount returns the cumulative number of allocWeight calls that
+// were attempted while a CUDA graph capture was active. A properly
+// pre-allocated workload should observe zero after EndCapture.
+func (e *GPUEngine[T]) CaptureAllocCount() int64 {
+	return e.captureAllocCount.Load()
+}
+
+// preAllocateWorkspaces eagerly initializes all lazy-allocated workspace
+// buffers so that no cudaMalloc occurs inside a CUDA graph capture region.
+// Called at the end of UploadWeights, after all weight tensors are on GPU.
+//
+// For dense float32 workloads, pool.Alloc (arena-backed) is capture-safe via
+// CaptureAwareAllocator, but objects allocated outside the arena — the FP8
+// scratchpad and the cuBLASLt handle — use cudaMalloc and would hang if first
+// touched during capture on GB10.
+func (e *GPUEngine[T]) preAllocateWorkspaces() {
+	// 1. FP8 scratchpad: allocate scaleOne and the struct itself so that the
+	//    first FP8 MatMul during capture does not trigger cudaMalloc.
+	if e.fp8Scratch == nil {
+		if s, err := e.getFP8Scratch(); err != nil {
+			e.logger.Warn("preAllocateWorkspaces: FP8 scratchpad init failed",
+				"error", err.Error())
+		} else {
+			_ = s // assigned to e.fp8Scratch inside getFP8Scratch
+		}
+	}
+
+	// 2. cuBLASLt handle: cublasLtCreate allocates internal CUDA state.
+	if e.ltHandle == nil {
+		if h, err := e.getLtHandle(); err != nil {
+			e.logger.Warn("preAllocateWorkspaces: cuBLASLt handle init failed",
+				"error", err.Error())
+		} else {
+			_ = h // assigned to e.ltHandle inside getLtHandle
+		}
+	}
+
+	e.logger.Info("workspace buffers pre-allocated",
+		"fp8Scratch", fmt.Sprintf("%v", e.fp8Scratch != nil),
+		"ltHandle", fmt.Sprintf("%v", e.ltHandle != nil))
 }
 
 // OOMFallbackCount returns the number of times GPU OOM triggered CPU fallback.
