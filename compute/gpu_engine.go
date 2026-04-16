@@ -573,10 +573,38 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 	return nil
 }
 
+// ensureNotCapturing returns ErrCaptureIncompatibleAllocation if the
+// engine's stream is currently capturing a CUDA graph. On CPU-only
+// runtimes or when the stream handle is nil, returns nil (no capture
+// is possible). If querying capture status itself fails, returns
+// that error (do not assume safety on probe failure).
+func (e *GPUEngine[T]) ensureNotCapturing() error {
+	if e.stream == nil {
+		return nil
+	}
+	ptr := e.stream.Ptr()
+	if ptr == nil {
+		return nil
+	}
+	s := cuda.StreamFromPtr(ptr)
+	status, err := cuda.StreamCaptureStatus(s)
+	if err != nil {
+		return fmt.Errorf("ensureNotCapturing: %w", err)
+	}
+	if status == cuda.CaptureStatusActive {
+		return ErrCaptureIncompatibleAllocation
+	}
+	return nil
+}
+
 // allocWeight allocates permanent memory for a weight tensor.
 // Uses cudaMallocManaged on devices with managed memory support,
-// otherwise uses cudaMalloc.
+// otherwise uses cudaMalloc. Returns ErrCaptureIncompatibleAllocation
+// if invoked while a CUDA graph capture is active on the engine's stream.
 func (e *GPUEngine[T]) allocWeight(byteSize int) (unsafe.Pointer, error) {
+	if err := e.ensureNotCapturing(); err != nil {
+		return nil, err
+	}
 	if e.managedMem {
 		return cuda.MallocManaged(byteSize)
 	}
@@ -585,8 +613,13 @@ func (e *GPUEngine[T]) allocWeight(byteSize int) (unsafe.Pointer, error) {
 
 // uploadBytes copies src bytes into a device (or managed) pointer.
 // With managed memory, this is a direct CPU memcpy (no H2D needed).
-// Without managed memory, this uses cudaMemcpy H2D.
+// Without managed memory, this uses cudaMemcpy H2D. Returns
+// ErrCaptureIncompatibleAllocation if invoked while a CUDA graph capture
+// is active on the engine's stream.
 func (e *GPUEngine[T]) uploadBytes(devPtr unsafe.Pointer, src []byte) error {
+	if err := e.ensureNotCapturing(); err != nil {
+		return err
+	}
 	if e.managedMem {
 		dst := unsafe.Slice((*byte)(devPtr), len(src))
 		copy(dst, src)
