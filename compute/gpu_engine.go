@@ -573,6 +573,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 	return nil
 }
 
+// captureStatusFn is the indirection point for cuda.StreamCaptureStatus used
+// by ensureNotCapturing. Tests swap it to inject synthetic capture state
+// without requiring real CUDA hardware.
+var captureStatusFn = cuda.StreamCaptureStatus
+
 // ensureNotCapturing returns ErrCaptureIncompatibleAllocation if the
 // engine's stream is currently capturing a CUDA graph. On CPU-only
 // runtimes or when the stream handle is nil, returns nil (no capture
@@ -587,7 +592,7 @@ func (e *GPUEngine[T]) ensureNotCapturing() error {
 		return nil
 	}
 	s := cuda.StreamFromPtr(ptr)
-	status, err := cuda.StreamCaptureStatus(s)
+	status, err := captureStatusFn(s)
 	if err != nil {
 		return fmt.Errorf("ensureNotCapturing: %w", err)
 	}
