@@ -34,12 +34,13 @@ type CUDALib struct {
 	cudaMemsetAsync  uintptr
 
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
-	cudaStreamBeginCapture  uintptr
-	cudaStreamEndCapture    uintptr
-	cudaGraphInstantiate    uintptr
-	cudaGraphLaunch         uintptr
-	cudaGraphDestroy        uintptr
-	cudaGraphExecDestroy    uintptr
+	cudaStreamBeginCapture   uintptr
+	cudaStreamEndCapture     uintptr
+	cudaStreamGetCaptureInfo uintptr
+	cudaGraphInstantiate     uintptr
+	cudaGraphLaunch          uintptr
+	cudaGraphDestroy         uintptr
+	cudaGraphExecDestroy     uintptr
 }
 
 var (
@@ -116,6 +117,7 @@ func Open() (*CUDALib, error) {
 		// CUDA graph API (CUDA 10.0+)
 		{"cudaStreamBeginCapture", &lib.cudaStreamBeginCapture},
 		{"cudaStreamEndCapture", &lib.cudaStreamEndCapture},
+		{"cudaStreamGetCaptureInfo", &lib.cudaStreamGetCaptureInfo},
 		{"cudaGraphInstantiate", &lib.cudaGraphInstantiate},
 		{"cudaGraphLaunch", &lib.cudaGraphLaunch},
 		{"cudaGraphDestroy", &lib.cudaGraphDestroy},
