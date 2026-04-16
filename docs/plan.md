@@ -250,7 +250,7 @@ All estimates are rough; refine when a task starts.
   - Acceptance: Log line shows `CaptureAwareAllocator` is engaged before the capture region; existing gemma4e inference tests still pass.
   - Risk: zerfoo `graph/cuda_graph.go` is across a repo boundary. This task splits into ztensor-side (T2.1a) and zerfoo-side (T2.1b) commits in separate PRs, wired through a ztensor minor bump.
   - Dependencies: T1.4.
-- [ ] T2.1a ztensor: expose a stable `compute.GPUEngine.WithCapture(fn func() error) error` helper so callers do not need to unwrap pool types. Owner: TBD. Est: 60m. verifies: [UC-002]
+- [x] T2.1a ztensor: expose a stable `compute.GPUEngine.WithCapture(fn func() error) error` helper so callers do not need to unwrap pool types. Owner: task-T2.1a. Est: 60m. verifies: [UC-002] Completed: 2026-04-16
   - Acceptance: Helper unit-tested on CPU-mock engine; returns errors from either begin/end path.
   - Dependencies: T1.2.
 - [ ] T2.1b zerfoo: switch `graph/cuda_graph.go:beginCapture` to use `WithCapture`. Owner: TBD. Est: 45m. verifies: [UC-002]
@@ -284,7 +284,7 @@ All estimates are rough; refine when a task starts.
 
 ### E4 Fail-fast path for residual capture-incompatible workloads
 
-- [ ] T4.1 Wrap `graph/cuda_graph.go` capture run with a 30-second watchdog that samples `StreamCaptureStatus` every second. If capture is `Invalidated` or a heartbeat ping stalls, call `StreamEndCapture`, mark failed, and fall back. Owner: TBD. Est: 2h. verifies: [UC-005]
+- [x] T4.1 Wrap `graph/cuda_graph.go` capture run with a 30-second watchdog that samples `StreamCaptureStatus` every second. If capture is `Invalidated` or a heartbeat ping stalls, call `StreamEndCapture`, mark failed, and fall back. Owner: task-T4.1. Est: 2h. verifies: [UC-005] Completed: 2026-04-16
   - Dependencies: T1.1.
 - [ ] T4.2 Expose a helper `compute.CaptureSafe(engine, fn)` that tries capture, catches `ErrCaptureIncompatibleAllocation`, and runs the instructions uncaptured on the same stream. Owner: TBD. Est: 90m. verifies: [UC-005]
   - Dependencies: T1.2, T4.1.
@@ -350,10 +350,10 @@ count equals the number of task IDs listed on that wave.
 
 #### Wave 4: Fix + fallback in parallel (4 agents)
 
-- [ ] T2.1a ztensor `WithCapture` helper  verifies: [UC-002]
+- [x] T2.1a ztensor `WithCapture` helper  verifies: [UC-002]  2026-04-16
 - [ ] T2.2 Capture-aware `allocWeight` routing  verifies: [UC-002]
 - [ ] T2.3 Pre-allocate forward-pass workspace  verifies: [UC-001, UC-002]
-- [ ] T4.1 Capture watchdog  verifies: [UC-005]
+- [x] T4.1 Capture watchdog  verifies: [UC-005]  2026-04-16
 
 #### Wave 5: Tests, linters, zerfoo pickup (4 agents)
 
