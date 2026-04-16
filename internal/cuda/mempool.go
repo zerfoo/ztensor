@@ -65,6 +65,13 @@ func (p *MemPool) ClearCaptureStream() {
 	p.mu.Unlock()
 }
 
+// IsCapturing returns true when capture-aware allocation is active.
+func (p *MemPool) IsCapturing() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.captureStream != nil
+}
+
 // bucketSize rounds byteSize up to the next reuse bucket.
 // Sizes <= 256 are kept exact (these are typically small scalar or shape
 // metadata). Sizes > 256 are rounded up to the next power of two, enabling

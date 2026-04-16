@@ -36,4 +36,7 @@ type CaptureAwareAllocator interface {
 	SetCaptureStream(stream unsafe.Pointer)
 	// ClearCaptureStream disables capture-aware allocation.
 	ClearCaptureStream()
+	// IsCapturing returns true when capture-aware allocation is active
+	// (i.e., SetCaptureStream has been called and not yet cleared).
+	IsCapturing() bool
 }
