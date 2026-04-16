@@ -57,6 +57,11 @@ func (p *CUDAMemPool) ClearCaptureStream() {
 	p.inner.ClearCaptureStream()
 }
 
+// IsCapturing returns true when capture-aware allocation is active.
+func (p *CUDAMemPool) IsCapturing() bool {
+	return p.inner.IsCapturing()
+}
+
 // Inner returns the underlying cuda.MemPool for backward compatibility.
 func (p *CUDAMemPool) Inner() *cuda.MemPool {
 	return p.inner

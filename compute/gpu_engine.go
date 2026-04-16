@@ -588,6 +588,15 @@ var (
 	graphDestroyFn       = cuda.GraphDestroy
 )
 
+// mallocManagedFn, mallocAsyncFn, and memcpyAsyncFn are indirection points
+// for the CUDA allocation and copy functions used by allocWeight and uploadBytes.
+// Tests swap them to verify capture-aware routing without real CUDA hardware.
+var (
+	mallocManagedFn = cuda.MallocManaged
+	mallocAsyncFn   = cuda.MallocAsync
+	memcpyAsyncFn   = cuda.MemcpyAsync
+)
+
 // ensureNotCapturing returns ErrCaptureIncompatibleAllocation if the
 // engine's stream is currently capturing a CUDA graph. On CPU-only
 // runtimes or when the stream handle is nil, returns nil (no capture
@@ -614,24 +623,44 @@ func (e *GPUEngine[T]) ensureNotCapturing() error {
 
 // allocWeight allocates permanent memory for a weight tensor.
 // Uses cudaMallocManaged on devices with managed memory support,
-// otherwise uses cudaMalloc. Returns ErrCaptureIncompatibleAllocation
-// if invoked while a CUDA graph capture is active on the engine's stream.
+// otherwise uses cudaMalloc.
+//
+// When CaptureAwareAllocator is active (set by BeginCapture/WithCapture),
+// allocations route through cudaMallocAsync on the capture stream so they
+// are recorded as graph nodes. This avoids the silent hang caused by
+// cudaMallocManaged during CUDA graph capture on GB10.
+//
+// Returns ErrCaptureIncompatibleAllocation only if capture is active but
+// the allocator was NOT properly switched via BeginCapture/WithCapture.
 func (e *GPUEngine[T]) allocWeight(byteSize int) (unsafe.Pointer, error) {
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok && cap.IsCapturing() {
+		s := cuda.StreamFromPtr(e.Stream())
+		return mallocAsyncFn(byteSize, s)
+	}
 	if err := e.ensureNotCapturing(); err != nil {
 		return nil, err
 	}
 	if e.managedMem {
-		return cuda.MallocManaged(byteSize)
+		return mallocManagedFn(byteSize)
 	}
 	return e.runtime.Malloc(byteSize)
 }
 
 // uploadBytes copies src bytes into a device (or managed) pointer.
 // With managed memory, this is a direct CPU memcpy (no H2D needed).
-// Without managed memory, this uses cudaMemcpy H2D. Returns
-// ErrCaptureIncompatibleAllocation if invoked while a CUDA graph capture
-// is active on the engine's stream.
+// Without managed memory, this uses cudaMemcpy H2D.
+//
+// When CaptureAwareAllocator is active, uses cudaMemcpyAsync on the
+// capture stream so the copy is recorded as a graph node. The synchronous
+// CPU copy used by the managed-memory path is illegal during capture.
+//
+// Returns ErrCaptureIncompatibleAllocation only if capture is active but
+// the allocator was NOT properly switched via BeginCapture/WithCapture.
 func (e *GPUEngine[T]) uploadBytes(devPtr unsafe.Pointer, src []byte) error {
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok && cap.IsCapturing() {
+		s := cuda.StreamFromPtr(e.Stream())
+		return memcpyAsyncFn(devPtr, unsafe.Pointer(&src[0]), len(src), cuda.MemcpyHostToDevice, s)
+	}
 	if err := e.ensureNotCapturing(); err != nil {
 		return err
 	}
