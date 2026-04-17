@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.6.0](https://github.com/zerfoo/ztensor/compare/v1.5.0...v1.6.0) (2026-04-17)
+
+
+### Features
+
+* **compute:** T1.2 add ensureNotCapturing guard and ErrCaptureIncompatibleAllocation ([18e1f5a](https://github.com/zerfoo/ztensor/commit/18e1f5a0a7d5c8b5ae0de50071be5614002ada4a))
+* **compute:** T2.1a add WithCapture helper for capture-aware graph lifecycle ([d60c902](https://github.com/zerfoo/ztensor/commit/d60c90294fee387614d292317c1683a08ee52461))
+* **compute:** T2.2 capture-aware allocWeight routing via cudaMallocAsync ([2a723b7](https://github.com/zerfoo/ztensor/commit/2a723b7ac4684d1c28466924a2a4eb9029007ca0))
+* **compute:** T2.3 pre-allocate workspace buffers at UploadWeights to avoid capture-time alloc ([9f9eb5c](https://github.com/zerfoo/ztensor/commit/9f9eb5c9f7960ead4046e01e0fb54bb5f87f7888))
+* **cuda:** T1.1 add StreamCaptureStatus purego binding ([879cbc9](https://github.com/zerfoo/ztensor/commit/879cbc9151670b523bc3138e7bdff2058c73137f))
+* **graph:** add LMHead to nonCapturableOps ([07ba531](https://github.com/zerfoo/ztensor/commit/07ba531600509e290502b55c2c0ad603c382034f))
+* **graph:** T4.1 add capture watchdog with 30s timeout and status sampling ([b3066a5](https://github.com/zerfoo/ztensor/commit/b3066a5f3d239f3ab1667df27adec9881e4c92f4))
+* **graph:** T99.1.2 mark Gemma4PLECombinedProducer non-capturable ([6c855a9](https://github.com/zerfoo/ztensor/commit/6c855a928e8d8c96bd9de47728093a2c02547e41))
+
+
+### Bug Fixes
+
+* **graph:** T98.2.3 don't pool-release pass-through node inputs ([6ecf8db](https://github.com/zerfoo/ztensor/commit/6ecf8db036009e4839811df6f6a413fc297fda8f))
+
 ## [1.5.0](https://github.com/zerfoo/ztensor/compare/v1.4.0...v1.5.0) (2026-04-10)
 
 
