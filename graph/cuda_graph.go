@@ -54,15 +54,24 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // triggers a synchronous H2D cudaMemcpy that CUDA rejects. The producer runs
 // once per forward pass before the transformer loop, so placing it in
 // pre-capture keeps the layer-body capture region intact. See ADR-088.
+//
+// LMHead: terminal op of transformer graphs (hidden -> logits). Its internal
+// MatMulTransposeB fallback in GPUEngine calls Transpose(weight, [0,2,1]) on
+// a 2D weight, raising "number of axes 3 must match tensor dimensions 2"
+// from CPUEngine.Transpose whenever any of BLAS-NT absence, non-float32 T,
+// getDevicePtr failure, or Alloc-during-capture drives into the fallback.
+// Since LMHead is the last instruction, post-capture placement costs zero
+// capture-region coverage. See zerfoo/docs/adr/089-lmhead-cuda-graph-capture.md.
 var nonCapturableOps = map[string]bool{
-	"EmbeddingLookup":            true,
-	"Gather":                     true,
-	"AutoAttentionMask":          true,
-	"AutoPositionIds":            true,
-	"Slice":                      true,
-	"ConstantOfShape":            true,
-	"Shape":                      true,
-	"Gemma4PLECombinedProducer":  true,
+	"EmbeddingLookup":           true,
+	"Gather":                    true,
+	"AutoAttentionMask":         true,
+	"AutoPositionIds":           true,
+	"Slice":                     true,
+	"ConstantOfShape":           true,
+	"Shape":                     true,
+	"Gemma4PLECombinedProducer": true,
+	"LMHead":                    true,
 }
 
 // isNonCapturable returns true if the instruction at index i in the plan
@@ -309,16 +318,16 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 	}
 
 	return &CUDAGraphExecutor[T]{
-		plan:            plan,
-		stream:          cuda.StreamFromPtr(streamPtr),
-		warmups:         warmups,
-		captureStart:    captureStart,
-		captureEnd:      captureEnd,
-		inputSlotIdx:    inputSlotIdx,
-		hasPostCapture:  captureEnd < plan.InstructionCount(),
-		gpuSlotCache:    make(map[int]*tensor.TensorNumeric[T]),
-		onCaptured:    onCaptured,
-		snapshotCache: snapshotCache,
+		plan:           plan,
+		stream:         cuda.StreamFromPtr(streamPtr),
+		warmups:        warmups,
+		captureStart:   captureStart,
+		captureEnd:     captureEnd,
+		inputSlotIdx:   inputSlotIdx,
+		hasPostCapture: captureEnd < plan.InstructionCount(),
+		gpuSlotCache:   make(map[int]*tensor.TensorNumeric[T]),
+		onCaptured:     onCaptured,
+		snapshotCache:  snapshotCache,
 	}
 }
 

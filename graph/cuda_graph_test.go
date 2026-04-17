@@ -27,6 +27,8 @@ func TestIsNonCapturable(t *testing.T) {
 		{"Gather always non-capturable", "Gather", 2, true},
 		{"Shape always non-capturable", "Shape", 1, true},
 		{"ConstantOfShape always non-capturable", "ConstantOfShape", 1, true},
+		{"Gemma4PLECombinedProducer always non-capturable", "Gemma4PLECombinedProducer", 1, true},
+		{"LMHead always non-capturable", "LMHead", 2, true},
 		{"Add is capturable", "Add", 2, false},
 		{"MatMul is capturable", "MatMul", 2, false},
 	}
