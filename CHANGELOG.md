@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0](https://github.com/zerfoo/ztensor/compare/v1.6.0...v1.7.0) (2026-04-20)
+
+
+### Features
+
+* **compute:** add StepScope + MarkStepBoundary for training-loop arena reset ([6356dde](https://github.com/zerfoo/ztensor/commit/6356dde3b46ad290ad1f3e0baffe28386bc8c5ef))
+* **compute:** configurable GPU arena size via ZERFOO_ARENA_SIZE_GB ([cab6067](https://github.com/zerfoo/ztensor/commit/cab606733052415b6ba771d4bf839f0116d0ab37))
+
 ## [1.6.0](https://github.com/zerfoo/ztensor/compare/v1.5.0...v1.6.0) (2026-04-17)
 
 
