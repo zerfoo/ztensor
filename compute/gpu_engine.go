@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/zerfoo/float16"
@@ -354,6 +355,19 @@ func (e *GPUEngine[T]) checkVRAMBounds(op string, allocBytes int) error {
 // On devices with managed memory support (e.g., GB10), weights are allocated
 // with cudaMallocManaged and populated via direct CPU memcpy. The GPU can
 // then access them without any explicit H2D transfer.
+// uploadTraceClock is overridable in tests; default returns wall-clock.
+var uploadTraceClock = func() string {
+	return time.Now().UTC().Format("15:04:05.000")
+}
+
+// traceTimestamp returns a millisecond-resolution wall-clock string for
+// UPLOAD_TRACE log lines. Defined here so the instrumentation in
+// bulkUploadF32 / UploadWeights can emit ordered, diff-friendly logs
+// without pulling time into the hot path when tracing is disabled.
+func traceTimestamp() string {
+	return uploadTraceClock()
+}
+
 // bulkUploadF32MinTensors is the threshold above which UploadWeights
 // collapses many small per-tensor cudaMalloc + cudaMemcpy round-trips into
 // a single allocation and a single H2D copy. The per-tensor pattern wedges
@@ -377,7 +391,16 @@ const bulkUploadF32MinTensors = 64
 //     time tensor counts).
 //   - Fewer than bulkUploadF32MinTensors tensors are eligible.
 func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (int, error) {
+	trace := os.Getenv("UPLOAD_TRACE") == "1"
+	tracef := func(format string, args ...any) {
+		if trace {
+			fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] "+format+"\n",
+				append([]any{traceTimestamp()}, args...)...)
+		}
+	}
+	tracef("bulkUploadF32: enter (tensors=%d)", len(tensors))
 	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok && cap.IsCapturing() {
+		tracef("bulkUploadF32: SKIP — CaptureAwareAllocator.IsCapturing()=true")
 		return 0, nil
 	}
 
@@ -386,6 +409,7 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 		offset int
 		nelem  int
 	}
+	tracef("bulkUploadF32: eligibility scan begin")
 	eligible := make([]entry, 0, len(tensors))
 	total := 0
 	for _, t := range tensors {
@@ -407,19 +431,30 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 		eligible = append(eligible, entry{t: t, offset: total, nelem: n})
 		total += n * f32Size
 	}
+	tracef("bulkUploadF32: eligibility scan done (eligible=%d total_bytes=%d)",
+		len(eligible), total)
 	if len(eligible) < bulkUploadF32MinTensors {
+		tracef("bulkUploadF32: SKIP — below threshold (%d < %d)",
+			len(eligible), bulkUploadF32MinTensors)
 		return 0, nil
 	}
+	tracef("bulkUploadF32: ensureNotCapturing pre")
 	if err := e.ensureNotCapturing(); err != nil {
+		tracef("bulkUploadF32: ensureNotCapturing ERR: %v", err)
 		return 0, err
 	}
+	tracef("bulkUploadF32: ensureNotCapturing post (clean)")
 
 	var devPtr unsafe.Pointer
 	var err error
 	if e.managedMem {
+		tracef("bulkUploadF32: mallocManagedFn(%d) pre", total)
 		devPtr, err = mallocManagedFn(total)
+		tracef("bulkUploadF32: mallocManagedFn post (err=%v ptr=%p)", err, devPtr)
 	} else {
+		tracef("bulkUploadF32: runtime.Malloc(%d) pre", total)
 		devPtr, err = e.runtime.Malloc(total)
+		tracef("bulkUploadF32: runtime.Malloc post (err=%v ptr=%p)", err, devPtr)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("bulk alloc f32 (%d tensors, %d bytes): %w",
@@ -427,38 +462,59 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 	}
 
 	if e.managedMem {
+		tracef("bulkUploadF32: managed host-copy begin")
 		dst := unsafe.Slice((*byte)(devPtr), total)
 		for _, en := range eligible {
 			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
 			copy(dst[en.offset:en.offset+en.nelem*f32Size], src)
 		}
+		tracef("bulkUploadF32: managed host-copy done")
 	} else {
+		tracef("bulkUploadF32: staging-buffer make(%d) + copies begin", total)
 		host := make([]byte, total)
 		for _, en := range eligible {
 			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
 			copy(host[en.offset:en.offset+en.nelem*f32Size], src)
 		}
+		tracef("bulkUploadF32: staging done; runtime.Memcpy H2D pre (%d bytes)", total)
 		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), total, gpuapi.MemcpyHostToDevice); err != nil {
+			tracef("bulkUploadF32: runtime.Memcpy H2D ERR: %v", err)
 			_ = e.runtime.Free(devPtr)
 			return 0, fmt.Errorf("bulk H2D f32 (%d bytes): %w", total, err)
 		}
+		tracef("bulkUploadF32: runtime.Memcpy H2D post")
 	}
 
 	e.bulkUploadBuffers = append(e.bulkUploadBuffers, devPtr)
+	tracef("bulkUploadF32: SetStorage loop begin (n=%d)", len(eligible))
 	for _, en := range eligible {
 		sub := unsafe.Add(devPtr, en.offset)
 		view := tensor.NewGPUStorageViewFromPtr[float32](sub, en.nelem, e.deviceID)
 		en.t.SetStorage(view)
 	}
+	tracef("bulkUploadF32: SetStorage loop done; returning %d", len(eligible))
 	return len(eligible), nil
 }
 
 func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) error {
+	trace := os.Getenv("UPLOAD_TRACE") == "1"
+	if trace {
+		fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: enter (n=%d managedMem=%v)\n",
+			traceTimestamp(), len(tensors), e.managedMem)
+	}
 	e.setDevice()
+	if trace {
+		fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: setDevice done\n", traceTimestamp())
+	}
 	uploaded, err := e.bulkUploadF32(tensors)
 	if err != nil {
 		return err
 	}
+	if trace {
+		fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: bulkUploadF32 returned uploaded=%d; entering per-tensor loop\n",
+			traceTimestamp(), uploaded)
+	}
+	perTensorMallocs := 0
 	q4Uploaded := 0
 	for _, t := range tensors {
 		if t == nil {
@@ -672,6 +728,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			fmt.Fprintf(os.Stderr, "[UPLOAD_F32] shape=%v len=%d storage=%T\n", t.Shape(), n, t.GetStorage())
 		}
 		byteSize := n * f32Size
+		perTensorMallocs++
+		if trace && (perTensorMallocs <= 5 || perTensorMallocs%1000 == 0) {
+			fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: per-tensor f32 allocWeight #%d (bytes=%d shape=%v)\n",
+				traceTimestamp(), perTensorMallocs, byteSize, t.Shape())
+		}
 		devPtr, err := e.allocWeight(byteSize)
 		if err != nil {
 			return fmt.Errorf("alloc f32 GPU (shape %v): %w", t.Shape(), err)
@@ -728,10 +789,18 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			"device", fmt.Sprintf("%d", e.deviceID),
 			"method", method)
 	}
+	if trace {
+		fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: per-tensor loops done (perTensorMallocs=%d uploaded=%d q4=%d q8=%d); preAllocateWorkspaces pre\n",
+			traceTimestamp(), perTensorMallocs, uploaded, q4Uploaded, q8Uploaded)
+	}
 	// Pre-allocate all workspace buffers that would otherwise be lazily
 	// initialized on first use. This ensures no cudaMalloc occurs inside
 	// a subsequent CUDA graph capture region.
 	e.preAllocateWorkspaces()
+	if trace {
+		fmt.Fprintf(os.Stderr, "[UPLOAD_TRACE %s] UploadWeights: preAllocateWorkspaces post; return\n",
+			traceTimestamp())
+	}
 	return nil
 }
 
