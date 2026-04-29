@@ -133,6 +133,13 @@ type GPUEngine[T tensor.Numeric] struct {
 	// Incremented atomically in allocWeight when capture is detected;
 	// checked and reset in EndCapture.
 	captureAllocCount atomic.Int64
+
+	// bulkUploadBuffers retains the device pointers allocated by the
+	// UploadWeights bulk path. Each one backs N non-owning view tensors
+	// whose Free is a no-op, so the engine owns the underlying allocation
+	// and frees it in Close. Empty on engines that never receive a
+	// large-N UploadWeights call.
+	bulkUploadBuffers []unsafe.Pointer
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -347,9 +354,111 @@ func (e *GPUEngine[T]) checkVRAMBounds(op string, allocBytes int) error {
 // On devices with managed memory support (e.g., GB10), weights are allocated
 // with cudaMallocManaged and populated via direct CPU memcpy. The GPU can
 // then access them without any explicit H2D transfer.
+// bulkUploadF32MinTensors is the threshold above which UploadWeights
+// collapses many small per-tensor cudaMalloc + cudaMemcpy round-trips into
+// a single allocation and a single H2D copy. The per-tensor pattern wedges
+// the CUDA driver on GB10 Blackwell when N is in the tens-of-thousands
+// (zerfoo/ztensor#103); the bulk path keeps a constant number of driver
+// round-trips regardless of input size.
+const bulkUploadF32MinTensors = 64
+
+// bulkUploadF32 fast-paths the F32 weight upload by allocating one device
+// buffer for all eligible tensors and performing one H2D copy. Each tensor
+// receives a non-owning GPUStorage view into the bulk buffer; the engine
+// retains the bulk pointer and frees it in Close.
+//
+// Returns the number of tensors that were bulk-uploaded. The caller's
+// per-tensor loop will naturally skip these because their storage is now
+// *tensor.GPUStorage[float32].
+//
+// Bulk path is skipped when:
+//   - CUDA graph capture is active (per-tensor path emits async ops as
+//     graph nodes; bulk would offer no benefit at the typical capture-
+//     time tensor counts).
+//   - Fewer than bulkUploadF32MinTensors tensors are eligible.
+func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (int, error) {
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok && cap.IsCapturing() {
+		return 0, nil
+	}
+
+	type entry struct {
+		t      *tensor.TensorNumeric[float32]
+		offset int
+		nelem  int
+	}
+	eligible := make([]entry, 0, len(tensors))
+	total := 0
+	for _, t := range tensors {
+		if t == nil {
+			continue
+		}
+		switch any(t.GetStorage()).(type) {
+		case *tensor.GPUStorage[float32], *tensor.Float16Storage,
+			*tensor.Q4Storage, *tensor.Q4KStorage, *tensor.Q5_0Storage,
+			*tensor.Q5KStorage, *tensor.Q6KStorage, *tensor.Q8Storage,
+			*tensor.MmapStorage, *tensor.FP8E4M3Storage,
+			*tensor.BFloat16Storage:
+			continue
+		}
+		n := len(t.Data())
+		if n == 0 {
+			continue
+		}
+		eligible = append(eligible, entry{t: t, offset: total, nelem: n})
+		total += n * f32Size
+	}
+	if len(eligible) < bulkUploadF32MinTensors {
+		return 0, nil
+	}
+	if err := e.ensureNotCapturing(); err != nil {
+		return 0, err
+	}
+
+	var devPtr unsafe.Pointer
+	var err error
+	if e.managedMem {
+		devPtr, err = mallocManagedFn(total)
+	} else {
+		devPtr, err = e.runtime.Malloc(total)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("bulk alloc f32 (%d tensors, %d bytes): %w",
+			len(eligible), total, err)
+	}
+
+	if e.managedMem {
+		dst := unsafe.Slice((*byte)(devPtr), total)
+		for _, en := range eligible {
+			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
+			copy(dst[en.offset:en.offset+en.nelem*f32Size], src)
+		}
+	} else {
+		host := make([]byte, total)
+		for _, en := range eligible {
+			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
+			copy(host[en.offset:en.offset+en.nelem*f32Size], src)
+		}
+		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), total, gpuapi.MemcpyHostToDevice); err != nil {
+			_ = e.runtime.Free(devPtr)
+			return 0, fmt.Errorf("bulk H2D f32 (%d bytes): %w", total, err)
+		}
+	}
+
+	e.bulkUploadBuffers = append(e.bulkUploadBuffers, devPtr)
+	for _, en := range eligible {
+		sub := unsafe.Add(devPtr, en.offset)
+		view := tensor.NewGPUStorageViewFromPtr[float32](sub, en.nelem, e.deviceID)
+		en.t.SetStorage(view)
+	}
+	return len(eligible), nil
+}
+
 func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) error {
 	e.setDevice()
-	uploaded := 0
+	uploaded, err := e.bulkUploadF32(tensors)
+	if err != nil {
+		return err
+	}
 	q4Uploaded := 0
 	for _, t := range tensors {
 		if t == nil {
@@ -837,6 +946,16 @@ func (e *GPUEngine[T]) DestroyGraph(handle GraphHandle) error {
 // The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {
 	var firstErr error
+
+	// Free bulk-upload buffers (one per UploadWeights call that hit the
+	// bulk path). Per-tensor views into these buffers have a no-op Free,
+	// so the engine owns the lifetime.
+	for _, ptr := range e.bulkUploadBuffers {
+		if err := e.runtime.Free(ptr); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	e.bulkUploadBuffers = nil
 
 	// Free FP8 scratch buffers before draining the pool.
 	if e.fp8Scratch != nil {
