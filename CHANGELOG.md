@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/zerfoo/ztensor/compare/v1.7.0...v1.8.0) (2026-04-29)
+
+
+### Features
+
+* **compute:** bulk-upload F32 weights to one device buffer ([#103](https://github.com/zerfoo/ztensor/issues/103)) ([9ca83f6](https://github.com/zerfoo/ztensor/commit/9ca83f6a234ba345a2ead3417b8c98d584fa5d03))
+
 ## [1.7.0](https://github.com/zerfoo/ztensor/compare/v1.6.0...v1.7.0) (2026-04-20)
 
 
