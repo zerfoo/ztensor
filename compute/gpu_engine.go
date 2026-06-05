@@ -362,6 +362,41 @@ func (e *GPUEngine[T]) checkVRAMBounds(op string, allocBytes int) error {
 // round-trips regardless of input size.
 const bulkUploadF32MinTensors = 64
 
+// bulkUploadF32MaxChunkBytes / bulkUploadF32MaxChunkTensors bound a single
+// device allocation + H2D copy inside bulkUploadF32. A single unbounded
+// allocation/copy of all eligible tensors (hundreds of thousands -> multi-GB)
+// wedges the GB10 (sm_121) CUDA driver in an uninterruptible ioctl, which also
+// makes the container unkillable (zerfoo/ztensor#106). Chunking keeps every
+// driver call bounded while preserving the few-round-trips win over the
+// per-tensor path. maxChunkBytes is a var so tests can force multi-chunk paths.
+var bulkUploadF32MaxChunkBytes = 64 << 20 // 64 MiB
+
+const bulkUploadF32MaxChunkTensors = 4096
+
+// bulkUploadChunkRanges splits a sequence of tensors (given their per-tensor
+// element counts) into contiguous [start,end) ranges, each bounded by maxBytes
+// (sum of nelem*elemSize) and maxTensors. Every range holds at least one tensor,
+// so a lone tensor whose size exceeds maxBytes still gets its own range rather
+// than stalling. The ranges exactly tile [0,len(nelems)) with no gaps/overlaps.
+func bulkUploadChunkRanges(nelems []int, elemSize, maxBytes, maxTensors int) [][2]int {
+	ranges := make([][2]int, 0, 1)
+	for start := 0; start < len(nelems); {
+		end := start
+		chunkBytes := 0
+		for end < len(nelems) {
+			tb := nelems[end] * elemSize
+			if end > start && (chunkBytes+tb > maxBytes || end-start >= maxTensors) {
+				break
+			}
+			chunkBytes += tb
+			end++
+		}
+		ranges = append(ranges, [2]int{start, end})
+		start = end
+	}
+	return ranges
+}
+
 // bulkUploadF32 fast-paths the F32 weight upload by allocating one device
 // buffer for all eligible tensors and performing one H2D copy. Each tensor
 // receives a non-owning GPUStorage view into the bulk buffer; the engine
@@ -382,12 +417,10 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 	}
 
 	type entry struct {
-		t      *tensor.TensorNumeric[float32]
-		offset int
-		nelem  int
+		t     *tensor.TensorNumeric[float32]
+		nelem int
 	}
 	eligible := make([]entry, 0, len(tensors))
-	total := 0
 	for _, t := range tensors {
 		if t == nil {
 			continue
@@ -404,8 +437,7 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 		if n == 0 {
 			continue
 		}
-		eligible = append(eligible, entry{t: t, offset: total, nelem: n})
-		total += n * f32Size
+		eligible = append(eligible, entry{t: t, nelem: n})
 	}
 	if len(eligible) < bulkUploadF32MinTensors {
 		return 0, nil
@@ -414,41 +446,66 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 		return 0, err
 	}
 
-	var devPtr unsafe.Pointer
-	var err error
-	if e.managedMem {
-		devPtr, err = mallocManagedFn(total)
-	} else {
-		devPtr, err = e.runtime.Malloc(total)
+	// Upload in bounded chunks. A single unbounded allocation + H2D copy of
+	// all eligible tensors (hundreds of thousands -> multi-GB) wedges the GB10
+	// (sm_121) CUDA driver in an uninterruptible ioctl, which also makes the
+	// container unkillable (zerfoo/ztensor#106). Cap each device allocation +
+	// copy at bulkUploadF32MaxChunkBytes / MaxChunkTensors; each tensor gets a
+	// non-owning view into its chunk's buffer.
+	nelems := make([]int, len(eligible))
+	for i, en := range eligible {
+		nelems[i] = en.nelem
 	}
-	if err != nil {
-		return 0, fmt.Errorf("bulk alloc f32 (%d tensors, %d bytes): %w",
-			len(eligible), total, err)
-	}
+	for _, r := range bulkUploadChunkRanges(nelems, f32Size,
+		bulkUploadF32MaxChunkBytes, bulkUploadF32MaxChunkTensors) {
+		chunk := eligible[r[0]:r[1]]
+		chunkBytes := 0
+		for _, en := range chunk {
+			chunkBytes += en.nelem * f32Size
+		}
 
-	if e.managedMem {
-		dst := unsafe.Slice((*byte)(devPtr), total)
-		for _, en := range eligible {
-			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
-			copy(dst[en.offset:en.offset+en.nelem*f32Size], src)
+		var devPtr unsafe.Pointer
+		var err error
+		if e.managedMem {
+			devPtr, err = mallocManagedFn(chunkBytes)
+		} else {
+			devPtr, err = e.runtime.Malloc(chunkBytes)
 		}
-	} else {
-		host := make([]byte, total)
-		for _, en := range eligible {
-			src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
-			copy(host[en.offset:en.offset+en.nelem*f32Size], src)
+		if err != nil {
+			return 0, fmt.Errorf("bulk alloc f32 chunk (%d tensors, %d bytes): %w",
+				len(chunk), chunkBytes, err)
 		}
-		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), total, gpuapi.MemcpyHostToDevice); err != nil {
-			_ = e.runtime.Free(devPtr)
-			return 0, fmt.Errorf("bulk H2D f32 (%d bytes): %w", total, err)
-		}
-	}
 
-	e.bulkUploadBuffers = append(e.bulkUploadBuffers, devPtr)
-	for _, en := range eligible {
-		sub := unsafe.Add(devPtr, en.offset)
-		view := tensor.NewGPUStorageViewFromPtr[float32](sub, en.nelem, e.deviceID)
-		en.t.SetStorage(view)
+		if e.managedMem {
+			dst := unsafe.Slice((*byte)(devPtr), chunkBytes)
+			off := 0
+			for _, en := range chunk {
+				src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
+				copy(dst[off:off+en.nelem*f32Size], src)
+				off += en.nelem * f32Size
+			}
+		} else {
+			host := make([]byte, chunkBytes)
+			off := 0
+			for _, en := range chunk {
+				src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*f32Size)
+				copy(host[off:off+en.nelem*f32Size], src)
+				off += en.nelem * f32Size
+			}
+			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), chunkBytes, gpuapi.MemcpyHostToDevice); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return 0, fmt.Errorf("bulk H2D f32 chunk (%d bytes): %w", chunkBytes, err)
+			}
+		}
+
+		e.bulkUploadBuffers = append(e.bulkUploadBuffers, devPtr)
+		off := 0
+		for _, en := range chunk {
+			sub := unsafe.Add(devPtr, off)
+			view := tensor.NewGPUStorageViewFromPtr[float32](sub, en.nelem, e.deviceID)
+			en.t.SetStorage(view)
+			off += en.nelem * f32Size
+		}
 	}
 	return len(eligible), nil
 }
