@@ -15,7 +15,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ztensor-issue106-context
+  name: ztensor-issue106-context2
   labels:
     app: ztensor-wedge
 spec:
@@ -34,10 +34,9 @@ spec:
           set -eux
           export GOTOOLCHAIN=auto
           export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
-          export WEDGE_WATCH_OUT=/work/wedge-out/watchdog.log
-          export WEDGE_LOG=/work/wedge-out/ctx.log
+          export WEDGE_WATCH_OUT=/var/lib/zerfoo/bench-out/watchdog-ctx.log
+          export WEDGE_LOG=/var/lib/zerfoo/bench-out/ctx.log
           export WEDGE_WATCH_INTERVAL=2
-          mkdir -p /work/wedge-out
           : > "$WEDGE_WATCH_OUT"; : > "$WEDGE_LOG"
           cd /work
           git clone --depth 1 --branch fix/issue-106-wedge-repro https://github.com/zerfoo/ztensor.git
@@ -72,7 +71,7 @@ spec:
           mountPath: /opt/zerfoo/lib
           readOnly: true
         - name: wedge-out
-          mountPath: /work/wedge-out
+          mountPath: /var/lib/zerfoo/bench-out
   volumes:
     - name: cuda
       hostPath:
