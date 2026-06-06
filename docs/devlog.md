@@ -1,5 +1,31 @@
 # ztensor Development Log
 
+## 2026-06-05: CUDA graph capture-hang plan closed; bulk-upload wedge opened (#106)
+
+**Type:** plan-trim
+**Tags:** cuda, capture, gb10, bulk-upload, e2, planning
+
+**What happened:** The GB10 CUDA-graph-capture-hang work tracked by the prior
+docs/plan.md shipped in release 1.8.0 (PRs #94 wave-1 probes, #95 repro harness,
+#96 WithCapture + watchdog, #97 capture-aware alloc + workspace pre-alloc, #98
+LMHead non-capturable). That plan is now retired and docs/plan.md is replaced by
+the issue #106 plan. The capture-hang root cause and fix are already recorded in
+this devlog (2026-04-16 entries) and ADR precedent zerfoo 088; the stable
+interface knowledge stays in design.md. No new ADR was needed for the retirement.
+
+**New issue:** #106 reports the bulk-upload fast path from #103 itself wedges the
+GB10 driver in uninterruptible D-state on large one-shot uploads (~213k float32
+tensors, single multi-GB `Malloc`+`Memcpy`). Root cause: `bulkUploadF32` has no
+upper bound on the consolidated buffer size. Fix is to chunk by a byte cap; see
+docs/adr/003-bulk-upload-chunking-cap.md and docs/plan.md.
+
+**Spark operational gotchas (carried forward, still valid):**
+- Spark drops multi-element `command`; use `args: ["bash","-c", ...]`, no `command`.
+- Spark truncates long `args[i]`; put scripts on host and mount them.
+- Spark drops container stdout/stderr; redirect to a host file inside the script.
+- ztensor `-tags cuda` is unmaintained; default build is the purego GPU path.
+- Mount prebuilt `/opt/zerfoo/lib/libkernels.so` into any GPU test pod.
+
 ## 2026-04-16: T1.4 CUDA graph GB10 repro — capture PASSES on pre-upload workload
 
 **Type:** investigation
