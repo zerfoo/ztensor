@@ -19,7 +19,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ztensor-issue106-wedge-repro
+  name: ztensor-issue106-wedge-guard
   labels:
     app: ztensor-wedge
 spec:
@@ -64,11 +64,31 @@ spec:
           # Start the out-of-band watchdog BEFORE the wedge. Filter to the test binary.
           WEDGE_WATCH_COMM=wedge.test bash /work/ztensor/docs/bench/scripts/dstate-watchdog.sh &
           echo "watchdog started pid $!" >> "$WEDGE_LOG"
-          # Run the repro. -timeout 0 so Go's own watchdog never kills it; the
-          # point is to observe the driver wedge. This line is expected to hang.
-          ZTENSOR_WEDGE_REPRO=1 WEDGE_LOG="$WEDGE_LOG" /work/wedge.test -test.run TestWedge106Repro -test.v -test.timeout 0
-          echo "repro returned (NO WEDGE)" >> "$WEDGE_LOG"
-          curl -sS -m 10 -X POST "$WEDGE_POST_URL" -H 'Content-Type: text/plain' --data "[POD] repro RETURNED no-wedge" >/dev/null 2>&1 || true
+          # Run the repro to a LOCAL capture file (no hostPath/webhook/ssh needed
+          # -- on this host only the pod exit status is a reliable channel).
+          # -timeout 0 so Go's own watchdog never kills it; a true driver wedge
+          # leaves the pod stuck "running" (never completes).
+          set +e
+          ZTENSOR_WEDGE_REPRO=1 WEDGE_LOG="$WEDGE_LOG" /work/wedge.test -test.run TestWedge106Repro -test.v -test.timeout 0 > /tmp/testout.txt 2>&1
+          tc=$?
+          set -e
+          echo "go-test-exit: $tc"
+          tail -40 /tmp/testout.txt || true
+          # Encode the verdict in the POD EXIT CODE:
+          #   0  -> upload RAN and returned, NO wedge   (pure ztensor 213k does not reproduce)
+          #   3  -> test SKIPPED (cuda unavailable)     -> env problem, inconclusive
+          #   5  -> UploadWeights returned an error      (not a wedge)
+          #   6  -> unknown
+          # (a true wedge never reaches here -- the pod stays "running" forever)
+          if grep -q 'UploadWeights RETURNED ok' /tmp/testout.txt; then
+            echo "VERDICT=RAN_NO_WEDGE"; exit 0
+          elif grep -q 'UploadWeights err' /tmp/testout.txt; then
+            echo "VERDICT=UPLOAD_ERROR"; exit 5
+          elif grep -q 'SKIP' /tmp/testout.txt || ! grep -q 'UploadWeights BEGIN' /tmp/testout.txt; then
+            echo "VERDICT=SKIPPED_NO_CUDA"; exit 3
+          else
+            echo "VERDICT=UNKNOWN"; exit 6
+          fi
       env:
         - name: LD_LIBRARY_PATH
           value: /opt/zerfoo/lib:/usr/local/cuda/lib64
