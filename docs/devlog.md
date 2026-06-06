@@ -1,5 +1,48 @@
 # ztensor Development Log
 
+## 2026-06-06: #106 -- pure-ztensor 213k f32 upload does NOT reproduce the wedge
+
+**Type:** finding
+**Tags:** cuda, bulk-upload, gb10, sm_121, #106, repro
+
+**Problem:** Determine whether the GB10 wedge reproduces with ztensor alone
+(no Wolf), to localize the root cause.
+
+**Experiment:** TestWedge106Repro built 213,304 float32 tensors x 2048 elems
+(~1.7 GiB total) and called GPUEngine.UploadWeights on the GB10, default
+(non-managed) path, fresh engine, no concurrent GPU activity. Run via Spark pod
+ztensor-issue106-wedge-guard. Because every exfil channel on this host is
+unreliable (Spark exec/logs/delete hang; pods cannot reach webhook.site;
+hostPath files did not land for ssh), the verdict was encoded in the POD EXIT
+CODE: exit 0 only if the test logged "UploadWeights RETURNED ok"; 3 if it
+skipped (no CUDA); a true wedge would leave the pod stuck "running" forever.
+
+**Result:** Pod COMPLETED, exit 0 (ran 10:30:10 -> 10:42:59 PDT). The upload
+ran on-device and returned cleanly. NO WEDGE. (An earlier non-guarded run of the
+same test also completed in ~7 min.)
+
+**Root cause:** Not isolated. The f32 bulk-upload path -- chunked or not -- at
+213k-tensor scale does NOT by itself wedge the GB10 driver. The wedge therefore
+requires a condition present in the production caller but absent here. Leading
+suspects, in rough priority:
+  1. Non-f32 tensors in the weight set: any tensor that is not plain f32 skips
+     bulkUploadF32 and takes the PER-TENSOR Malloc loop in UploadWeights
+     (gpu_engine.go:520+). At 10^5 scale that is the original #103 per-tensor
+     wedge, which bulk only ever fixed for f32. Worth confirming the production
+     weight dtypes.
+  2. Managed-memory path (ZERFOO_ENABLE_MANAGED_MEM set) -- this run was
+     non-managed (mallocManaged untested here at scale).
+  3. Concurrent GPU state (prior allocations, active stream/graph capture)
+     during the upload, vs a fresh idle engine here.
+  4. Larger total bytes / different per-tensor size mix than the uniform
+     2048-elem tensors used here.
+
+**Impact:** Redirects the investigation away from "bulkUploadF32 byte/tensor
+caps" and toward the per-tensor path and/or upload context. Next experiment:
+re-run the repro with a non-f32 (or mixed-dtype) weight set and/or managed
+memory enabled. Harness: docs/bench/manifests/issue-106-wedge-repro.yaml,
+TestWedge106Repro (branch fix/issue-106-wedge-repro).
+
 ## 2026-06-06: #106 REOPENED -- chunking is NOT the fix
 
 **Type:** finding
