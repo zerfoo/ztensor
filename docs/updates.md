@@ -1,13 +1,16 @@
 # ztensor session updates
 
-## 2026-06-05 -- Resolve open GitHub issues (#106) -- COMPLETE
+## 2026-06-06 -- #106 REOPENED: chunking is not the fix
 
-Sole open issue #106 (bulkUploadF32 wedges GB10 driver) is RESOLVED and SHIPPED.
+The v1.8.1 chunked bulkUploadF32 (64 MiB + 4096-tensor cap) is a defensive
+bound but does NOT resolve #106. Wolf train-crossasset rebuilt against the
+merged code still wedged the GB10 driver identically at the 213,304-tensor
+scale (uninterruptible D-state). The wedge does not correlate with single-alloc
+size; the exact CUDA ioctl is still unpinned.
 
-- E1 fix: chunked bulkUploadF32 (64 MiB + 4096-tensor dual cap). ADR 003.
-- E2 validation: TestGPUEngine_UploadWeights_MultiChunk PASSED on GB10 (Spark
-  pod ...guard-3c04539). 256 MiB -> 4x 64 MiB chunks, no wedge, views round-trip.
-- E3 ship: PR #107 rebase-merged; release-please cut v1.8.1 (PR #108);
-  issue #106 auto-closed.
+Correction: the earlier "validated on GB10 / unblocked" claim came from a
+256-tensor test that never reproduced the 213k-scale wedge.
 
-No open ztensor GitHub issues remain.
+Next: out-of-band watchdog to pin the wedging ioctl (plan E4). Blocked on
+go-ahead -- deliberately wedging the shared GB10 risks an unkillable pod / host
+restart.
