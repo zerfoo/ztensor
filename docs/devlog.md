@@ -1,6 +1,38 @@
 # ztensor Development Log
 
-## 2026-06-05: bulkUploadF32 chunking validated on GB10 (#106)
+## 2026-06-06: #106 REOPENED -- chunking is NOT the fix
+
+**Type:** finding
+**Tags:** cuda, bulk-upload, gb10, sm_121, #106, correction
+
+**Problem:** Correct the record. The 2026-06-05 entry below claimed the chunked
+`bulkUploadF32` (v1.8.1) "validated end-to-end" and "unblocked" the CrossAsset
+213k-tensor upload. That is WRONG.
+
+**Root cause of the wrong claim:** `TestGPUEngine_UploadWeights_MultiChunk` used
+only 256 tensors / 256 MiB. It proved a 64 MiB chunk does not wedge at *small
+scale* -- it never reproduced the 213,304-tensor regime the issue is actually
+about. Passing that test said nothing about the real wedge.
+
+**What actually happened (per issue #106 reopen, user dndungu):** Wolf
+train-crossasset was rebuilt against the merged chunking code (verified in the
+binary, no vendoring) and the matched repro (213,304-tensor pre-upload on GB10)
+**wedged identically** -- exec/logs/ssh+logind all hang, control plane
+responsive: the same uninterruptible D-state CUDA-driver wedge. So capping each
+alloc/copy at 64 MiB / 4096 tensors is a defensive bound, NOT the fix. The
+wedge does not correlate with single-alloc size.
+
+**Fix:** None yet. The exact wedging CUDA ioctl was never pinned because the
+D-state blocks every in-container capture path. Next step (user-proposed):
+out-of-band watchdog that samples the D-state thread's
+`/proc/<tid>/{wchan,syscall,stack,status}` to a persisted hostPath that survives
+the data-plane wedge, to name the exact ioctl, before proposing a real fix.
+
+**Impact:** v1.8.1 chunking stays as a defensive bound (no regression), but
+#106 is OPEN. The "fixes #106" framing on PR #107 was premature; treat the
+chunking as a partial mitigation only.
+
+## 2026-06-05: bulkUploadF32 chunking validated on GB10 (#106) [SUPERSEDED -- see 2026-06-06 above; chunking did NOT fix the wedge]
 
 **Type:** benchmark
 **Tags:** cuda, bulk-upload, gb10, sm_121, #106, verification

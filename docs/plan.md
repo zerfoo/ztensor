@@ -231,8 +231,30 @@ churn. A second agent can author the Wave 3 Spark manifest in parallel.)
 - [x] T3.2 Release v1.8.1 cut  verifies: [infrastructure]  (2026 06 05)
 - [x] T3.3 Close #106  verifies: [#106]  (2026 06 05)
 
-ALL TASKS COMPLETE. Issue #106 resolved: chunked bulkUploadF32 shipped in
-v1.8.1, validated on GB10 hardware. No open ztensor issues remain.
+CHUNKING SHIPPED in v1.8.1 (E0-E3 done) but #106 REOPENED 2026-06-06: the
+chunked path still wedges the GB10 driver at the 213,304-tensor scale (Wolf
+train-crossasset, verified against merged code). Chunking is a defensive bound,
+not the fix. The wedge does not correlate with single-alloc size. New work is
+diagnostic, not a code fix -- see E4 below. (The earlier "validated on GB10"
+claim was from a 256-tensor test that never reproduced the 213k-scale wedge.)
+
+### E4 -- Pin the wedging CUDA ioctl (diagnostic)
+**Component:** compute
+Acceptance: the exact CUDA driver call (kernel stack / syscall / wchan) that
+enters uninterruptible D-state during a 213k-tensor GB10 upload is named, so a
+real fix can be proposed.
+
+- [ ] T4.1 Out-of-band watchdog: a sidecar/host process that, on a persisted
+  hostPath (survives the data-plane wedge), samples the target process's
+  D-state thread `/proc/<tid>/{wchan,syscall,stack,status,comm}` in a loop and
+  writes frames to disk. Must NOT live inside the wedged container's data plane.
+  Owner: TBD  Est: 2h  verifies: [#106]
+- [ ] T4.2 Reproduce the wedge under the watchdog and capture the pinned frame
+  (the exact ioctl). Risk: deliberately wedging the shared GB10 can leave an
+  unkillable pod / need a host restart -- coordinate before running.
+  Owner: TBD  Est: 2h  verifies: [#106]  blocked: needs user go-ahead (shared-host wedge risk)
+- [ ] T4.3 From the pinned ioctl, propose the real fix and post findings to #106
+  Owner: TBD  Est: TBD  verifies: [#106]  blocked-by: [T4.2]
 
 ## Timeline and Milestones
 

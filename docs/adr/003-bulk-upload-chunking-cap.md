@@ -1,7 +1,12 @@
 # ADR 003: Bound bulkUploadF32 by a byte-sized chunk cap
 
 ## Status
-Accepted
+Accepted as a defensive bound -- but NOT a fix for #106. On 2026-06-06 the
+issue was reopened: Wolf train-crossasset rebuilt against this chunking still
+wedged the GB10 driver identically at the 213,304-tensor scale. Capping each
+alloc/copy at 64 MiB / 4096 tensors does not correlate with the wedge. Keep the
+chunking (harmless, bounds driver-call size) but the root cause is still
+unpinned. See docs/devlog.md 2026-06-06.
 
 ## Date
 2026-06-05
