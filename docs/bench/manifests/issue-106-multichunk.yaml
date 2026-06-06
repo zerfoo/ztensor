@@ -1,0 +1,72 @@
+# Issue #106 GB10 validation pod (guarded).
+#
+# Clones the public ztensor repo at the fix branch and runs the compute
+# bulk-upload tests on the GB10. TestGPUEngine_UploadWeights_MultiChunk forces
+# 4 real 64 MiB chunked uploads, proving the chunked path does NOT wedge the
+# driver and that cross-chunk views round-trip.
+#
+# Spark drops container stdout for completed pods, so correctness is encoded in
+# the EXIT CODE: the script exits non-zero unless the GPU multi-chunk test
+# actually PASSED (a CUDA-unavailable SKIP is treated as a hard failure -- we
+# require real-hardware validation, not a skip).
+#
+# Notes:
+#   - golang:1.26-bookworm (arm64) + GOTOOLCHAIN=auto. Do NOT pass `-tags cuda`.
+#   - libkernels.so is mounted from the host at /opt/zerfoo/lib.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue106-multichunk-guard-3c04539
+  labels:
+    app: ztensor-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: docker.io/library/golang:1.26-bookworm
+      workingDir: /work
+      args:
+        - "bash"
+        - "-c"
+        - |
+          set -euo pipefail
+          export GOTOOLCHAIN=auto
+          export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
+          cd /work
+          git clone --depth 1 --branch fix/bulk-upload-chunking-106 https://github.com/zerfoo/ztensor.git
+          cd ztensor
+          echo "HEAD: $(git rev-parse HEAD)"
+          set +e
+          go test ./compute/ -run 'UploadWeights_MultiChunk|UploadWeights_BulkPath|UploadWeights_BelowBulkThreshold|BulkUploadChunkRanges' -v -timeout 300s > /tmp/out.txt 2>&1
+          code=$?
+          set -e
+          cat /tmp/out.txt
+          echo "go-test-exit: $code"
+          grep -q -- '--- PASS: TestGPUEngine_UploadWeights_MultiChunk' /tmp/out.txt || { echo "FATAL: MultiChunk did not PASS"; exit 3; }
+          if grep -q -- 'SKIP: TestGPUEngine_UploadWeights_MultiChunk' /tmp/out.txt; then echo "FATAL: MultiChunk SKIPPED (no CUDA on hardware)"; exit 4; fi
+          test "$code" -eq 0 || { echo "FATAL: go test exit $code"; exit "$code"; }
+          echo "VALIDATION_OK: MultiChunk passed on GB10"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /opt/zerfoo/lib:/usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
