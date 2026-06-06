@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/zerfoo/ztensor/compare/v1.8.0...v1.8.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* **compute:** chunk bulkUploadF32 to stop wedging the GB10 driver ([#106](https://github.com/zerfoo/ztensor/issues/106)) ([af24647](https://github.com/zerfoo/ztensor/commit/af246471abdae7e79d86a30e1a665175a679274c))
+
 ## [1.8.0](https://github.com/zerfoo/ztensor/compare/v1.7.0...v1.8.0) (2026-04-29)
 
 
