@@ -38,10 +38,27 @@ suspects, in rough priority:
      2048-elem tensors used here.
 
 **Impact:** Redirects the investigation away from "bulkUploadF32 byte/tensor
-caps" and toward the per-tensor path and/or upload context. Next experiment:
-re-run the repro with a non-f32 (or mixed-dtype) weight set and/or managed
-memory enabled. Harness: docs/bench/manifests/issue-106-wedge-repro.yaml,
-TestWedge106Repro (branch fix/issue-106-wedge-repro).
+caps" and toward the per-tensor path and/or upload context. Harness:
+docs/bench/manifests/issue-106-wedge-repro.yaml, TestWedge106Repro (branch
+fix/issue-106-wedge-repro).
+
+**Follow-ups (same day):**
+- Inspected the production caller (crossasset.go:513-529): the 213,304 items are
+  ALL f32 -- tiny sample-data tensors of shape [1,fps] (one per sample x source)
+  plus ~50 graph params. The non-f32 per-tensor-path hypothesis is REJECTED.
+- Deploy (train-crossasset-gpu.yaml) sets no managed memory, no arena override,
+  CUDA graph ENABLED (default).
+- Ran a 2nd guarded variant: 213,304 tensors x 193 f32 (~165 MB, matching the
+  tiny production tensor size) on a fresh engine. Pod COMPLETED exit 0 -- again
+  NO WEDGE. Tensor size is also ruled out.
+- CONCLUSION: the f32 upload path does not wedge in isolation at production
+  count/dtype/size on a fresh engine. The trigger is the production ENGINE
+  CONTEXT that the fresh-engine repro lacks: a prior weight upload + arena
+  allocation + training-graph/capture setup preceding the 213k upload -- OR the
+  hang is actually after UploadWeights (first kernel/capture) with the upload
+  merely the last log line. Surest next step: run dstate-watchdog.sh alongside
+  the REAL train-crossasset GPU run (which reliably wedges) to pin the ioctl in
+  the true failing context, rather than more fresh-engine pure-ztensor variants.
 
 ## 2026-06-06: #106 REOPENED -- chunking is NOT the fix
 
