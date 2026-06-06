@@ -1,5 +1,39 @@
 # ztensor Development Log
 
+## 2026-06-06: #106 -- context-replica inconclusive; Spark observability wall
+
+**Type:** finding
+**Tags:** cuda, gb10, #106, infra, spark
+
+**Problem:** Test whether the production engine CONTEXT (prior weight upload +
+arena + first-compute) reproduces the wedge, since the bare upload does not.
+
+**What happened:** Built TestWedge106Context (UploadWeights weights -> 213k
+samples -> 200 MatMuls) and ran it as guarded pod ztensor-issue106-context. The
+pod reported "completed exited successfully" but in only 4.5s of running time
+(scheduled->running 0.5s = image cached; running->completed 4.5s). That is
+impossible for a from-scratch build + 213k-tensor upload + compute (the
+comparable wedge-guard pod took ~13 min). The result is therefore NOT a real
+full run and is uninterpretable.
+
+**Root cause (of the inconclusiveness):** This Spark host gives no usable
+observability. Confirmed via ssh that the hostPath mount (/work/wedge-out ->
+/var/lib/zerfoo/bench-out) delivers NOTHING to the host -- ctx.log/repro.log/
+watchdog.log are absent; bench-out holds only pre-existing Apr-16 files. Spark
+/logs, /exec, /delete all hang; pods cannot reach webhook.site; pod detail
+exposes no container exit code. So the only signals are pod phase + timing, and
+the timing now contradicts the completed=ran assumption.
+
+**Fix:** N/A. Stopping pure-ztensor GB10 experiments on this host -- results are
+not trustworthy without log access. The productive path is to run
+dstate-watchdog.sh alongside the REAL train-crossasset run (wedge reliably
+reproduces there; operator has working host access to read the captured frame).
+
+**Impact:** The solid, exit-code-verified findings stand (bare f32 upload at
+213k x {8KB,193-float} on a fresh engine does not wedge; #106 is not the upload
+primitive / chunking caps). The context question remains open, blocked on
+observability, not ideas.
+
 ## 2026-06-06: #106 -- pure-ztensor 213k f32 upload does NOT reproduce the wedge
 
 **Type:** finding
