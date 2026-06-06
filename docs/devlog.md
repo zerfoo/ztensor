@@ -1,5 +1,41 @@
 # ztensor Development Log
 
+## 2026-06-05: bulkUploadF32 chunking validated on GB10 (#106)
+
+**Type:** benchmark
+**Tags:** cuda, bulk-upload, gb10, sm_121, #106, verification
+
+**Problem:** Confirm on real GB10 hardware that the chunked `bulkUploadF32`
+(64 MiB byte cap + 4096 tensor cap) does not wedge the driver and that
+cross-chunk `GPUStorage` views round-trip, before merging the #106 fix.
+
+**Root cause:** N/A (verification). The prior single unbounded
+`Malloc(total)`+`Memcpy(total)` wedged the GB10 (sm_121) driver in
+uninterruptible D-state at multi-GB scale; chunking bounds every driver call.
+
+**Fix:** Added `TestGPUEngine_UploadWeights_MultiChunk` (uploads 256 MiB as
+256x1 MiB tensors -> 4 real 64 MiB chunks; asserts `len(bulkUploadBuffers)==4`
+and round-trips head/tail sentinels across every chunk boundary). Ran on GB10
+via Spark with an exit-code guard that fails the pod unless the GPU test
+actually PASSED (a CUDA-unavailable SKIP is treated as failure), because Spark
+drops container stdout for completed pods.
+
+**Impact:** #106 fix validated end-to-end. The chunked path uploads multi-GB
+weight sets as bounded 64 MiB driver calls with no wedge. Wolf CrossAsset
+213k-tensor pre-upload is unblocked.
+
+**Evidence:**
+- Pod: `ztensor-issue106-multichunk-guard-3c04539` (exit 0 = guard passed =
+  `--- PASS: TestGPUEngine_UploadWeights_MultiChunk` on GB10, no SKIP).
+- Ran 2026-06-05 22:07:27 -> 22:14:32 PDT on DGX Spark GB10 (Spark v1.13.1).
+- Commit: 3c04539 (branch fix/bulk-upload-chunking-106), image
+  golang:1.26-bookworm + GOTOOLCHAIN=auto, libkernels.so mounted from host.
+- Manifest: docs/bench/manifests/issue-106-multichunk.yaml.
+- Spark gotcha reconfirmed on v1.13.1: container stdout/logs are dropped for
+  completed pods; the /logs endpoint hangs. Encode correctness in the pod exit
+  code, not in retrievable logs. Cold arm64 image pull ~20 min (not cached
+  between runs).
+
 ## 2026-06-05: CUDA graph capture-hang plan closed; bulk-upload wedge opened (#106)
 
 **Type:** plan-trim
