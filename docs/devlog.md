@@ -33,6 +33,12 @@ art: the capture-hang work in the original plan / ztensor#93.
 ZERFOO_DISABLE_CUDA_GRAPH=1. If the wedge disappears, capture is confirmed the
 culprit and UploadWeights/bulkUploadF32 is exonerated.
 
+**400k confirm (pod ztensor-issue106-ctx4):** repeated the context replica at
+400,000 samples (>300k historical scale). PHASE2 uploaded 400,050 tensors in
+124 ms as 99 bulk chunks; ALL PHASES COMPLETE, PASS, watchdog 0 D-state. Even at
+>300k, pure ztensor does not wedge. The upload path is conclusively exonerated;
+the trigger is in the real training path the replica omits (CUDA graph capture).
+
 **Reusable infra unblocked:** host-script pattern (script at
 /var/lib/zerfoo/bench-out/*.sh, short pod args `bash <path>`) + ssh read of the
 hostPath works reliably. Spark /logs,/exec,/delete still hang; Spark ALSO
