@@ -1,6 +1,45 @@
 # ztensor Development Log
 
-## 2026-06-06: #106 -- context-replica inconclusive; Spark observability wall
+## 2026-06-06: #106 -- context-replica does NOT wedge; suspect = CUDA graph capture
+
+**Type:** finding
+**Tags:** cuda, gb10, #106, capture, repro
+
+**Problem:** With observability fixed (host-script + ssh, see below), determine
+whether the production engine context reproduces the wedge.
+
+**Method:** dstate-watchdog + TestWedge106Context run via a host-resident script
+with SHORT pod args (avoids the Spark args-mangling that exit-2'd prior pods).
+Full phase log read back over ssh from the hostPath.
+
+**Result (fully observed, pod ztensor-issue106-ctx3):** ALL PHASES COMPLETE, NO
+WEDGE, test PASS in 0.80s, watchdog saw 0 D-state threads. Sequence mirrored
+CrossAsset: PHASE1 UploadWeights(74 model weights) -> PHASE2 UploadWeights(
+213,354 sample+param tensors, shape [1,193]) -> PHASE3 200 MatMuls. PHASE2
+uploaded in 70 ms as 54 bulk chunks. No hang anywhere.
+
+**Conclusion:** Pure ztensor CANNOT reproduce #106 -- not the bare upload, not
+with prior-upload + arena + direct compute context. The one major element the
+replica does NOT exercise that the real run does: zerfoo's autograd graph driven
+through **CUDA graph capture** (deploy has capture ENABLED -- ZERFOO_DISABLE_CUDA
+_GRAPH unset). The replica's PHASE3 used direct engine.MatMul calls, NOT the
+graph/cuda_graph.go capture wrapper. Prime remaining hypothesis: the wedge is in
+the CUDA-graph capture path during the first training step AFTER the 213k
+upload, with "UploadWeights never returns" being a misattribution (the T4.2
+print is the last clean log line before the captured step hangs). Note prior
+art: the capture-hang work in the original plan / ztensor#93.
+
+**Cheap confirming test (for the operator):** re-run train-crossasset GPU with
+ZERFOO_DISABLE_CUDA_GRAPH=1. If the wedge disappears, capture is confirmed the
+culprit and UploadWeights/bulkUploadF32 is exonerated.
+
+**Reusable infra unblocked:** host-script pattern (script at
+/var/lib/zerfoo/bench-out/*.sh, short pod args `bash <path>`) + ssh read of the
+hostPath works reliably. Spark /logs,/exec,/delete still hang; Spark ALSO
+mis-reports container Exited(2) as "completed exited successfully" -- never
+trust Spark pod status alone; verify via `sudo podman ps -a` or the hostPath log.
+
+## 2026-06-06: #106 -- context-replica inconclusive; Spark observability wall [SUPERSEDED -- observability fixed; see entry above; context-replica ran and did NOT wedge]
 
 **Type:** finding
 **Tags:** cuda, gb10, #106, infra, spark
