@@ -1,0 +1,87 @@
+# Issue #106 PURE-ZTENSOR wedge reproduction + out-of-band watchdog.
+#
+# WARNING: this pod deliberately tries to wedge the GB10 CUDA driver in
+# uninterruptible D-state. The container may become unkillable and leak as a
+# permanent "running" pod until a host-level restart. Run only with explicit
+# go-ahead on a sacrificial window.
+#
+# How it captures the wedge despite the data-plane hang:
+#   - dstate-watchdog.sh runs in-container, in the SAME PID namespace as the
+#     wedged test, and only writes to a file -- so it keeps running after the
+#     GPU ioctl wedges (the GPU-touching paths exec/logs/ssh hang, plain file
+#     writes do not).
+#   - It writes /proc/<tid>/{wchan,syscall,stack} frames to /work/wedge-out,
+#     which is the hostPath /var/lib/zerfoo/bench-out. The separate
+#     ztensor-wedge-reader pod mounts the same hostPath and exfiltrates the
+#     frames via the Spark exec endpoint (control plane stays responsive).
+#
+# privileged + root so the watchdog can read /proc/<tid>/stack.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue106-wedge-repro
+  labels:
+    app: ztensor-wedge
+spec:
+  restartPolicy: Never
+  containers:
+    - name: repro
+      image: docker.io/library/golang:1.26-bookworm
+      workingDir: /work
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      args:
+        - "bash"
+        - "-c"
+        - |
+          set -eux
+          export GOTOOLCHAIN=auto
+          export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
+          export WEDGE_WATCH_OUT=/work/wedge-out/watchdog.log
+          export WEDGE_LOG=/work/wedge-out/repro.log
+          export WEDGE_WATCH_INTERVAL=2
+          mkdir -p /work/wedge-out
+          : > "$WEDGE_WATCH_OUT"; : > "$WEDGE_LOG"
+          cd /work
+          git clone --depth 1 --branch fix/issue-106-wedge-repro https://github.com/zerfoo/ztensor.git
+          cd ztensor
+          echo "HEAD: $(git rev-parse HEAD)" >> "$WEDGE_LOG"
+          go test ./compute/ -run TestWedge106Repro -c -o /work/wedge.test
+          # Start the out-of-band watchdog BEFORE the wedge. Filter to the test binary.
+          WEDGE_WATCH_COMM=wedge.test bash /work/ztensor/docs/bench/scripts/dstate-watchdog.sh &
+          echo "watchdog started pid $!" >> "$WEDGE_LOG"
+          # Run the repro. -timeout 0 so Go's own watchdog never kills it; the
+          # point is to observe the driver wedge. This line is expected to hang.
+          ZTENSOR_WEDGE_REPRO=1 WEDGE_LOG="$WEDGE_LOG" /work/wedge.test -test.run TestWedge106Repro -test.v -test.timeout 0
+          echo "repro returned (NO WEDGE)" >> "$WEDGE_LOG"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /opt/zerfoo/lib:/usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "6"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: wedge-out
+          mountPath: /work/wedge-out
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: wedge-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate
