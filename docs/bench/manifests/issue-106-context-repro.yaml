@@ -1,0 +1,88 @@
+# Issue #106 CONTEXT-replica reproduction (guarded by pod exit code).
+#
+# Runs TestWedge106Context: UploadWeights(model weights) -> UploadWeights(213k
+# samples+params) -> first-compute MatMuls, mirroring the CrossAsset GPU path.
+# The fresh-engine bare 213k upload does NOT wedge (proven); this adds the
+# production engine context to test whether THAT is the trigger.
+#
+# Verdict is the POD EXIT CODE (only reliable channel on this host):
+#   0 -> ALL PHASES COMPLETE, no wedge
+#   3 -> skipped (no CUDA)        5 -> a phase errored (not a wedge)
+#   a TRUE wedge leaves the pod stuck "running" forever; the last PHASEn line in
+#   the watchdog/repro log (if retrievable) localizes it.
+# Also runs dstate-watchdog.sh so, if it wedges, the kernel frame is captured to
+# the hostPath (best-effort) for later read.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue106-context
+  labels:
+    app: ztensor-wedge
+spec:
+  restartPolicy: Never
+  containers:
+    - name: repro
+      image: docker.io/library/golang:1.26-bookworm
+      workingDir: /work
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      args:
+        - "bash"
+        - "-c"
+        - |
+          set -eux
+          export GOTOOLCHAIN=auto
+          export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
+          export WEDGE_WATCH_OUT=/work/wedge-out/watchdog.log
+          export WEDGE_LOG=/work/wedge-out/ctx.log
+          export WEDGE_WATCH_INTERVAL=2
+          mkdir -p /work/wedge-out
+          : > "$WEDGE_WATCH_OUT"; : > "$WEDGE_LOG"
+          cd /work
+          git clone --depth 1 --branch fix/issue-106-wedge-repro https://github.com/zerfoo/ztensor.git
+          cd ztensor
+          echo "HEAD: $(git rev-parse HEAD)" >> "$WEDGE_LOG"
+          go test ./compute/ -run TestWedge106Context -c -o /work/wedge.test
+          WEDGE_WATCH_COMM=wedge.test bash /work/ztensor/docs/bench/scripts/dstate-watchdog.sh &
+          echo "watchdog started pid $!" >> "$WEDGE_LOG"
+          set +e
+          ZTENSOR_WEDGE_REPRO=1 WEDGE_LOG="$WEDGE_LOG" /work/wedge.test -test.run TestWedge106Context -test.v -test.timeout 0 > /tmp/testout.txt 2>&1
+          tc=$?
+          set -e
+          echo "go-test-exit: $tc"; tail -50 /tmp/testout.txt || true
+          if grep -q 'ALL PHASES COMPLETE' /tmp/testout.txt; then echo "VERDICT=ALL_PHASES_NO_WEDGE"; exit 0
+          elif grep -q 'err' /tmp/testout.txt && ! grep -q 'PHASE3 compute DONE' /tmp/testout.txt; then echo "VERDICT=PHASE_ERROR"; exit 5
+          elif grep -q 'SKIP' /tmp/testout.txt || ! grep -q 'PHASE1 upload-weights BEGIN' /tmp/testout.txt; then echo "VERDICT=SKIPPED_NO_CUDA"; exit 3
+          else echo "VERDICT=UNKNOWN"; exit 6
+          fi
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /opt/zerfoo/lib:/usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "6"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: wedge-out
+          mountPath: /work/wedge-out
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: wedge-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate
