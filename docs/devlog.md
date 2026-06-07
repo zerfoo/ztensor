@@ -1,5 +1,34 @@
 # ztensor Development Log
 
+## 2026-06-07: #111 -- shipped v1.8.2; minimal pre-fix repro does NOT wedge
+
+**Type:** finding
+**Tags:** cuda, gb10, #111, #106, capture, repro, release
+
+**Shipped:** The capture-aware ArenaPool fallback (PR #112) merged to main via
+rebase and released as **v1.8.2**. #111 auto-closed; #106 closed with a comment
+pointing to #111 as the real cause. Post-fix GB10 validation passed (pod
+guard-4, prior entry). Zero open ztensor issues.
+
+**Pre-fix re-wedge attempt (T10.2) -- did NOT reproduce (harmless):** Built a
+minimal pre-fix repro on a throwaway branch (no capture guard):
+StreamBeginCapture(stream) -> ArenaPool.Alloc(1 MiB into a 4 KiB arena) ->
+synchronous cudaMalloc during capture. Ran it on the GB10 under the out-of-band
+dstate-watchdog (pod ztensor-issue111-prefix-wedge). Result: the synchronous
+cudaMalloc **returned successfully** (non-nil ptr, nil err) in 0.33s; test
+PASSED; watchdog recorded **0 D-state threads**. No wedge, no host restart.
+
+**Why it didn't wedge:** a synchronous cudaMalloc during an *empty* capture (no
+GPU work recorded yet) is fine on GB10. The real #111 hang needs the capture to
+be actively recording a non-trivial graph (real kernel launches queued from the
+crossasset forward pass) when the arena-exhaustion cudaMalloc hits -- which the
+pinned #111 production goroutine stack already captured. This matches every
+prior pure-ztensor attempt: bare primitives do not reproduce the wedge. The
+authoritative pre-fix evidence remains the #111 stack, not a synthetic repro.
+The fix is validated by the post-fix guard test (the guard refuses the
+synchronous fallback during ANY active capture, so the dangerous call can never
+be issued regardless of what the capture is recording).
+
 ## 2026-06-06: #111 -- capture-aware ArenaPool fallback (root-cause fix for the GB10 wedge)
 
 **Type:** finding

@@ -317,7 +317,7 @@ gone.
   - Acceptance: with the fix, the pod completes (exit-code-guarded, since Spark
     drops stdout) and the out-of-band D-state watchdog records zero D-state
     threads.
-- [ ] T10.2 Run the same repro built from the PRE-fix commit (or with the guard
+- [x] T10.2 Run the same repro built from the PRE-fix commit (or with the guard
   disabled) once, under the watchdog, to confirm the repro actually exercises the
   wedge path (user opted in 2026-06-06 to confirm the pre-fix wedge). Capture the
   pinned frame to disk via the out-of-band hostPath watchdog. Get a final
@@ -336,24 +336,24 @@ gone.
 Acceptance: PR merged rebase-and-merge; release tag cut; #111 closed; #106
 resolved with a pointer to #111.
 
-- [ ] T11.1 Open the PR against main from `fix/issue-106-wedge-repro` (decided
+- [x] T11.1 Open the PR against main from `fix/issue-106-wedge-repro` (decided
   2026-06-06: continue on the investigation branch, carrying its devlog/manifest
   history + the #111 fix). Title the PR for #111 and reference #106.  Owner: TBD
   Est: 30m  verifies: [UC-111]
   - Dependencies: T9.2, T10.3
-- [ ] T11.2 PR CI green; rebase-and-merge into main (not squash, not merge
+- [x] T11.2 PR CI green; rebase-and-merge into main (not squash, not merge
   commit)  Owner: TBD  Est: 30m  verifies: [UC-111]
   - Dependencies: T11.1
-- [ ] T11.3 release-please cuts the patch release; verify tag + GitHub release.
+- [x] T11.3 release-please cuts the patch release; verify tag + GitHub release.
   ztensor is a library, so the released module version is the deployment
   artifact.  Owner: TBD  Est: 20m  verifies: [infrastructure]
   - Dependencies: T11.2
-- [ ] T11.4 #111 closed on merge (link the PR). Post a comment on #106 stating
+- [x] T11.4 #111 closed on merge (link the PR). Post a comment on #106 stating
   the chunking defensive bound shipped in v1.8.1 and the real wedge fix is the
   capture-aware arena fallback in #111; close #106 (or confirm it auto-resolves)
   referencing #111.  Owner: TBD  Est: 20m  verifies: [UC-106, UC-111]
   - Dependencies: T11.3
-- [ ] T11.5 Definition of done check: merged + released + verified live on GB10
+- [x] T11.5 Definition of done check: merged + released + verified live on GB10
   (T10) + reported honestly. If GB10 verification (E10) could not complete in
   session, state the specific blocker here and mark this task blocked rather than
   claiming done.  Owner: TBD  Est: 15m  verifies: [infrastructure]
@@ -401,15 +401,15 @@ E11 needs E10.
 - [x] T9.2 `go test ./...` green on CPU  verifies: [infrastructure]
 
 ### Wave 6: GB10 validation (1 agent)
-- [ ] T10.2 (optional, gated) pre-fix repro confirms wedge path  verifies: [UC-111]
+- [x] T10.2 (optional, gated) pre-fix repro confirms wedge path  verifies: [UC-111]
 - [x] T10.3 Devlog entry for GB10 run  verifies: [infrastructure]
 
 ### Wave 7: Ship (1 agent, sequential)
-- [ ] T11.1 Choose branch + open PR to main  verifies: [UC-111]
-- [ ] T11.2 CI green + rebase-and-merge  verifies: [UC-111]
-- [ ] T11.3 Release tag cut  verifies: [infrastructure]
-- [ ] T11.4 Close #111; resolve #106 with pointer to #111  verifies: [UC-106, UC-111]
-- [ ] T11.5 Definition-of-done honesty check  verifies: [infrastructure]
+- [x] T11.1 Choose branch + open PR to main  verifies: [UC-111]
+- [x] T11.2 CI green + rebase-and-merge  verifies: [UC-111]
+- [x] T11.3 Release tag cut  verifies: [infrastructure]
+- [x] T11.4 Close #111; resolve #106 with pointer to #111  verifies: [UC-106, UC-111]
+- [x] T11.5 Definition-of-done honesty check  verifies: [infrastructure]
 
 ## Timeline and Milestones
 
