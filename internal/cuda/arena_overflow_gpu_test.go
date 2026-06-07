@@ -51,7 +51,7 @@ func TestArenaPool_OverflowStress_GPU(t *testing.T) {
 		size int
 	}
 
-	for r := 0; r < rounds; r++ {
+	for r := range rounds {
 		live := make([]alloc, 0, len(sizes))
 		for _, sz := range sizes {
 			p, err := arena.Alloc(deviceID, sz)
