@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/zerfoo/ztensor/compare/v1.8.1...v1.8.2) (2026-06-07)
+
+
+### Bug Fixes
+
+* **cuda:** capture-aware ArenaPool fallback to stop GB10 graph-capture wedge ([b2d47b5](https://github.com/zerfoo/ztensor/commit/b2d47b51bd7e8fec9b9c574ca450b4977603964e)), closes [#111](https://github.com/zerfoo/ztensor/issues/111) [#111](https://github.com/zerfoo/ztensor/issues/111)
+
 ## [1.8.1](https://github.com/zerfoo/ztensor/compare/v1.8.0...v1.8.1) (2026-06-06)
 
 
