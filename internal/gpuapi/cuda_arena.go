@@ -100,6 +100,14 @@ func (p *CUDAArenaPool) SetResetFloor(floor int) {
 	p.inner.SetResetFloor(floor)
 }
 
+// SetOverflowStream wires the engine stream used for the arena's exhaustion
+// fallback. When set, an exhausted Alloc allocates via cudaMallocAsync on this
+// stream instead of a synchronous cudaMalloc, which thrashes GB10 unified memory
+// under pressure (issue #115, ADR 005).
+func (p *CUDAArenaPool) SetOverflowStream(s *cuda.Stream) {
+	p.inner.SetOverflowStream(s)
+}
+
 // UsedBytes returns the current arena offset (bytes in use).
 func (p *CUDAArenaPool) UsedBytes() int {
 	return p.inner.UsedBytes()
