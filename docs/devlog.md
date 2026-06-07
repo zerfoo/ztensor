@@ -1,5 +1,48 @@
 # ztensor Development Log
 
+## 2026-06-07: #115 -- stream-ordered ArenaPool overflow (GB10 training freeze)
+
+**Type:** finding
+**Tags:** cuda, gb10, #115, #111, arena, overflow, cudaMallocAsync, training
+
+**Problem:** After the #111 capture guard (v1.8.2), Wolf train-crossasset -gpu
+still froze on GB10 at step=0. `ArenaPool.Alloc`'s exhaustion fallback used a
+synchronous `cudaMalloc` for NORMAL (non-capture) training fwd/bwd; on GB10
+unified memory that faults into do_swap_page / filemap_fault and stalls
+(goroutine 1 in the fallback `cuda.Malloc`, D-state sibling in
+folio_wait_bit_common). Even ZERFOO_ARENA_SIZE_GB=64 overflows: a full-batch
+fwd+bwd (~16,408 samples x 12 scales) retains all forward activations for
+backprop, and the arena resets only between steps -- so the overflow is
+legitimate and any synchronous fallback wedges.
+
+**Root cause:** the exhaustion fallback is a synchronous `cudaMalloc`, pathological
+on GB10 under memory pressure. The #111 guard correctly does not fire for
+non-capture ops, so the synchronous malloc runs.
+
+**Fix (commits d0deb4b + 7615ba4, ADR 005):** give `ArenaPool` an `overflowStream`
+(the engine stream, wired in compute/gpu_engine.go). When exhausted, the #111
+guard does not fire, and the fallback is not capture-aware, the overflow allocates
+via `cudaMallocAsync` on that stream (stream-ordered, non-blocking; the CUDA
+stream-ordered pool does not page-fault-thrash) and frees via `cudaFreeAsync`. The
+#111 capture guard stays first and takes precedence; the engine-driven capture
+path is unchanged. Async calls routed through swappable arenaMallocAsyncFn /
+arenaFreeAsyncFn for CPU testability (4 routing unit tests).
+
+**GB10 validation (PASS):** TestArenaPool_OverflowStress_GPU ran on GB10 via Spark
+pod ztensor-issue115-overflow-1 (commit efc8467): 100 rounds x 6 sizes
+(48 B .. 4 MiB) overflowing a 1 MiB arena through cudaMallocAsync, freed each
+round via cudaFreeAsync, then stream.Synchronize() -- all completed in 0.38s, no
+D-state, no hang. VALIDATION_OK. This proves the overflow MECHANISM no longer
+wedges on the hardware where the synchronous path did.
+
+**Remaining (honest):** the end-to-end proof -- Wolf train-crossasset progressing
+past step=0 on full COIN bars -- requires rebuilding Wolf against the ztensor fix
+and a full training run, which is outside this repo. If the full-batch working set
+genuinely approaches GB10's 122 GB unified memory, that would be a true OOM (not a
+fallback-mechanism problem), remedied by a smaller batch / segmented arena
+(follow-up), and the stress test alone would not surface it. The mechanism fix is
+validated; the Wolf-level confirmation is the stated blocker.
+
 ## 2026-06-07: #111 -- shipped v1.8.2; minimal pre-fix repro does NOT wedge
 
 **Type:** finding
