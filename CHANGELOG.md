@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/zerfoo/ztensor/compare/v1.8.2...v1.9.0) (2026-06-07)
+
+
+### Features
+
+* **gpuapi:** CUDAArenaPool.SetOverflowStream passthrough ([#115](https://github.com/zerfoo/ztensor/issues/115)) ([b1d97ba](https://github.com/zerfoo/ztensor/commit/b1d97ba817785b9d4daa5e26e42a24d6c334c6ea))
+
+
+### Bug Fixes
+
+* **compute:** wire engine stream as arena overflow stream ([#115](https://github.com/zerfoo/ztensor/issues/115)) ([a04e554](https://github.com/zerfoo/ztensor/commit/a04e55413fbf5d181873fb9bc9cea637b8be3c48))
+* **cuda:** stream-ordered ArenaPool overflow to stop GB10 training freeze ([833bbc6](https://github.com/zerfoo/ztensor/commit/833bbc696c3f2f22ed60d18d0609e35871af9cb4)), closes [#115](https://github.com/zerfoo/ztensor/issues/115)
+
 ## [1.8.2](https://github.com/zerfoo/ztensor/compare/v1.8.1...v1.8.2) (2026-06-07)
 
 
