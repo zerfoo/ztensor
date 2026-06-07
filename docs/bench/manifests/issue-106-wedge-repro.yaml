@@ -41,11 +41,12 @@ spec:
           export WEDGE_WATCH_OUT=/work/wedge-out/watchdog.log
           export WEDGE_LOG=/work/wedge-out/repro.log
           export WEDGE_WATCH_INTERVAL=2
-          # Network exfil endpoint (ephemeral webhook.site bin). Captured frames
-          # and repro phase markers are POSTed here, surviving the wedge and the
-          # hung Spark exec/logs/delete channels. Data is kernel stacks bound for
-          # the public issue #106.
-          export WEDGE_POST_URL="https://webhook.site/ad6118f6-5b29-4222-8dc2-2d0b2438e6c4"
+          # Optional out-of-band frame sink. When the data plane wedges, the
+          # watchdog POSTs captured /proc frames + phase markers to this URL so
+          # they survive the hung Spark exec/logs/delete channels. Set it to your
+          # own ephemeral endpoint at run time; left empty here so no endpoint is
+          # baked into the repo. The watchdog skips POSTing when it is unset.
+          export WEDGE_POST_URL="${WEDGE_POST_URL:-}"
           mkdir -p /work/wedge-out
           : > "$WEDGE_WATCH_OUT"; : > "$WEDGE_LOG"
           cd /work
