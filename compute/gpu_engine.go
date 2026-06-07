@@ -226,6 +226,11 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 	arenaPool, err := gpuapi.NewCUDAArenaPool(dev, int(arenaSize), fallbackPool)
 	if err == nil {
 		cuda.SetDefaultArenaPool(arenaPool.Inner())
+		// Issue #115 / ADR 005: route the arena exhaustion fallback through
+		// cudaMallocAsync on the engine stream (the stream kernels launch on), so
+		// overflow allocations are stream-ordered and do not page-fault-thrash
+		// GB10 unified memory the way a synchronous cudaMalloc does.
+		arenaPool.SetOverflowStream(cuda.StreamFromPtr(stream.Ptr()))
 	}
 	if err != nil {
 		l.Warn("arena pool not available, falling back to MemPool", "error", err.Error())
