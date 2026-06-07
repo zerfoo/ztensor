@@ -1,5 +1,55 @@
 # ztensor Development Log
 
+## 2026-06-06: #111 -- capture-aware ArenaPool fallback (root-cause fix for the GB10 wedge)
+
+**Type:** finding
+**Tags:** cuda, gb10, #111, #106, capture, arena, fix
+
+**Problem:** The GB10 crossasset training wedge (chased for weeks as #106) was
+pinned in #111 to `ArenaPool.Alloc`'s exhaustion fallback issuing a synchronous
+`cudaMalloc` during a graph-driven CUDA graph capture. The prior devlog entries
+(below) exonerated the upload path; the hang is in the first captured forward
+pass (gpuSum output alloc -> arena exhausted -> synchronous fallback malloc ->
+GB10 driver hang).
+
+**Root cause:** Two capture entry points. `compute.GPUEngine.BeginCapture()`
+sets the pool capture-aware (cudaMallocAsync, safe). But `graph.(*Graph).Forward`
+calls `cuda.StreamBeginCapture(g.stream)` directly (cuda_graph.go:406) and never
+sets the pool's capture stream, so `MemPool.IsCapturing()` is false and the arena
+exhaustion fallback (arena.go) does a plain synchronous `cudaMalloc` deep inside
+the captured region. On GB10 (sm_121) that hangs the driver (the #93 class).
+
+**Fix (commit 540d396):** Track active captures with a process-level *set* of
+capturing stream handles in package `cuda` (capture_state.go) -- a set, not a
+counter, so the watchdog force-end + normal end double-end is idempotent. Marked
+on `StreamBeginCapture` success, cleared on `StreamEndCapture`. `ArenaPool.Alloc`
+now refuses the synchronous fallback when `CaptureActive() && !fallback.IsCapturing()`,
+returning the new `ErrCaptureUnsafeAlloc`. The engine-driven capture-aware
+fallback (cudaMallocAsync) is preserved. CPU unit tests cover the registry
+set-semantics (incl. double-unmark) and the arena guard's three cases.
+
+**Caller audit (E7):** All ~130 `e.pool.Alloc` sites in compute/ check the error
+via the Go idiom; none discard it. The pinned culprit `gpuSum`
+(gpu_kernels.go:1019) falls back to CPU on alloc error, so the refusal degrades
+gracefully instead of hanging. The graph layer (cuda_graph.go:454) treats a
+propagated captured-instruction error as a clean capture failure: it ends
+capture (now also clearing the capture flag), restores KV-cache state, and
+re-runs the region uncaptured. Caveat: a CPU fallback that fires *mid-capture*
+(rather than propagating) can leave a hole in the captured graph; this is why the
+perf-correct partner is arena sizing.
+
+**Arena sizing (E8) already shipped:** `ZERFOO_ARENA_SIZE_GB` (compute/gpu_engine.go,
+default 2 GB, bounds [1,128], validated, tested in compute/arena_size_test.go)
+already exists. The crossasset training working set exceeded 2 GB, exhausting the
+arena mid-capture. Operational mitigation: raise `ZERFOO_ARENA_SIZE_GB` for
+crossasset training so the fallback never fires during capture -- the guard is
+the no-hang backstop, correct sizing keeps the captured graph intact.
+
+**Status:** CPU build/vet/lint/test green (27 packages, -race clean on cuda+graph).
+GB10 hardware validation pending (E10): a graph-capture + exhausted-arena repro
+via Spark to confirm no D-state, plus a one-shot pre-fix re-wedge confirmation
+(user-authorized, host-restart risk acknowledged).
+
 ## 2026-06-06: #106 -- context-replica does NOT wedge; suspect = CUDA graph capture
 
 **Type:** finding
