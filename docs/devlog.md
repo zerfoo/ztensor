@@ -45,10 +45,26 @@ arena mid-capture. Operational mitigation: raise `ZERFOO_ARENA_SIZE_GB` for
 crossasset training so the fallback never fires during capture -- the guard is
 the no-hang backstop, correct sizing keeps the captured graph intact.
 
-**Status:** CPU build/vet/lint/test green (27 packages, -race clean on cuda+graph).
-GB10 hardware validation pending (E10): a graph-capture + exhausted-arena repro
-via Spark to confirm no D-state, plus a one-shot pre-fix re-wedge confirmation
-(user-authorized, host-restart risk acknowledged).
+**GB10 validation (PASS):** `TestArenaPool_CaptureGuard_GPU` ran on the GB10 via
+Spark pod `ztensor-issue111-guard-4` (commit cf3694e). It began a REAL
+`StreamBeginCapture`, confirmed `CaptureActive()` true, forced an ArenaPool
+exhaustion fallback (1 MiB alloc into a 4 KiB arena), and the guard returned
+`ErrCaptureUnsafeAlloc` in 0.32s -- no synchronous cudaMalloc, no D-state, no
+hang (a wedge would never return). After `StreamEndCapture`, `CaptureActive()`
+went false and a normal fallback alloc succeeded. `VALIDATION_OK`, exit 0.
+
+**Spark gotcha:** Spark v1.13.1's YAML parser mangles `args:` literal block
+scalars (`- |`) -- a bare `|` leaked to bash ("syntax error near unexpected
+token |"). Workaround that worked: base64-encode the whole script and deliver it
+as a single-line flow-style arg
+(`args: ["bash","-c","echo <B64> > /tmp/r.b64; base64 -d /tmp/r.b64 > /tmp/run.sh; bash /tmp/run.sh"]`),
+and `mkdir -p /work` since `workingDir` does not create the dir.
+
+**Status:** CPU build/vet/lint/test green (27 packages, -race clean on
+cuda+graph); GB10 capture-guard validated live. Pre-fix re-wedge confirmation
+(T10.2) is optional/confirmatory only -- the #111 goroutine stack already proves
+the pre-fix hang, and deliberately re-wedging the shared GB10 risks a host
+restart, so it is gated on a final user go-ahead.
 
 ## 2026-06-06: #106 -- context-replica does NOT wedge; suspect = CUDA graph capture
 

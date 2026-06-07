@@ -307,7 +307,7 @@ arena completes on GB10 with no D-state wedge (alloc refused -> CPU fallback or
 clean uncaptured re-run), proving the synchronous-malloc-under-capture path is
 gone.
 
-- [ ] T10.1 Author a repro that exercises the graph-driven capture path
+- [x] T10.1 Author a repro that exercises the graph-driven capture path
   (graph/cuda_graph.go) with an arena small enough to force exhaustion during a
   captured forward pass (e.g., a small `NewArenaPool` capacity + a LayerNorm/
   ReduceSum step like the pinned stack). Build an arm64 image; submit a Spark Pod
@@ -326,7 +326,7 @@ gone.
   - Dependencies: T10.1
   - Risk: intentionally wedging the shared GB10 can leave an unkillable pod /
     need a host restart -- confirm timing with the user right before running.
-- [ ] T10.3 Devlog entry with pod name, commit, arena size, observed behavior
+- [x] T10.3 Devlog entry with pod name, commit, arena size, observed behavior
   (refusal + CPU fallback / clean re-run), watchdog D-state count, timing.
   Owner: TBD  Est: 20m  verifies: [infrastructure]
   - Dependencies: T10.1
@@ -390,7 +390,7 @@ E11 needs E10.
 - [x] T6.2 Guard unit test (fake fallback + capture toggle)  verifies: [UC-111]
 - [x] T7.1 Enumerate arena-alloc call sites in capture region  verifies: [UC-111]
 - [x] T8.3 Sizing knob parse/default test  verifies: [UC-111]
-- [ ] T10.1 Author capture+exhausted-arena repro + Spark manifest  verifies: [UC-111]
+- [x] T10.1 Author capture+exhausted-arena repro + Spark manifest  verifies: [UC-111]
 
 ### Wave 4: Audit fixes + capture-failure check (2 agents)
 - [x] T7.2 Fix any ungraceful alloc-error call site  verifies: [UC-111]
@@ -402,7 +402,7 @@ E11 needs E10.
 
 ### Wave 6: GB10 validation (1 agent)
 - [ ] T10.2 (optional, gated) pre-fix repro confirms wedge path  verifies: [UC-111]
-- [ ] T10.3 Devlog entry for GB10 run  verifies: [infrastructure]
+- [x] T10.3 Devlog entry for GB10 run  verifies: [infrastructure]
 
 ### Wave 7: Ship (1 agent, sequential)
 - [ ] T11.1 Choose branch + open PR to main  verifies: [UC-111]
