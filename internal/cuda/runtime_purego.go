@@ -377,6 +377,10 @@ func StreamBeginCapture(s *Stream) error {
 	if ret != cudaSuccess {
 		return fmt.Errorf("cudaStreamBeginCapture failed: %s", cudaErrorString(ret))
 	}
+	// Record the active capture so capture-unaware allocators (ArenaPool
+	// exhaustion fallback) refuse synchronous cudaMalloc while it is in flight.
+	// See docs/adr/004-capture-aware-arena-fallback.md and issue #111.
+	markStreamCapturing(s.handle)
 	return nil
 }
 
@@ -388,6 +392,10 @@ func StreamEndCapture(s *Stream) (*Graph, error) {
 	}
 	var graphHandle uintptr
 	ret := ccall(l.cudaStreamEndCapture, s.handle, uintptr(unsafe.Pointer(&graphHandle)))
+	// The capture is over for this stream regardless of whether the runtime
+	// returned a graph or an error, so clear the active-capture flag now. This
+	// is idempotent, so the watchdog force-end and the normal end may both run.
+	unmarkStreamCapturing(s.handle)
 	if ret != cudaSuccess {
 		return nil, fmt.Errorf("cudaStreamEndCapture failed: %s", cudaErrorString(ret))
 	}
