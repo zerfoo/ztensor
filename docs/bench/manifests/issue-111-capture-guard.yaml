@@ -1,0 +1,82 @@
+# Issue #111 GB10 validation pod (guarded).
+#
+# Clones the public ztensor repo at the fix branch and runs the cuda-level
+# capture-guard test on the GB10. TestArenaPool_CaptureGuard_GPU begins a REAL
+# CUDA stream capture, forces an ArenaPool exhaustion fallback (1 MiB alloc into
+# a 4 KiB arena), and asserts the guard returns ErrCaptureUnsafeAlloc instead of
+# issuing a synchronous cudaMalloc -- the call that wedged the GB10 driver in
+# issue #111. It also proves the capture marking works on real CUDA
+# (CaptureActive() true during capture, false after) and that the fallback
+# resumes normally once capture ends.
+#
+# Spark drops container stdout for completed pods, so correctness is encoded in
+# the EXIT CODE: the script exits non-zero unless the GPU test actually PASSED
+# (a CUDA-unavailable SKIP is treated as a hard failure -- we require
+# real-hardware validation, not a skip).
+#
+# This pod is SAFE with the fix in place: the guard refuses before any
+# synchronous cudaMalloc, so no wedge can occur. Do NOT run an equivalent test
+# against pre-fix arena code on the shared GB10 without coordination -- that
+# path deliberately wedges the host.
+#
+# Notes:
+#   - golang:1.26-bookworm (arm64) + GOTOOLCHAIN=auto. Do NOT pass `-tags cuda`.
+#   - libkernels.so is mounted from the host at /opt/zerfoo/lib (parity with the
+#     issue-106 pod); the test itself only needs the CUDA runtime.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue111-capture-guard
+  labels:
+    app: ztensor-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: docker.io/library/golang:1.26-bookworm
+      workingDir: /work
+      args:
+        - "bash"
+        - "-c"
+        - |
+          set -euo pipefail
+          export GOTOOLCHAIN=auto
+          export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
+          cd /work
+          git clone --depth 1 --branch fix/issue-106-wedge-repro https://github.com/zerfoo/ztensor.git
+          cd ztensor
+          echo "HEAD: $(git rev-parse HEAD)"
+          set +e
+          go test ./internal/cuda/ -run 'TestArenaPool_CaptureGuard_GPU' -v -timeout 120s > /tmp/out.txt 2>&1
+          code=$?
+          set -e
+          cat /tmp/out.txt
+          echo "go-test-exit: $code"
+          grep -q -- '--- PASS: TestArenaPool_CaptureGuard_GPU' /tmp/out.txt || { echo "FATAL: capture-guard test did not PASS"; exit 3; }
+          if grep -q -- '--- SKIP: TestArenaPool_CaptureGuard_GPU' /tmp/out.txt; then echo "FATAL: capture-guard test SKIPPED (no CUDA on hardware)"; exit 4; fi
+          test "$code" -eq 0 || { echo "FATAL: go test exit $code"; exit "$code"; }
+          echo "VALIDATION_OK: capture guard refused sync alloc during real capture on GB10"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /opt/zerfoo/lib:/usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
