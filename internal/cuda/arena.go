@@ -144,6 +144,17 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 
 	// Arena exhausted -- fall back to MemPool.
 	a.misses.Add(1)
+
+	// Capture-aware guard (issue #111, ADR 004): if a CUDA graph capture is
+	// active and the fallback is NOT capture-aware, it would issue a synchronous
+	// cudaMalloc, which hangs the GB10 driver mid-capture. Refuse instead so the
+	// caller can fall back to CPU or fail the capture cleanly. When the fallback
+	// IS capture-aware (engine-driven BeginCapture set its capture stream) the
+	// async malloc is graph-safe, so this path is preserved.
+	if CaptureActive() && !a.fallback.IsCapturing() {
+		return nil, ErrCaptureUnsafeAlloc
+	}
+
 	ptr, err := a.fallback.Alloc(deviceID, byteSize)
 	if err != nil {
 		return nil, err
