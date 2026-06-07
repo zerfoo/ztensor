@@ -63,7 +63,25 @@ type ArenaPool struct {
 	fallback *MemPool
 	// fallbackPtrs tracks pointers allocated from fallback so Free can route them.
 	fallbackPtrs map[unsafe.Pointer]int // ptr -> byteSize
+
+	// overflowStream, when set, makes the exhaustion fallback use stream-ordered
+	// cudaMallocAsync instead of a synchronous cudaMalloc. A synchronous
+	// cudaMalloc under memory pressure page-fault-thrashes GB10 unified memory
+	// and wedges training; the stream-ordered pool does not. See issue #115 and
+	// docs/adr/005-stream-ordered-arena-overflow.md.
+	overflowStream *Stream
+	// asyncFallbackPtrs tracks pointers allocated via the async overflow path so
+	// Free routes them to cudaFreeAsync on the overflow stream. ptr -> byteSize.
+	asyncFallbackPtrs map[unsafe.Pointer]int
 }
+
+// arenaMallocAsyncFn and arenaFreeAsyncFn are indirection points for the
+// stream-ordered arena overflow path (issue #115). Tests swap them to assert
+// routing decisions without a CUDA device.
+var (
+	arenaMallocAsyncFn = MallocAsync
+	arenaFreeAsyncFn   = FreeAsync
+)
 
 // NewArenaPool allocates a contiguous GPU region of the given capacity bytes
 // on the specified device. A fallback MemPool handles any overflow.
@@ -155,6 +173,29 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 		return nil, ErrCaptureUnsafeAlloc
 	}
 
+	// Stream-ordered overflow (issue #115, ADR 005): when an overflow stream is
+	// set and the fallback is not in capture-aware mode (engine-driven capture,
+	// which already routes through its capture stream), allocate via
+	// cudaMallocAsync on the overflow stream instead of a synchronous cudaMalloc.
+	// On GB10 unified memory a synchronous cudaMalloc under pressure
+	// page-fault-thrashes and freezes training; the stream-ordered pool does not.
+	a.mu.Lock()
+	overflow := a.overflowStream
+	a.mu.Unlock()
+	if overflow != nil && !a.fallback.IsCapturing() {
+		ptr, err := arenaMallocAsyncFn(aligned, overflow)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		if a.asyncFallbackPtrs == nil {
+			a.asyncFallbackPtrs = make(map[unsafe.Pointer]int)
+		}
+		a.asyncFallbackPtrs[ptr] = byteSize
+		a.mu.Unlock()
+		return ptr, nil
+	}
+
 	ptr, err := a.fallback.Alloc(deviceID, byteSize)
 	if err != nil {
 		return nil, err
@@ -210,6 +251,15 @@ func (a *ArenaPool) insertFreeBlock(blk freeBlock) {
 // Fallback pointers are returned to the MemPool.
 func (a *ArenaPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 	a.mu.Lock()
+	// Stream-ordered overflow pointers (issue #115) free via cudaFreeAsync on the
+	// overflow stream so the free is ordered after the kernels that used them.
+	if _, ok := a.asyncFallbackPtrs[ptr]; ok {
+		delete(a.asyncFallbackPtrs, ptr)
+		overflow := a.overflowStream
+		a.mu.Unlock()
+		_ = arenaFreeAsyncFn(ptr, overflow)
+		return
+	}
 	if _, ok := a.fallbackPtrs[ptr]; ok {
 		delete(a.fallbackPtrs, ptr)
 		a.mu.Unlock()
@@ -261,6 +311,18 @@ func (a *ArenaPool) Reset() {
 	a.freeList = a.freeList[:0]
 	a.mu.Unlock()
 	a.resets.Add(1)
+}
+
+// SetOverflowStream sets the stream used for the arena's exhaustion fallback.
+// When set, an exhausted Alloc that is not refused by the capture guard
+// allocates via cudaMallocAsync on this stream (stream-ordered, non-blocking)
+// instead of a synchronous cudaMalloc, which thrashes GB10 unified memory under
+// pressure (issue #115, ADR 005). The stream MUST be the one the consuming
+// kernels launch on, so the allocation is ordered before its uses.
+func (a *ArenaPool) SetOverflowStream(s *Stream) {
+	a.mu.Lock()
+	a.overflowStream = s
+	a.mu.Unlock()
 }
 
 // SetResetFloor sets the minimum offset that Reset will rewind to. Allocations
