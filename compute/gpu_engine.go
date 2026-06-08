@@ -232,6 +232,28 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		// GB10 unified memory the way a synchronous cudaMalloc does.
 		arenaPool.SetOverflowStream(cuda.StreamFromPtr(stream.Ptr()))
 
+		// Issue #118: harden the async overflow path. cudaMallocAsync draws from
+		// the device's stream-ordered pool; with the default release threshold of
+		// zero, every freed overflow block is returned to the OS and the next
+		// overflow must fault its pages back in -- on GB10 unified memory that
+		// faults in folio_wait_bit and can wedge training. Set the threshold so
+		// freed blocks stay resident. Default to the arena capacity; override with
+		// ZERFOO_OVERFLOW_POOL_RETAIN_GB. No-op when the mempool symbols are absent.
+		retainBytes := uint64(arenaSize)
+		if raw := os.Getenv("ZERFOO_OVERFLOW_POOL_RETAIN_GB"); raw != "" {
+			if gb, perr := strconv.ParseInt(raw, 10, 64); perr == nil && gb > 0 {
+				retainBytes = uint64(gb) * (1 << 30)
+			} else {
+				l.Warn("ZERFOO_OVERFLOW_POOL_RETAIN_GB invalid; using arena capacity", "value", raw)
+			}
+		}
+		if terr := cuda.SetMemPoolReleaseThreshold(dev, retainBytes); terr != nil {
+			l.Warn("failed to set async overflow pool release threshold", "error", terr.Error())
+		} else {
+			l.Info("async overflow pool release threshold set",
+				"retainBytes", fmt.Sprintf("%d", retainBytes))
+		}
+
 		// Issue #118: arena diagnostics. Log the resolved arena configuration at
 		// init, and route the one-shot first-overflow snapshot to the engine
 		// logger so a GB10 freeze leaves a record of why the overflow path was
