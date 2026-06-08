@@ -22,8 +22,13 @@ func swapArenaOverflowLogger(t *testing.T) *[]string {
 // GPU-free arena (base is nil; bump pointers are never dereferenced) and
 // asserts the diagnostics snapshot reports the expected counters (issue #118).
 func TestArenaDiagnostics_Fields(t *testing.T) {
+	// Back the arena with a real host buffer so the bump path's unsafe.Add stays
+	// in-bounds under -race (checkptr). The pointers are never dereferenced; only
+	// the offset accounting is asserted.
+	buf := make([]byte, 4096)
 	a := &ArenaPool{
-		capacity:     4096,
+		base:         unsafe.Pointer(&buf[0]),
+		capacity:     len(buf),
 		fallback:     NewMemPool(),
 		fallbackPtrs: make(map[unsafe.Pointer]int),
 	}
