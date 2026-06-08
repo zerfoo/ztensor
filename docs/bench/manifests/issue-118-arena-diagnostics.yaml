@@ -1,0 +1,73 @@
+# Issue #118 GB10 validation pod (guarded).
+#
+# Clones the ztensor #118 branch and runs TestArenaPool_DiagnosticsAndThreshold_GPU
+# on the GB10. The test sets the stream-ordered pool release threshold (the #118
+# async-overflow hardening), overflows a 1 MiB arena 200 rounds through
+# cudaMallocAsync, captures and PRINTS the first-overflow diagnostic, and syncs
+# the stream. A wedge (the pre-#118 failure mode) would hang before the sync.
+#
+# Correctness is encoded in the EXIT CODE (Spark drops stdout for completed pods):
+# the script exits non-zero unless the GPU test PASSED. A CUDA-unavailable SKIP is
+# a hard failure -- we require real-hardware validation. The first-overflow report
+# line (ARENA_FIRST_OVERFLOW ...) is echoed so it can be read from streamed logs.
+#
+# Spark v1.13.1 mangles YAML literal block scalars in args (a bare `|` leaks to
+# bash). Deliver the script base64-encoded as a single-line flow arg instead:
+#   B64=$(base64 -i run.sh | tr -d '\n')
+#   args: ["bash","-c","echo $B64 > /tmp/r.b64; base64 -d /tmp/r.b64 > /tmp/run.sh; bash /tmp/run.sh"]
+# See docs/devlog.md 2026-06-07 for the gotcha. The script body:
+#
+#   set -euo pipefail
+#   export GOTOOLCHAIN=auto
+#   export LD_LIBRARY_PATH=/opt/zerfoo/lib:/usr/local/cuda/lib64
+#   mkdir -p /work && cd /work
+#   git clone --depth 1 --branch fix/issue-118-arena-diagnostics-hardening https://github.com/zerfoo/ztensor.git
+#   cd ztensor
+#   echo "HEAD: $(git rev-parse HEAD)"
+#   set +e
+#   go test ./internal/cuda/ -run TestArenaPool_DiagnosticsAndThreshold_GPU -v -timeout 180s > /tmp/out.txt 2>&1
+#   code=$?
+#   set -e
+#   cat /tmp/out.txt
+#   grep -- 'ARENA_FIRST_OVERFLOW' /tmp/out.txt || true
+#   grep -q -- '--- PASS: TestArenaPool_DiagnosticsAndThreshold_GPU' /tmp/out.txt || { echo FATAL: not PASS; exit 3; }
+#   grep -q -- '--- SKIP: TestArenaPool_DiagnosticsAndThreshold_GPU' /tmp/out.txt && { echo FATAL: SKIPPED no CUDA; exit 4; }
+#   test "$code" -eq 0 || { echo FATAL: go test exit $code; exit "$code"; }
+#   echo VALIDATION_OK: arena diagnostics + threshold overflow stress passed on GB10
+#
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-issue118-diagnostics
+  labels:
+    app: ztensor-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: docker.io/library/golang:1.26-bookworm
+      args: ["bash", "-c", "echo <BASE64> > /tmp/r.b64; base64 -d /tmp/r.b64 > /tmp/run.sh; bash /tmp/run.sh"]
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /opt/zerfoo/lib:/usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
