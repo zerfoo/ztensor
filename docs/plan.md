@@ -2,426 +2,374 @@
 
 ## Title
 
-Stop the GB10 training freeze: make the ArenaPool exhaustion fallback
-stream-ordered (cudaMallocAsync) instead of a synchronous cudaMalloc that
-thrashes GB10 unified memory (issue #115).
+Close the GB10 crossasset training freeze (issue #118): the v1.9.0 stream-ordered
+arena overflow shipped, but training still does not complete one step. Add arena
+diagnostics, find why a 48 KB alloc on the first sample overflows a 64 GB arena,
+and harden the async overflow path so it cannot wedge GB10 even if reached.
 
 ## Context
 
 ### Problem statement
 
-After the #111 capture guard shipped in v1.8.2, Wolf `train-crossasset -gpu` still
-freezes on the NVIDIA GB10 (sm_121, unified memory) at `step=0`. The capture
-guard was necessary but not sufficient.
+With ztensor **v1.9.0** (issue #115, stream-ordered overflow via cudaMallocAsync),
+Wolf `train-crossasset -gpu` on the NVIDIA GB10 (sm_121, unified memory) STILL
+freezes in the first `ComputeGradients` (step=0). The v1.9.0 fix changed the
+overflow path from synchronous `cudaMalloc` to `cudaMallocAsync`, but two distinct
+problems remain:
 
-`ArenaPool.Alloc`'s exhaustion fallback issues a **synchronous `cudaMalloc`**
-(`internal/cuda/arena.go`, the path AFTER the #111 guard) during NORMAL,
-non-capture training forward AND backward passes. On GB10 unified memory a
-synchronous `cudaMalloc` under memory pressure faults into `do_swap_page` /
-`filemap_fault` and stalls indefinitely. Captured goroutine-1 frames (v1.8.2,
-`ZERFOO_ARENA_SIZE_GB=64`, full COIN bars):
+1. **The arena overflow path is reached on the FIRST mini-batch sample's tiny
+   alloc** -- a 48 KB `gpuTanh` output -- even with `ZERFOO_ARENA_SIZE_GB=64`.
+   A 64 GB arena should not be exhausted by one per-sample forward pass. Pinned
+   goroutine 1 (v1.9.0, GB10):
 
-```
-backward: LayerNormalization.Backward -> gpuSub -> gpuBroadcastOp
-          -> ArenaPool.Alloc (synchronous fallback) -> cuda.Malloc(0x4000)
-          D-state sibling: folio_wait_bit_common -> filemap_fault -> __do_fault
-forward:  MatMul -> makeGPUResult -> tensor.NewWithStorage -> ...fallback
-          D-state sibling: do_swap_page
-```
+   ```
+   cuda.MallocAsync(0xc000 = 48KB)     runtime_purego.go:92   # async overflow
+   cuda.(*ArenaPool).Alloc             arena.go:186           # overflow path
+   gpuapi.(*CUDAArenaPool).Alloc       cuda_arena.go:59
+   compute.gpuUnaryOp                  gpu_kernels.go:603
+   compute.(*GPUEngine).gpuTanh -> forward pass, first sample
+   D-state sibling: folio_wait_bit_common -> __folio_lock_or_retry
+   ```
 
-The #111 guard (`CaptureActive() && !fallback.IsCapturing()`) correctly does NOT
-fire for these non-capture ops, so the synchronous `cudaMalloc` runs and wedges.
+2. **The async overflow (`cudaMallocAsync`) itself still stalls on GB10** under
+   unified-memory pressure (D-state page fault in `folio_wait_bit`). So even with
+   the v1.9.0 sync->async change, the overflow path wedges.
 
-### Why a 64 GB arena still overflows (and why that is not the bug)
+Net: training freezes in the first step's forward pass.
 
-A single full-batch crossasset forward+backward (~16,408 samples x 12 scales)
-retains every forward activation for backprop, so the arena must hold the entire
-fwd+bwd working set at once. The arena reclaims only BETWEEN steps
-(`StepScope.Close -> ResetPool -> arena.Reset`), never within a pass -- correctly,
-since the activations are still referenced by the backward pass. So the overflow
-is legitimate for full-batch training; `ZERFOO_ARENA_SIZE_GB` cannot be raised
-high enough to reliably avoid it. The real fix is that the overflow must not use a
-synchronous `cudaMalloc`, since ANY synchronous fallback wedges GB10.
+### What the code review already rules out
 
-### Root cause
+- **Arena sizing parse is correct.** `arenaSizeBytes` (compute/gpu_engine.go:38)
+  returns `64 * 1024^3 = 68719476736` as `int64`; the `int()` cast at
+  gpu_engine.go:226 is 64-bit on arm64, so there is no truncation. The configured
+  capacity is genuinely 64 GB.
+- **The arena allocation succeeded.** If `Malloc(64GB)` had failed, NewGPUEngine
+  logs "arena pool not available, falling back to MemPool" (gpu_engine.go:236) and
+  the engine pool would be a MemPool, not CUDAArenaPool. The issue reports neither
+  the warning nor the MemPool path, and the stack shows `(*ArenaPool).Alloc`. So a
+  real 64 GB arena exists.
 
-The arena exhaustion fallback is a synchronous `cudaMalloc`, which is pathological
-on GB10 under memory pressure (page-fault / swap stall). `cuda.MallocAsync` /
-`cuda.FreeAsync` (the CUDA stream-ordered pool allocator) already exist
-(internal/cuda/runtime_purego.go:86/102) and already work on GB10 (the capture
-path uses them); the stream-ordered pool pre-reserves and reuses memory and does
-not thrash.
+Therefore problem (1) is one of: (a) a single mis-sized / runaway allocation that
+bumps `offset` to ~64 GB before the tanh; (b) the per-pass working set genuinely
+filling 64 GB because intra-pass `Free` is never called and forward activations
+are retained for backprop; or (c) `Reset`/`MarkStepBoundary` is not being driven,
+so `offset` never rewinds. The arena instruments needed to tell these apart do not
+exist yet -- which is why diagnostics are the first deliverable, not an afterthought.
+
+For problem (2): `MallocAsync` (runtime_purego.go:86) calls `cudaMallocAsync` on
+the engine stream, but nothing configures the stream-ordered memory pool's release
+threshold (`cudaMemPoolAttrReleaseThreshold`) or pre-reserves backing. Under GB10
+unified-memory pressure a fresh async allocation still triggers OS-level page
+allocation and faults in `folio_wait_bit`. The async path is necessary (issue
+#115) but, as shipped, insufficient.
 
 ### Objectives
 
-- Route the ArenaPool exhaustion fallback through `cudaMallocAsync` on the
-  engine's stream (stream-ordered, non-blocking) instead of a synchronous
-  `cudaMalloc`, so overflow allocations do not wedge GB10.
-- Free those overflow pointers via `cudaFreeAsync` on the same stream.
-- Keep the #111 capture guard unchanged and taking precedence during graph-driven
-  capture.
-- Verify on real GB10 hardware that a stress pattern of arena-exhaustion overflow
-  allocations completes with no D-state hang; and (end-to-end) that Wolf
-  train-crossasset progresses past `step=0`.
-- Merge, release, and resolve #115.
+- O1. Make the arena observable: log capacity, offset, hits/misses/reuses, alloc
+  count, free-list length, and whether Reset is being driven -- at engine init and
+  at the first overflow.
+- O2. Determine which of (a)/(b)/(c) causes problem (1), using O1 output captured
+  on GB10 hardware.
+- O3. Eliminate the root cause of problem (1) so the overflow path is not reached
+  in normal per-sample training (correct sizing / reset / accounting).
+- O4. Harden the async overflow path so that if it is reached it does not wedge
+  GB10 -- configure the stream-ordered pool so cudaMallocAsync does not
+  page-fault-thrash.
+- O5. Validate on GB10 hardware via Spark that crossasset training progresses past
+  step=0.
 
-### Non goals
+### Non-goals
 
-- Within-pass arena reclamation (freeing intermediates before the backward pass
-  consumes them). Freeing still-referenced activations would corrupt backprop.
-  Out of scope; tracked as a possible follow-up only if the async overflow proves
-  insufficient on GB10.
-- A segmented / growable arena. The stream-ordered overflow is the minimal correct
-  fix; segmentation is follow-up if needed.
-- Changing the #111 capture guard, the bulk-upload chunking (#106/#107), or the
-  `ZERFOO_ARENA_SIZE_GB` knob semantics.
-- Solving a true OOM. If the full-batch working set genuinely approaches GB10's
-  122 GB unified memory, no allocation strategy helps and the remedy is a smaller
-  batch -- out of scope here; the validation will reveal which regime applies.
+- Changing the Wolf trainer's gradient-accumulation strategy or batch sizing. If
+  the diagnostics show the trainer never drives `MarkStepBoundary`/`ResetPool`,
+  that is a Wolf-side fix tracked separately; this plan covers ztensor's arena and
+  the ztensor-side API needed to drive it.
+- A general arena rewrite. Keep the bump-pointer + free-list + overflow design.
+- Managed-memory (cudaMallocManaged) re-enablement (separate ~13% regression item).
 
 ### Constraints and assumptions
 
-- GB10 (DGX Spark, 192.168.86.250:8080) is the only hardware where the freeze
-  manifests. Hardware runs go through Spark Pod submissions, never interactive
-  `ssh` benchmarks (ssh only to read hostPath logs for debugging). Spark v1.13.1
-  mangles YAML `args:` block scalars -- deliver the pod script base64-encoded as a
-  single-line flow arg (see docs/devlog.md 2026-06-07 and the spark-args memory).
-- `cudaMallocAsync` is valid in STREAM ORDER: a pointer is safe for kernels
-  launched on the same stream after the alloc. Arena allocations are consumed by
-  kernels on `e.stream`, so wiring the overflow to `e.stream` is correct.
-- ztensor stays CGO-free; the async wrappers already exist in internal/cuda.
-- CPU/CI has no CUDA, so the async path is unit-tested via a swappable indirection
-  (a stubbed `arenaMallocAsyncFn`), not a real device call.
-- main stays green for CPU and non-capture GPU tests on every commit.
+- Validation MUST run on GB10 hardware via Spark (per CLAUDE.md). No interactive
+  SSH benchmarks. NVIDIA GB10, aarch64, linux/arm64 images.
+- ztensor stays CGo-free; CUDA bound via purego/dlopen. New mempool calls must be
+  symbol-guarded (no-op when the symbol is absent), like MallocAsync already is.
+- Each repo commits independently; rebase-and-merge; release-please cuts releases.
 
 ### Success metrics
 
-- A CPU unit test proves: with `overflowStream` set and no capture active, an
-  exhausted `ArenaPool.Alloc` routes the fallback through the async alloc fn (NOT
-  the synchronous `MemPool.Alloc`); the #111 guard still fires and takes
-  precedence during capture; `Free` routes async-allocated pointers to the async
-  free fn; with no `overflowStream`, behavior is unchanged.
-- A GB10 Spark stress test issues many arena-exhaustion overflow allocations on a
-  real stream and completes with zero D-state threads (watchdog), no hang.
-- Existing internal/cuda tests (capture_state_test.go, arena tests) and
-  `go test ./...` stay green on CPU; `-race` clean.
-- #115 closed on merge; release tag cut. End-to-end Wolf train-crossasset progress
-  past `step=0` confirmed, or the Wolf-rebuild blocker stated explicitly.
+- Arena diagnostics appear at engine init and at first overflow with all O1 fields.
+- On the GB10 repro, the first overflow either does not occur (problem 1 fixed) or
+  completes without a D-state thread (problem 2 hardened).
+- Wolf `train-crossasset -gpu` (full COIN 1m bars, folds=2 epochs=1, batch=256,
+  ZERFOO_ARENA_SIZE_GB=64) advances past step=0 with zero D-state threads.
 
 ## Discovery Summary
 
-ENGINEERING. Root cause pinned in #115 with goroutine frames and confirmed against
-current source. One open issue (#115). The #111 fix (v1.8.2) is complete and is
-the prerequisite this builds on.
+ENGINEERING. One core use case (UC-118): GB10 crossasset training completes a
+training step without freezing. Existing arena/overflow machinery is already in
+place from #111 (capture guard, ADR 004) and #115 (stream-ordered overflow, ADR
+005). The gap is observability (no per-overflow diagnostics) and an unhardened
+async pool. Key files confirmed by reading the code:
 
-Relevant code sites (verified 2026-06-07):
+- internal/cuda/arena.go -- ArenaPool: Alloc (overflow at :186), Reset (:308),
+  HitMissStats/ReuseStats/UsedBytes/Capacity/FreeListLen accessors already exist.
+- internal/cuda/runtime_purego.go:86 -- MallocAsync (the overflow allocator).
+- internal/cuda/purego.go -- dlopen symbol table (add cudaMemPoolSetAttribute /
+  cudaDeviceGetDefaultMemPool here).
+- compute/gpu_engine.go:225-234 -- arena sizing + SetOverflowStream wiring.
+- compute/gpu_kernels.go:603 -- gpuUnaryOp (the tanh alloc site in the stack).
+- compute/step_scope.go -- BeginStep / MarkStepBoundary / ResetPool API the
+  trainer is supposed to drive.
 
-- internal/cuda/arena.go:154 -- #111 capture guard (KEEP, takes precedence).
-- internal/cuda/arena.go:158 -- the synchronous `a.fallback.Alloc` exhaustion
-  path #115 hangs on.
-- internal/cuda/arena.go -- `Free` (fallbackPtrs routing), `Drain`; need an async
-  pointer set + FreeAsync routing.
-- internal/cuda/runtime_purego.go:86 `MallocAsync(size, *Stream)`, :102
-  `FreeAsync(ptr, *Stream)`, :195 `CreateStream`.
-- internal/cuda/mempool.go -- `MemPool.Alloc` uses `MallocAsync` only when
-  `captureStream != nil`, else synchronous `Malloc` (the path that wedges).
-- compute/gpu_engine.go ~226 -- `NewCUDAArenaPool` + stream creation; wire
-  `SetOverflowStream(e.stream)` here.
-- internal/gpuapi/cuda_arena.go -- `CUDAArenaPool` wrapper + `Inner()`; add a
-  `SetOverflowStream` passthrough.
-- compute/step_scope.go, compute/gpu_engine.go:271 (`ResetPool`/`arena.Reset`) --
-  arena reclaims only between steps (explains the overflow).
-- internal/gpuapi/cuda_arena.go:15 `ZERFOO_ARENA_PROFILE` -- existing arena
-  diagnostics to reference.
-
-Use case manifest: .claude/scratch/usecases-manifest.json (UC-115).
-Decision rationale: docs/adr/005-stream-ordered-arena-overflow.md.
-
-### Prior work shipped (do not redo)
-
-The #111 capture-aware ArenaPool guard is complete and released in v1.8.2 (PR
-#112): a process-level set of capturing stream handles + the `arena.go:154` guard
-that refuses the synchronous fallback during capture. ADR 004; devlog
-2026-06-06/2026-06-07. #115 builds directly on it: the same fallback site, but the
-NON-capture path, and the fix is the allocation MECHANISM (async vs sync), not a
-capture guard.
+Reference: .claude/scratch/usecases-manifest.json.
 
 ## Scope and Deliverables
 
 In scope:
-- `overflowStream` on `cuda.ArenaPool` + `SetOverflowStream`, async overflow alloc
-  via `arenaMallocAsyncFn`, async free routing via `arenaFreeAsyncFn`.
-- Engine wiring (`SetOverflowStream(e.stream)`); `CUDAArenaPool` passthrough.
-- CPU routing unit tests via stubbed indirections.
-- GB10 Spark stress test proving no D-state hang under overflow.
-- ADR 005, devlog, PR, rebase-and-merge, release, #115 resolved.
+- Arena diagnostics struct + logging at init and first overflow (O1).
+- A one-shot "first overflow" report: alloc count, total bytes, largest single
+  alloc since last reset, free-list length, resets-so-far (O2 input).
+- A GB10 Spark diagnostic manifest that runs the repro with diagnostics on (O2).
+- Root-cause fix for problem (1) once diagnosed (O3) -- branch is conditional on
+  the diagnostic verdict.
+- Async-overflow hardening: configure the overflow stream's mempool release
+  threshold, symbol-guarded (O4).
+- GB10 validation via Spark, ship via release-please (O5).
 
-Out of scope: everything in Non goals.
+Out of scope: Wolf trainer changes (tracked separately if O2 points there),
+managed-memory work, arena redesign.
 
-| ID | Deliverable | Owner | Acceptance criteria |
-|----|-------------|-------|---------------------|
-| D1 | Stream-ordered overflow in ArenaPool | TBD | Exhausted non-capture Alloc uses async fn, not synchronous MemPool; Free routes to async free |
-| D2 | Engine wiring | TBD | `SetOverflowStream(e.stream)` called at construction; passthrough on CUDAArenaPool |
-| D3 | CPU routing tests | TBD | 4 cases (async-on-overflow, guard precedence, async-free routing, no-stream unchanged); green |
-| D4 | #111 guard preserved | TBD | capture_state_test.go green; guard still returns ErrCaptureUnsafeAlloc during graph capture |
-| D5 | GB10 stress validation | TBD | Spark pod: many overflow allocs complete, 0 D-state (watchdog); devlog with pod + commit |
-| D6 | Shipped + #115 resolved | TBD | PR merged rebase-and-merge; release cut; #115 closed; Wolf-level progress confirmed or blocker stated |
+Deliverables:
+
+| ID | Description | Owner | Acceptance |
+|----|-------------|-------|------------|
+| D1 | Arena diagnostics (init + first-overflow log) | TBD | All O1 fields present; unit-tested |
+| D2 | GB10 diagnostic capture | TBD | First-overflow report captured from GB10 |
+| D3 | Root-cause fix for problem (1) | TBD | Overflow not reached in per-sample training |
+| D4 | Async-overflow hardening | TBD | cudaMallocAsync under pressure does not D-state |
+| D5 | GB10 validation + release | TBD | train-crossasset past step=0; release cut |
 
 ## Checkable Work Breakdown
 
-### E12 -- Stream-ordered arena overflow
+Note on execution order: this is a **sequential investigation**. Wave 1
+(instrumentation + defensive hardening + tests) is safe to do now and in parallel.
+Wave 2 is a **hardware diagnostic gate** -- it must run on GB10 and its output
+decides Wave 3. Wave 3 (the root-cause fix for problem 1) is intentionally left
+conditional: do not pre-commit a fix for an undiagnosed cause.
+
+### E1 -- Arena diagnostics (instrumentation)
 **Component:** cuda
-Acceptance: a non-capture `ArenaPool.Alloc` on an exhausted arena with an
-overflow stream set allocates via `cudaMallocAsync` (never a synchronous
-`cudaMalloc`); those pointers free via `cudaFreeAsync`; the #111 guard is
-unchanged and takes precedence during capture.
 
-- [x] T12.1 Add swappable package-level indirections `arenaMallocAsyncFn =
-  MallocAsync` and `arenaFreeAsyncFn = FreeAsync` in internal/cuda (so CPU tests
-  can stub them). Decision rationale: docs/adr/005-stream-ordered-arena-overflow.md
-  Owner: TBD  Est: 30m  verifies: [UC-115]
-  - Dependencies: none
-- [x] T12.2 Add `overflowStream *Stream` + `asyncFallbackPtrs map[unsafe.Pointer]int`
-  to `cuda.ArenaPool` and a `SetOverflowStream(s *Stream)` setter. In
-  `ArenaPool.Alloc`, after the existing #111 guard (unchanged), when
-  `!a.fallback.IsCapturing() && a.overflowStream != nil`, allocate via
-  `arenaMallocAsyncFn(aligned, a.overflowStream)`, record the ptr in
-  `asyncFallbackPtrs`, and return it; else keep the current synchronous
-  `a.fallback.Alloc` path. Owner: TBD  Est: 75m  verifies: [UC-115]
-  - Dependencies: T12.1
-  - Acceptance: arena hits / capture-aware fallback / no-stream paths are
-    byte-for-byte unchanged; only the non-capture-with-overflow-stream path
-    switches to async.
-- [x] T12.3 Route `Free` (and `Drain`) for async-allocated pointers to
-  `arenaFreeAsyncFn(ptr, a.overflowStream)`: check `asyncFallbackPtrs` before the
-  existing `fallbackPtrs` synchronous-free routing. Owner: TBD  Est: 45m
-  verifies: [UC-115]
-  - Dependencies: T12.2
-  - Acceptance: an async-allocated overflow pointer is freed via the async fn, not
-    `MemPool.Free`; synchronous fallback pointers still route to `MemPool.Free`.
-- [x] T12.4 Unit tests in internal/cuda (stub `arenaMallocAsyncFn` /
-  `arenaFreeAsyncFn` to record calls): (a) overflow-stream-set + no-capture routes
-  Alloc through the async fn, not synchronous MemPool; (b) #111 guard still returns
-  `ErrCaptureUnsafeAlloc` during graph-driven capture and takes precedence over the
-  async path; (c) Free routes async pointers to the async free fn; (d) no
-  overflowStream -> unchanged synchronous behavior. Owner: TBD  Est: 90m
-  verifies: [UC-115]
-  - Dependencies: T12.3
+- [ ] T1.1 Add an ArenaStats diagnostics snapshot method to ArenaPool that returns
+  capacity, current offset, hits, misses, reuses, resets, alloc count, and
+  free-list length in one struct (extends existing HitMissStats/ReuseStats).
+  Owner: TBD  Est: 45m  Dep: none  verifies: [UC-118]
+  Acceptance: method returns a struct with all fields; no lock re-entrancy.
+- [ ] T1.2 Emit a one-time "first overflow" log in ArenaPool.Alloc the first time
+  the exhaustion branch is hit: log capacity, offset, requested bytes, aligned
+  bytes, alloc count since last reset, resets-so-far, free-list length, and which
+  overflow path was taken (async vs MemPool vs capture-refused). Guard so it logs
+  once per reset-epoch, not every alloc. Owner: TBD  Est: 60m  Dep: T1.1
+  verifies: [UC-118]
+  Acceptance: log fires exactly once at first overflow; includes all fields.
+- [ ] T1.3 Log arena configuration at engine init in NewGPUEngine: configured
+  capacity (GB and bytes), managed-memory flag, overflow-stream-set flag.
+  Owner: TBD  Est: 30m  Dep: none  verifies: [UC-118]
+  Acceptance: one INFO line at init names the resolved arena size and overflow mode.
+- [ ] T1.4 Unit tests: ArenaStats fields correct after a sequence of
+  alloc/free/reset; first-overflow log fires once (swap the logger, assert one
+  record). Owner: TBD  Est: 45m  Dep: T1.1, T1.2  verifies: [UC-118]
+- [ ] T1.5 Run gofmt + golangci-lint + `go test ./internal/cuda/... ./compute/...`
+  (CPU path). Owner: TBD  Est: 20m  Dep: T1.1-T1.4  verifies: [infrastructure]
 
-### E13 -- Engine wiring
-**Component:** compute
-Acceptance: every GPUEngine arena gets the engine's stream as its overflow stream
-at construction, so overflow allocations are stream-ordered with consuming
-kernels.
-
-- [x] T13.1 Add `SetOverflowStream(s *cuda.Stream)` passthrough to
-  `gpuapi.CUDAArenaPool` (delegates to `p.inner.SetOverflowStream`). Owner: TBD
-  Est: 20m  verifies: [UC-115]
-  - Dependencies: T12.2
-- [x] T13.2 In `compute/gpu_engine.go` GPUEngine construction (after
-  `NewCUDAArenaPool` and the engine stream exist), call
-  `arenaPool.SetOverflowStream(stream)` (or `arena.Inner().SetOverflowStream`).
-  Confirm the stream used is the same `e.stream` that kernels launch on.
-  Owner: TBD  Est: 30m  verifies: [UC-115]
-  - Dependencies: T13.1
-  - Acceptance: a constructed GPUEngine's arena has overflowStream == e.stream;
-    no-arena engines (CPU) are unaffected.
-
-### E14 -- Lint, format, CPU test gate
-**Component:** tooling
-Acceptance: gofmt + `go vet ./...` clean; `go build ./...` and `go test ./...`
-green on CPU; `-race` clean on cuda + compute.
-
-- [x] T14.1 gofmt + `go vet ./...` clean on changed files; `golangci-lint run
-  ./internal/cuda/... ./compute/...` 0 issues; `go build ./...` exit 0  Owner: TBD
-  Est: 20m  verifies: [infrastructure]
-  - Dependencies: T12.4, T13.2
-- [x] T14.2 `go test ./...` green on CPU incl. capture_state_test.go and arena
-  tests; `-race` clean on internal/cuda + compute  Owner: TBD  Est: 20m
-  verifies: [infrastructure]
-  - Dependencies: T14.1
-
-### E15 -- GB10 validation via Spark
+### E2 -- Async-overflow hardening (defensive, independent of problem 1)
 **Component:** cuda
-Acceptance: a stress pattern of arena-exhaustion overflow allocations on a real
-GB10 stream completes with zero D-state threads, proving the async overflow does
-not wedge; (stretch) Wolf train-crossasset progresses past `step=0`.
 
-- [x] T15.1 Author a GPU stress test (skips on CPU; gated like
-  TestArenaPool_CaptureGuard_GPU) that creates a real engine stream + a small
-  arena, then issues many overflow allocations (sizes mixing 48 B .. 16 KB and
-  larger, total well past the arena capacity) via `ArenaPool.Alloc`, frees them,
-  loops; asserts every alloc returns non-nil with no error and the loop completes.
-  Owner: TBD  Est: 90m  verifies: [UC-115]
-  - Dependencies: T12.3
-- [x] T15.2 Spark manifest + run on GB10 under the out-of-band dstate-watchdog
-  (base64 single-line-arg delivery; mount /usr/local/cuda + /opt/zerfoo/lib +
-  /var/lib/zerfoo/bench-out; exit-code guard, SKIP = fatal). Confirm the stress
-  test PASSES and the watchdog records 0 D-state threads. Do NOT ssh for the run;
-  ssh only to read hostPath logs. Owner: TBD  Est: 90m  verifies: [UC-115]
-  - Dependencies: T15.1, T14.2
-- [x] T15.3 Devlog entry: pod name, commit, alloc count/sizes, watchdog D-state
-  count, timing. Owner: TBD  Est: 20m  verifies: [infrastructure]
-  - Dependencies: T15.2
-- [ ] T15.4 (stretch, end-to-end) Rebuild Wolf train-crossasset against the ztensor
-  fix and confirm training progresses past `step=0` on full COIN bars with no
-  freeze. If a Wolf rebuild + full-bars run cannot complete in session, state the
-  blocker explicitly and ship on the T15.2 ztensor-level GB10 evidence. Owner: TBD
-  Est: 2h  verifies: [UC-115]  blocked: needs Wolf rebuild against ztensor fix
-  - Dependencies: T15.2
+- [ ] T2.1 Add dlopen symbols cudaDeviceGetDefaultMemPool, cudaMemPoolSetAttribute
+  to internal/cuda/purego.go (symbol-guarded; absent => no-op). Owner: TBD
+  Est: 45m  Dep: none  verifies: [UC-118]
+  Acceptance: symbols resolved when present; lib() with missing symbols still loads.
+- [ ] T2.2 Add SetMemPoolReleaseThreshold(deviceID int, bytes uint64) in
+  internal/cuda that sets cudaMemPoolAttrReleaseThreshold on the device default
+  async pool so freed async blocks are retained (not released to the OS) and
+  re-served without page faults. No-op if the symbol is absent. Owner: TBD
+  Est: 45m  Dep: T2.1  verifies: [UC-118]
+  Acceptance: returns nil and is a no-op without the symbol; sets attr when present.
+- [ ] T2.3 Call SetMemPoolReleaseThreshold from NewGPUEngine right after
+  SetOverflowStream, with a sensible default threshold (e.g. arena capacity, or a
+  configurable ZERFOO_OVERFLOW_POOL_RETAIN_GB). Log the chosen threshold.
+  Owner: TBD  Est: 30m  Dep: T2.2  verifies: [UC-118]
+- [ ] T2.4 Unit tests for the routing/no-op behavior (swap the symbol pointers,
+  like arena_overflow_test.go does for MallocAsync). Owner: TBD  Est: 40m
+  Dep: T2.2  verifies: [UC-118]
+- [ ] T2.5 gofmt + golangci-lint + targeted tests. Owner: TBD  Est: 15m
+  Dep: T2.1-T2.4  verifies: [infrastructure]
 
-### E16 -- Ship and resolve #115
+### E3 -- GB10 diagnostic gate (hardware; decides E4)
+**Component:** crossasset
+
+- [ ] T3.1 Build/publish an arm64 image at the E1+E2 branch and author a Spark Pod
+  manifest that runs the GB10 arena repro (the existing overflow stress or a
+  crossasset-shaped per-sample forward) with diagnostics enabled and
+  ZERFOO_ARENA_SIZE_GB=64. Owner: TBD  Est: 60m  Dep: E1, E2  verifies: [UC-118]
+  Acceptance: pod runs on GB10; logs include the init line and first-overflow report.
+- [ ] T3.2 Capture and record the first-overflow report in docs/devlog.md: alloc
+  count + total bytes at overflow, largest single alloc, resets-so-far. Classify
+  problem (1) as (a) mis-sized single alloc / (b) legit full working set / (c)
+  reset never driven. Owner: TBD  Est: 45m  Dep: T3.1  verifies: [UC-118]
+  Acceptance: devlog entry states the verdict with the numbers that support it.
+- [ ] T3.3 Confirm whether the async-overflow hardening (E2) alone removed the
+  D-state thread on the same run (problem 2). Owner: TBD  Est: 30m  Dep: T3.1
+  verifies: [UC-118]
+
+### E4 -- Root-cause fix for problem (1) [CONDITIONAL on T3.2 verdict]
+**Component:** cuda
+
+- [ ] T4.1 If verdict (a) mis-sized single alloc: locate the runaway allocation
+  (the diagnostics name the largest alloc + its gpu_kernels call site) and fix the
+  size computation. Add a regression test asserting the buffer size. Owner: TBD
+  Est: 2h  Dep: T3.2  verifies: [UC-118]
+- [ ] T4.2 If verdict (c) reset never driven: confirm the trainer's
+  BeginStep/MarkStepBoundary/ResetPool contract, and if ztensor's API is the gap,
+  add/repair the StepScope wiring + a test that Reset rewinds offset across a
+  simulated step. (Wolf-side trainer change tracked separately.) Owner: TBD
+  Est: 90m  Dep: T3.2  verifies: [UC-118]
+- [ ] T4.3 If verdict (b) legitimately full: document that overflow is expected for
+  this working set and that E2 hardening is the safety net; capture the reasoning
+  in ADR 006. Owner: TBD  Est: 90m  Dep: T3.2  verifies: [UC-118]
+- [ ] T4.4 gofmt + golangci-lint + tests for whichever branch was taken.
+  Owner: TBD  Est: 20m  Dep: T4.1/T4.2/T4.3  verifies: [infrastructure]
+
+### E5 -- GB10 validation, ship
 **Component:** release
-Acceptance: PR merged rebase-and-merge; release tag cut; #115 closed.
 
-- [ ] T16.1 Branch `fix/issue-115-async-arena-overflow` off main; open PR against
-  main; title for #115. Owner: TBD  Est: 30m  verifies: [UC-115]
-  - Dependencies: T15.3
-- [ ] T16.2 PR CI green; rebase-and-merge into main (not squash, not merge commit)
-  Owner: TBD  Est: 30m  verifies: [UC-115]
-  - Dependencies: T16.1
-- [ ] T16.3 release-please cuts the patch release; verify tag + GitHub release.
-  Owner: TBD  Est: 20m  verifies: [infrastructure]
-  - Dependencies: T16.2
-- [ ] T16.4 #115 closed on merge (PR `fixes #115`); comment summarizing the
-  stream-ordered overflow fix + GB10 evidence + any Wolf-level follow-up. Owner: TBD
-  Est: 15m  verifies: [UC-115]
-  - Dependencies: T16.3
-- [ ] T16.5 Definition-of-done honesty check: merged + released + GB10
-  stress-validated + reported honestly. If the Wolf-level end-to-end (T15.4) did
-  not complete in session, state the specific blocker here. Owner: TBD  Est: 15m
-  verifies: [infrastructure]
-  - Dependencies: T16.4
+- [ ] T5.1 Re-run the GB10 repro at the E4 branch: assert first overflow is not
+  reached in per-sample training (or is hardened) and zero D-state threads.
+  Owner: TBD  Est: 45m  Dep: E4  verifies: [UC-118]
+- [ ] T5.2 (end-to-end) Rebuild Wolf train-crossasset against the new ztensor and
+  confirm training advances past step=0 on full COIN bars. Owner: TBD  Est: 60m
+  Dep: T5.1  verifies: [UC-118]
+- [ ] T5.3 Branch fix/issue-118-arena-diagnostics-hardening; open PR to main with
+  `fixes #118`; CI green; rebase-and-merge (not squash, not merge commit).
+  Owner: TBD  Est: 30m  Dep: T5.1  verifies: [infrastructure]
+- [ ] T5.4 release-please cuts the release; verify tag + GitHub release; #118 closes
+  on merge. Owner: TBD  Est: 20m  Dep: T5.3  verifies: [infrastructure]
+- [ ] T5.5 Commit the untracked docs/adr/005-stream-ordered-arena-overflow.md (the
+  #115 ADR never landed on main) alongside this work. Owner: TBD  Est: 10m
+  Dep: none  verifies: [infrastructure]
 
 ## Parallel Work
 
-The async overflow (E12) is the root dependency. The indirection (T12.1) unblocks
-the alloc/free changes; the engine wiring (E13) needs T12.2's setter; the stress
-test (T15.1) needs the alloc/free path (T12.3). Validation and ship are gated on
-the CPU gate (E14).
-
 | Track | Tasks | Notes |
 |-------|-------|-------|
-| Track A: core overflow | T12.1 -> T12.2 -> T12.3 -> T12.4 | Sequential chain in arena.go |
-| Track B: engine wiring | T13.1 -> T13.2 | Starts after T12.2's setter exists |
-| Track C: GB10 harness | author T15.1 + T15.2 manifest | Test authoring overlaps A; execution waits on T14.2 |
+| Track A: Diagnostics | T1.1-T1.5 | No external deps; start immediately |
+| Track B: Async hardening | T2.1-T2.5 | No external deps; start immediately, parallel to A |
+| Sync point 1 | E1 + E2 merged | Required before the GB10 diagnostic image (T3.1) |
+| Track C: Diagnostic gate | T3.1-T3.3 | Hardware; serial; gates E4 |
+| Sync point 2 | T3.2 verdict | Selects exactly one of T4.1/T4.2/T4.3 |
+| Track D: Fix + ship | E4, E5 | Serial after the verdict |
 
-Sync points: T12.2 unblocks B and the stress test; E14 needs E12+E13; E15 needs
-E14; E16 needs E15.
+### Waves
 
-### Wave 1: Indirection seam (1 agent)
-- [x] T12.1 Swappable async fn indirections  verifies: [UC-115]
+### Wave 1: Instrument + harden (2 agents)
+- [x] E1 Arena diagnostics (T1.1-T1.5)  verifies: [UC-118]  (2026-06-07)
+- [x] E2 Async-overflow hardening (T2.1-T2.5)  verifies: [UC-118]  (2026-06-07)
 
-### Wave 2: Overflow alloc + setter (1 agent, sequential core)
-- [x] T12.2 overflowStream + async overflow alloc  verifies: [UC-115]
+### Wave 2: GB10 diagnostic gate (1 agent, hardware)
+- [x] E3 GB10 validation via Spark pod ztensor-issue118-diag-1 (2026-06-07):
+  diagnostics fire on hardware, hardened async path does not wedge. Verdict on
+  problem (1): UNDETERMINED from synthetic stress -- requires the real crossasset
+  workload (see E4 block reason).
 
-### Wave 3: Free routing + engine passthrough (2 agents)
-- [x] T12.3 Async free routing in Free/Drain  verifies: [UC-115]
-- [x] T13.1 CUDAArenaPool SetOverflowStream passthrough  verifies: [UC-115]
+### Wave 3: Conditional fix (1 agent)
+- [ ] E4 BLOCKED: needs the problem-(1) verdict from a real Wolf train-crossasset
+  run against this branch. Unblock: run the new diagnostics under crossasset, read
+  the ARENA_FIRST_OVERFLOW line, then apply the matching fix branch (T4.1/4.2/4.3).
 
-### Wave 4: Tests + wiring + stress-test authoring (3 agents)
-- [x] T12.4 CPU routing unit tests  verifies: [UC-115]
-- [x] T13.2 Engine wires SetOverflowStream(e.stream)  verifies: [UC-115]
-- [x] T15.1 Author GB10 overflow stress test  verifies: [UC-115]
-
-### Wave 5: Gate (1 agent, sequential)
-- [x] T14.1 gofmt + vet + lint + build  verifies: [infrastructure]
-- [x] T14.2 go test ./... + -race  verifies: [infrastructure]
-
-### Wave 6: GB10 validation (1 agent)
-- [x] T15.2 Spark stress run, 0 D-state  verifies: [UC-115]
-- [x] T15.3 Devlog entry  verifies: [infrastructure]
-- [ ] T15.4 (stretch) Wolf train-crossasset past step=0  verifies: [UC-115]
-
-### Wave 7: Ship (1 agent, sequential)
-- [ ] T16.1 Branch + PR to main  verifies: [UC-115]
-- [ ] T16.2 CI green + rebase-and-merge  verifies: [UC-115]
-- [ ] T16.3 Release tag cut  verifies: [infrastructure]
-- [ ] T16.4 Close #115 with summary  verifies: [UC-115]
-- [ ] T16.5 Definition-of-done honesty check  verifies: [infrastructure]
+### Wave 4: Validate + ship (1 agent, hardware)
+- [ ] E5 Ship diagnostics+hardening PR (T5.3-T5.5 in progress); T5.2 end-to-end
+  crossasset confirmation BLOCKED with E4.
 
 ## Timeline and Milestones
 
 | Milestone | Description | Member tasks | Exit criteria |
 |-----------|-------------|--------------|---------------|
-| M0 | Overflow path implemented | T12.1, T12.2, T12.3 | Non-capture exhausted Alloc uses async; Free routes async |
-| M1 | Wired + unit-green | T12.4, T13.1, T13.2 | Engine sets overflow stream; CPU routing tests prove all 4 cases |
-| M2 | CPU gate green | T14.1, T14.2 | gofmt/vet/lint/build clean; `go test ./...` + `-race` green |
-| M3 | GB10 validated | T15.1, T15.2, T15.3 | Overflow stress completes on GB10, 0 D-state; devlog recorded |
-| M4 | Shipped | T16.1, T16.2, T16.3, T16.4, T16.5 | PR merged rebase-and-merge; release cut; #115 closed |
+| M0 | Arena observable | T1.1, T1.2, T1.3, T1.4, T1.5 | Diagnostics merged; logs at init + first overflow |
+| M1 | Overflow hardened | T2.1, T2.2, T2.3, T2.4, T2.5 | Async pool retains backing; symbol-guarded |
+| M2 | Root cause known | T3.1, T3.2, T3.3 | devlog states verdict (a/b/c) with numbers |
+| M3 | Cause fixed | T4.1, T4.2, T4.3, T4.4 | Overflow not reached in per-sample training |
+| M4 | Shipped + verified | T5.1, T5.2, T5.3, T5.4, T5.5 | train-crossasset past step=0; release cut; #118 closed |
 
 ## Risk Register
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R1 | Stream-ordered async pointer used off `e.stream` before a sync -> use-before-ready | High | Low | Arena allocs are consumed by kernels on e.stream; wire overflowStream = e.stream (T13.2); ADR 005 records the invariant |
-| R2 | Async overflow still thrashes/OOMs because the full-batch working set approaches GB10's 122 GB | High | Medium | T15.2 stress test + T15.4 Wolf run reveal the regime; if true OOM, remedy is smaller batch / segmented arena (follow-up), reported honestly not hidden |
-| R3 | The #111 capture guard is weakened by the new branch (async-alloc during graph capture) | High | Low | Guard stays first and unchanged; T12.4(b) asserts ErrCaptureUnsafeAlloc still fires + takes precedence; async path only when !IsCapturing |
-| R4 | Async free ordering bug double-frees or leaks overflow pointers | Medium | Low | Separate asyncFallbackPtrs set; T12.3 routes only recorded async ptrs to FreeAsync; T12.4(c) asserts routing |
-| R5 | Cannot complete Wolf end-to-end validation in session (needs Wolf rebuild) | Medium | Medium | Ship on ztensor-level GB10 stress evidence (T15.2); state the Wolf blocker explicitly (T15.4/T16.5); do not claim done |
-| R6 | CPU tests cannot exercise real cudaMallocAsync | Low | High (expected) | Swappable indirection (T12.1) makes routing CPU-testable; real async validated on GB10 (E15) |
+| R1 | Root cause is in the Wolf trainer (Reset never driven), not ztensor | Med | Med | Diagnostics (T3.2) name it explicitly; ztensor ships the API + hardening net regardless; Wolf fix tracked separately |
+| R2 | cudaMallocAsync wedges even with a release threshold set (GB10 page-fault deeper than the pool) | High | Med | Primary fix is to NOT reach overflow (E4); E2 is the net. If E2 insufficient, fall back to pre-reserved arena headroom |
+| R3 | The 48 KB-overflow is a single runaway alloc whose call site is outside the arena package | Med | Med | First-overflow log records requested bytes + the gpu_kernels caller; trace from there |
+| R4 | GB10 host contention / Spark queueing slows the diagnostic gate | Low | Med | Submit early; reuse the #115 overflow stress manifest as the harness |
+| R5 | Pre-committing a fix before diagnosis wastes a wave on the wrong cause | Med | Low | Wave 3 is explicitly conditional on the T3.2 verdict; do not start E4 before it |
 
 ## Operating Procedure
 
-- Definition of done (global CLAUDE.md): merged via rebase-and-merge, CI green,
-  release tag cut, and verified live on GB10 (the overflow stress test completing
-  with 0 D-state via Spark, observed in logs/watchdog). The end-to-end Wolf
-  train-crossasset-past-step-0 is the ultimate proof; if it cannot run in session,
-  state the blocker (T16.5) rather than claiming done.
-- Add tests with every implementation change (T12.4 with T12.2/T12.3).
-- Run gofmt, `go vet`, golangci-lint after code changes (T14.1).
+- Definition of done (per global CLAUDE.md): merged (rebase-and-merge) -> released
+  (release-please tag) -> deployed/validated on GB10 -> verified live (train past
+  step=0) -> reported honestly.
+- Add tests with every code change; run gofmt + golangci-lint after changes.
 - Never commit files from different directories in one commit (pre-commit hook).
-  internal/cuda, internal/gpuapi, compute, docs each commit separately.
-- Validate GPU behavior only via Spark Pod submissions; never interactive ssh
-  benchmarks. ssh only to read hostPath logs. Use base64 single-line-arg pod
-  delivery (Spark v1.13.1 mangles YAML block scalars).
+- Small logical commits. GB10 work via Spark manifests only -- no interactive SSH
+  benchmarks.
+- ADRs: defer the problem-(1) ADR until the T3.2 verdict is known (next number is
+  006). E2's release-threshold choice may warrant an ADR if it becomes the primary
+  safety mechanism.
 
 ## Progress Log
 
-### Change Summary -- 2026-06-07 (new plan: #115)
+### 2026-06-07 (execution) -- E1, E2 shipped; E3 validated; E4 blocked
 
-- Trimmed the completed #111 plan (E5-E11, all shipped in v1.8.2); its knowledge
-  is already in docs/adr/004 and docs/devlog.md. Replaced with the #115 plan.
-- Root cause: ArenaPool exhaustion fallback uses a synchronous `cudaMalloc`
-  (arena.go:158) that thrashes GB10 unified memory during non-capture training
-  fwd/bwd, freezing at step=0. The #111 guard correctly does not fire for
-  non-capture ops.
-- Fix: stream-ordered overflow via `cudaMallocAsync` on the engine stream
-  (ADR 005). New epics E12 (overflow alloc/free), E13 (engine wiring), E14 (CPU
-  gate), E15 (GB10 stress validation + Wolf stretch), E16 (ship + resolve #115).
-- Use case manifest: UC-115.
+- E1 (arena diagnostics) and E2 (async-overflow hardening via mempool release
+  threshold) implemented, unit-tested (CPU, -race clean), committed.
+- E3: GB10 Spark pod ztensor-issue118-diag-1 PASSED -- diagnostics fire on
+  hardware (`path=async capacity=1048576 offset=29184 epochAllocs=5
+  epochMaxAlloc=1048576`), hardened async path ran 200 overflow rounds and synced
+  with no wedge. Recorded in devlog.
+- E4 BLOCKED: problem (1) (why a 48 KB alloc overflows a 64 GB arena on the first
+  crossasset sample) cannot be classified from synthetic stress; it needs the real
+  Wolf workload. The diagnostics added here are exactly the instrument for it.
+- Shipping E1+E2 as the ztensor PR; #118 stays open pending the crossasset verdict.
 
-ADRs created: docs/adr/005-stream-ordered-arena-overflow.md -- route the ArenaPool
-exhaustion fallback through cudaMallocAsync (stream-ordered) instead of a
-synchronous cudaMalloc that page-fault-thrashes GB10.
+### Change Summary -- 2026-06-07
+
+- Replaced the completed #115 plan with the #118 plan. The #115 work (stream-ordered
+  overflow, v1.9.0) is shipped; its stable knowledge is already in
+  docs/adr/005-stream-ordered-arena-overflow.md and the 2026-06-07 devlog entry, so
+  the #115 epics were trimmed rather than carried forward.
+- New epics E1-E5 target issue #118: arena diagnostics (E1), async-overflow
+  hardening (E2), a GB10 diagnostic gate (E3) that decides a conditional root-cause
+  fix (E4), then validation + release (E5).
+- Captured the code-review findings that rule out an arena-sizing parse bug and
+  identify the missing mempool release-threshold as the async-overflow weakness.
+- No ADR created yet: the problem-(1) decision is gated on GB10 diagnostics (T3.2).
+- Flagged that docs/adr/005 is untracked on main (T5.5) -- the #115 ADR never landed.
 
 ## Hand-off Notes
 
-- The fix is in package `cuda` (internal/cuda/arena.go) + a one-line engine wiring
-  (compute/gpu_engine.go) + a passthrough (internal/gpuapi/cuda_arena.go). Read
-  ADR 005 first.
-- KEEP the #111 capture guard (arena.go:154) first and unchanged; the async path
-  is only for `!fallback.IsCapturing() && overflowStream != nil`. During
-  graph-driven capture the guard must still refuse (ErrCaptureUnsafeAlloc).
-- `MallocAsync`/`FreeAsync` already exist and work on GB10 (the capture path uses
-  them). The arena's overflow stream must be `e.stream` so allocations are
-  stream-ordered with the kernels that consume them.
-- The arena overflows during full-batch training because backprop retains all
-  forward activations and the arena resets only between steps -- that is correct
-  behavior, not a leak. Do NOT add within-pass reclamation (would corrupt
-  backprop). `ZERFOO_ARENA_SIZE_GB` is a tuning knob, not a fix.
-- GB10 validation via Spark only; base64 single-line-arg pod delivery; read
-  hostPath logs via ssh. dstate-watchdog at docs/bench/scripts/dstate-watchdog.sh.
-- Wolf caller: `internal/crossasset/crossasset.go` trainWithResult; the freeze is
-  in the first training step's fwd/bwd.
+- Issue: https://github.com/zerfoo/ztensor/issues/118 . Chain: #106 -> #111 (capture
+  guard, ADR 004, v1.8.2) -> #115 (stream-ordered overflow, ADR 005, v1.9.0) -> #118.
+- The investigation is sequential and hardware-gated. Do NOT attempt to fix problem
+  (1) before the GB10 diagnostic report (T3.2) classifies it -- the three causes
+  need three different fixes.
+- GB10 work goes through Spark (http://192.168.86.250:8080), arm64 images, no pinned
+  memory limits (unified memory). Reuse the #115 overflow-stress manifest pattern;
+  Spark v1.13.1 mangles `args: |` block scalars, so deliver scripts base64-encoded
+  as a single-line flow arg.
+- Key files: internal/cuda/arena.go (overflow at :186), runtime_purego.go:86
+  (MallocAsync), purego.go (symbol table), compute/gpu_engine.go:225-234 (wiring),
+  compute/step_scope.go (Reset API), compute/gpu_kernels.go:603 (tanh alloc site).
 
 ## Appendix
 
-- Issue: github.com/zerfoo/ztensor#115 (follow-up to #111, #106).
-- Decisions: docs/adr/005-stream-ordered-arena-overflow.md (this fix),
-  docs/adr/004-capture-aware-arena-fallback.md (#111 guard, prerequisite).
-- Code: internal/cuda/arena.go (Alloc:154 guard / :158 fallback, Free, Drain),
-  internal/cuda/runtime_purego.go:86/102 (MallocAsync/FreeAsync),
-  internal/cuda/mempool.go (sync vs async), compute/gpu_engine.go (~226 wiring,
-  :271 ResetPool), internal/gpuapi/cuda_arena.go (CUDAArenaPool, Inner).
-- Captured frames + fix directions: issue #115 body.
+- UC manifest: .claude/scratch/usecases-manifest.json
+- ADR 004: docs/adr/004-capture-aware-arena-fallback.md (issue #111)
+- ADR 005: docs/adr/005-stream-ordered-arena-overflow.md (issue #115; untracked, see T5.5)
+- Wolf devlog 2026-06-07 has the full v1.8.1 -> v1.8.2 -> v1.9.0 chain.
