@@ -1,5 +1,55 @@
 # ztensor Development Log
 
+## 2026-06-07: #118 -- arena diagnostics + async-overflow hardening (GB10)
+
+**Type:** finding
+**Tags:** cuda, gb10, #118, #115, arena, overflow, cudaMallocAsync, mempool, diagnostics
+
+**Problem:** v1.9.0 (#115 stream-ordered overflow) did not close the GB10
+crossasset freeze. Issue #118 reported two things: (1) the arena overflow path is
+reached on the FIRST per-sample 48 KB alloc even with ZERFOO_ARENA_SIZE_GB=64, and
+(2) cudaMallocAsync itself still stalls (D-state, folio_wait_bit) under
+unified-memory pressure.
+
+**Investigated / built:**
+- Ruled out an arena-sizing parse bug by code review: arenaSizeBytes(64) returns
+  68719476736 as int64 and the int() cast is 64-bit on arm64 (no truncation); if
+  the 64 GB Malloc had failed the engine would log "arena pool not available" and
+  use a MemPool, which the issue's stack contradicts. So a real 64 GB arena exists
+  -- problem (1) is a runaway alloc, a never-driven Reset, or a legitimately-full
+  pass, NOT a sizing typo.
+- Added arena diagnostics (ArenaDiagnostics snapshot + one-shot per-epoch
+  first-overflow log; epoch counters cleared by Reset) so the next real run says
+  which of those three it is. Routed to the engine logger; defaults to stderr.
+- Identified problem (2)'s mechanism: cudaMallocAsync draws from the device
+  stream-ordered pool whose default release threshold is 0, so every freed
+  overflow block goes back to the OS and the next overflow faults its pages back
+  in. Added SetMemPoolReleaseThreshold (cudaMemPoolAttrReleaseThreshold) wired at
+  engine init (default = arena capacity, override ZERFOO_OVERFLOW_POOL_RETAIN_GB).
+
+**GB10 validation (Spark pod ztensor-issue118-diag-1, branch HEAD 545ab9f):**
+TestArenaPool_DiagnosticsAndThreshold_GPU set the release threshold, overflowed a
+1 MiB arena 200 rounds through the async path, captured the first-overflow report,
+and synced the stream -- PASS in 0.38 s, no wedge. First-overflow line observed on
+hardware: `path=async capacity=1048576 offset=29184 epochAllocs=5
+epochMaxAlloc=1048576 hits=4 misses=1`. This confirms the diagnostics fire
+correctly on GB10 and the hardened async path does not regress.
+
+**Not yet established (the remaining gate):** this synthetic stress uses a 1 MiB
+arena and tiny allocs; it does NOT reproduce the real ~64 GB unified-memory
+pressure, so it cannot classify problem (1) (why crossasset's first sample
+overflows 64 GB) nor prove the release threshold prevents the folio_wait_bit wedge
+under real pressure. That requires running the new diagnostics under the actual
+Wolf train-crossasset workload and reading the ARENA_FIRST_OVERFLOW line:
+epochAllocs near 1 + epochMaxAlloc near 64 GB => runaway buffer (problem 1a);
+resets=0 after several steps => Reset never driven (1c); large epochAllocs with
+offset near capacity => legitimately full (1b). The conditional fix (plan E4) is
+blocked on that verdict.
+
+**Impact:** ztensor now ships the instrument for ask (1) and the hardening for ask
+(3). Ask (2)'s root-cause classification and the end-to-end "past step=0"
+confirmation depend on the Wolf-side run; #118 stays open pending it.
+
 ## 2026-06-07: #115 -- stream-ordered ArenaPool overflow (GB10 training freeze)
 
 **Type:** finding
