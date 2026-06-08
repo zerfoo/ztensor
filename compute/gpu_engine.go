@@ -263,6 +263,11 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 			"capacityGB", fmt.Sprintf("%d", arenaSize/(1<<30)),
 			"managedMemory", fmt.Sprintf("%v", arenaPool.Inner().IsManaged()),
 			"overflowStream", "set")
+		// DIAG (#118 temp branch): the crossasset train binary creates the engine
+		// with log.Nop(), so the structured lines here are discarded. Also emit to
+		// stderr so the diagnostic survives the real workload.
+		fmt.Fprintf(os.Stderr, "ztensor arena configured: capacityBytes=%d capacityGB=%d managed=%v overflowStream=set\n",
+			arenaSize, arenaSize/(1<<30), arenaPool.Inner().IsManaged())
 		cuda.SetArenaOverflowLogger(func(d cuda.ArenaDiagnostics, requested, aligned int, path string) {
 			l.Warn("arena first-overflow",
 				"path", path,
@@ -277,6 +282,12 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 				"reuses", fmt.Sprintf("%d", d.Reuses),
 				"resets", fmt.Sprintf("%d", d.Resets),
 				"freeListLen", fmt.Sprintf("%d", d.FreeListLen))
+			fmt.Fprintf(os.Stderr,
+				"ztensor arena first-overflow: path=%s requestedBytes=%d alignedBytes=%d "+
+					"capacityBytes=%d offsetBytes=%d epochAllocs=%d epochMaxAllocBytes=%d "+
+					"hits=%d misses=%d reuses=%d resets=%d freeListLen=%d\n",
+				path, requested, aligned, d.CapacityBytes, d.OffsetBytes, d.EpochAllocs,
+				d.EpochMaxAllocBytes, d.Hits, d.Misses, d.Reuses, d.Resets, d.FreeListLen)
 		})
 	}
 	if err != nil {
