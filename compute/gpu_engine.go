@@ -231,6 +231,31 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		// overflow allocations are stream-ordered and do not page-fault-thrash
 		// GB10 unified memory the way a synchronous cudaMalloc does.
 		arenaPool.SetOverflowStream(cuda.StreamFromPtr(stream.Ptr()))
+
+		// Issue #118: arena diagnostics. Log the resolved arena configuration at
+		// init, and route the one-shot first-overflow snapshot to the engine
+		// logger so a GB10 freeze leaves a record of why the overflow path was
+		// reached (capacity vs offset, allocs and largest alloc this pass).
+		l.Info("arena configured",
+			"capacityBytes", fmt.Sprintf("%d", arenaSize),
+			"capacityGB", fmt.Sprintf("%d", arenaSize/(1<<30)),
+			"managedMemory", fmt.Sprintf("%v", arenaPool.Inner().IsManaged()),
+			"overflowStream", "set")
+		cuda.SetArenaOverflowLogger(func(d cuda.ArenaDiagnostics, requested, aligned int, path string) {
+			l.Warn("arena first-overflow",
+				"path", path,
+				"requestedBytes", fmt.Sprintf("%d", requested),
+				"alignedBytes", fmt.Sprintf("%d", aligned),
+				"capacityBytes", fmt.Sprintf("%d", d.CapacityBytes),
+				"offsetBytes", fmt.Sprintf("%d", d.OffsetBytes),
+				"epochAllocs", fmt.Sprintf("%d", d.EpochAllocs),
+				"epochMaxAllocBytes", fmt.Sprintf("%d", d.EpochMaxAllocBytes),
+				"hits", fmt.Sprintf("%d", d.Hits),
+				"misses", fmt.Sprintf("%d", d.Misses),
+				"reuses", fmt.Sprintf("%d", d.Reuses),
+				"resets", fmt.Sprintf("%d", d.Resets),
+				"freeListLen", fmt.Sprintf("%d", d.FreeListLen))
+		})
 	}
 	if err != nil {
 		l.Warn("arena pool not available, falling back to MemPool", "error", err.Error())
