@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.10.0](https://github.com/zerfoo/ztensor/compare/v1.9.0...v1.10.0) (2026-06-08)
+
+
+### Features
+
+* **compute:** log arena config at init, route first-overflow to logger ([#118](https://github.com/zerfoo/ztensor/issues/118)) ([94bd41f](https://github.com/zerfoo/ztensor/commit/94bd41f628efa4218145338ab556309de5659e17))
+* **compute:** set async overflow pool release threshold at init ([#118](https://github.com/zerfoo/ztensor/issues/118)) ([f457c67](https://github.com/zerfoo/ztensor/commit/f457c67b33acf6dc666555a010e8f8b6ec117654))
+* **cuda:** arena diagnostics + one-shot first-overflow log ([#118](https://github.com/zerfoo/ztensor/issues/118)) ([a694f2c](https://github.com/zerfoo/ztensor/commit/a694f2c1c057a2d318e0196045273e2de3e41af6))
+* **cuda:** harden async overflow via mempool release threshold ([#118](https://github.com/zerfoo/ztensor/issues/118)) ([4a19119](https://github.com/zerfoo/ztensor/commit/4a19119fd5d3f0a8493dade7b8cfbdc2f56633d9))
+
 ## [1.9.0](https://github.com/zerfoo/ztensor/compare/v1.8.2...v1.9.0) (2026-06-07)
 
 
