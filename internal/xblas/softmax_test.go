@@ -223,3 +223,62 @@ func intToStr(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// TestSoftmaxF32_NaNCliffRegression guards against the retired arm64 NEON
+// kernel's failure: it returned NaN for finite large-spread inputs (the f32
+// "CrossAsset cliff"). The first row is the exact attention-score row that
+// detonated Wolf training; the fuzz rows stress wide spreads / large maxima.
+func TestSoftmaxF32_NaNCliffRegression(t *testing.T) {
+	rows := [][]float32{
+		{-15.957985, 7.2616568, -8.480177, 6.4076157, -14.84818, -29.221575, 11.617589, -5.366324, -1.0166737, 32.94389, 5.56471, 122.233902},
+		{122.23, -30, -30, -30},
+		{-87, -87, -87, 122.23},
+		{200, 0, -200, 50, -50, 199, -199, 1, 2, 3, 4, 5},
+	}
+	for ri, r := range rows {
+		work := make([]float32, len(r))
+		copy(work, r)
+		SoftmaxF32(&work[0], len(work))
+		var sum float64
+		for i, v := range work {
+			f := float64(v)
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				t.Fatalf("row %d: element %d is %v (input %v)", ri, i, v, r)
+			}
+			if f < 0 {
+				t.Fatalf("row %d: element %d is negative %v", ri, i, v)
+			}
+			sum += f
+		}
+		if math.Abs(sum-1.0) > 1e-4 {
+			t.Errorf("row %d: probabilities sum to %v, want ~1", ri, sum)
+		}
+	}
+}
+
+// TestSoftmaxF32_FuzzLargeSpread compares against the float64 reference over
+// many random large-spread rows (the regime that broke the NEON kernel).
+func TestSoftmaxF32_FuzzLargeSpread(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	for iter := 0; iter < 2000; iter++ {
+		n := 2 + rng.IntN(64)
+		in := make([]float32, n)
+		scale := float32(1 + rng.IntN(300))
+		for i := range in {
+			in[i] = (rng.Float32()*2 - 1) * scale
+		}
+		work := make([]float32, n)
+		copy(work, in)
+		SoftmaxF32(&work[0], n)
+		ref := referenceSoftmax(in)
+		for i, got := range work {
+			f := float64(got)
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				t.Fatalf("iter %d n=%d: NaN/Inf at %d (scale=%v)", iter, n, i, scale)
+			}
+			if d := math.Abs(f - float64(ref[i])); d > 1e-5 {
+				t.Fatalf("iter %d: element %d got %v ref %v diff %v", iter, i, got, ref[i], d)
+			}
+		}
+	}
+}
