@@ -33,6 +33,12 @@ type CUDALib struct {
 	cudaFreeAsync   uintptr
 	cudaMemsetAsync uintptr
 
+	// Stream-ordered memory pool attribute control (optional, CUDA 11.2+).
+	// Used to set the async pool release threshold so cudaMallocAsync retains
+	// freed memory instead of faulting back to the OS allocator (issue #118).
+	cudaDeviceGetDefaultMemPool uintptr
+	cudaMemPoolSetAttribute     uintptr
+
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
 	cudaStreamBeginCapture   uintptr
 	cudaStreamEndCapture     uintptr
@@ -114,6 +120,9 @@ func Open() (*CUDALib, error) {
 		{"cudaMallocAsync", &lib.cudaMallocAsync},
 		{"cudaFreeAsync", &lib.cudaFreeAsync},
 		{"cudaMemsetAsync", &lib.cudaMemsetAsync},
+		// Stream-ordered mempool attribute control (CUDA 11.2+, issue #118)
+		{"cudaDeviceGetDefaultMemPool", &lib.cudaDeviceGetDefaultMemPool},
+		{"cudaMemPoolSetAttribute", &lib.cudaMemPoolSetAttribute},
 		// CUDA graph API (CUDA 10.0+)
 		{"cudaStreamBeginCapture", &lib.cudaStreamBeginCapture},
 		{"cudaStreamEndCapture", &lib.cudaStreamEndCapture},

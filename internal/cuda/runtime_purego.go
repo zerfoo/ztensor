@@ -111,6 +111,51 @@ func FreeAsync(ptr unsafe.Pointer, s *Stream) error {
 	return nil
 }
 
+// cudaMemPoolAttrReleaseThreshold is the cudaMemPoolAttr enum value for the
+// amount of reserved memory (in bytes) the stream-ordered pool holds onto
+// before releasing it back to the OS.
+const cudaMemPoolAttrReleaseThreshold = 4
+
+// memPoolSetReleaseThresholdFn is the indirection point for the mempool
+// hardening (issue #118). Tests and the engine wiring swap it to assert
+// behavior without a CUDA device.
+var memPoolSetReleaseThresholdFn = setMemPoolReleaseThreshold
+
+// SetMemPoolReleaseThreshold configures the device's default stream-ordered
+// memory pool to retain up to bytes of freed memory before releasing it back to
+// the OS. cudaMallocAsync (the arena overflow allocator from issue #115) draws
+// from this pool; with the default threshold of zero, every freed async block
+// is returned to the OS, so the next overflow alloc must fault the pages back
+// in -- on GB10 unified memory under pressure that faults in folio_wait_bit and
+// can wedge training (issue #118). A high threshold keeps freed blocks resident
+// so re-allocation is a cheap pool hit instead of an OS page fault. No-op when
+// the CUDA runtime or the mempool symbols are unavailable.
+func SetMemPoolReleaseThreshold(deviceID int, bytes uint64) error {
+	return memPoolSetReleaseThresholdFn(deviceID, bytes)
+}
+
+func setMemPoolReleaseThreshold(deviceID int, bytes uint64) error {
+	l := lib()
+	if l == nil || l.cudaDeviceGetDefaultMemPool == 0 || l.cudaMemPoolSetAttribute == 0 {
+		return nil // symbols unavailable: no-op
+	}
+	if err := SetDevice(deviceID); err != nil {
+		return err
+	}
+	var pool uintptr
+	ret := ccall(l.cudaDeviceGetDefaultMemPool, uintptr(unsafe.Pointer(&pool)), uintptr(deviceID))
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaDeviceGetDefaultMemPool failed: %s", cudaErrorString(ret))
+	}
+	threshold := bytes
+	ret = ccall(l.cudaMemPoolSetAttribute, pool,
+		uintptr(cudaMemPoolAttrReleaseThreshold), uintptr(unsafe.Pointer(&threshold)))
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaMemPoolSetAttribute(releaseThreshold) failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
 // MallocManaged allocates size bytes of unified memory accessible from both
 // host and device.
 func MallocManaged(size int) (unsafe.Pointer, error) {
