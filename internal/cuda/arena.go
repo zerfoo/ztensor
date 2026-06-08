@@ -55,6 +55,17 @@ type ArenaPool struct {
 	resets     atomic.Int64
 	reuses     atomic.Int64 // incremented when Alloc reuses a free-list block
 
+	// Per-reset-epoch diagnostics (issue #118). These are cleared by Reset so
+	// they describe a single forward+backward pass, which is what tells apart
+	// "a handful of allocs filled the arena" (mis-sized buffer / accounting bug)
+	// from "tens of thousands of allocs legitimately filled it" (full working
+	// set) when the overflow path is unexpectedly reached.
+	epochAllocs   atomic.Int64 // allocs served (reuse or bump) since last Reset
+	epochMaxAlloc atomic.Int64 // largest single aligned alloc since last Reset
+	// overflowLogged ensures the first-overflow diagnostic fires at most once per
+	// reset-epoch instead of on every exhausted Alloc.
+	overflowLogged atomic.Bool
+
 	// freeList holds freed blocks sorted by offset, available for reuse.
 	// Alloc checks for a best-fit block before bumping the offset.
 	freeList []freeBlock
@@ -82,6 +93,58 @@ var (
 	arenaMallocAsyncFn = MallocAsync
 	arenaFreeAsyncFn   = FreeAsync
 )
+
+// ArenaDiagnostics is a point-in-time snapshot of arena state (issue #118).
+// It answers the question the #118 freeze posed: why is the overflow path
+// reached for a tiny alloc on a large arena? OffsetBytes vs CapacityBytes says
+// how full the arena is; EpochAllocs and EpochMaxAllocBytes (since the last
+// Reset) say whether it filled via many small allocs or one runaway buffer;
+// Resets says whether the training loop is driving Reset at all.
+type ArenaDiagnostics struct {
+	CapacityBytes      int
+	OffsetBytes        int
+	Hits               int64
+	Misses             int64
+	Reuses             int64
+	Resets             int64
+	EpochAllocs        int64 // allocs since the last Reset
+	EpochMaxAllocBytes int64 // largest single aligned alloc since the last Reset
+	FreeListLen        int
+	OverflowStreamSet  bool
+	Managed            bool
+}
+
+// ArenaOverflowFunc receives the first-overflow diagnostic. requested is the
+// caller's byte size, aligned is the 256-byte-aligned size actually needed, and
+// path is the fallback route taken ("capture-refused", "async", or "mempool").
+type ArenaOverflowFunc func(d ArenaDiagnostics, requested, aligned int, path string)
+
+// arenaOverflowFn is the sink for the one-shot first-overflow diagnostic. It is
+// a package-level indirection (like arenaMallocAsyncFn) so internal/cuda stays
+// free of any logging dependency: the engine overrides it to route to its
+// structured logger, and tests swap it to capture. The default writes a single
+// line to stderr so the diagnostic survives even on a GB10 freeze where the
+// engine logger may not have flushed.
+var arenaOverflowFn ArenaOverflowFunc = defaultArenaOverflowLog
+
+func defaultArenaOverflowLog(d ArenaDiagnostics, requested, aligned int, path string) {
+	fmt.Fprintf(os.Stderr,
+		"ztensor arena first-overflow: path=%s requested=%d aligned=%d "+
+			"capacity=%d offset=%d epochAllocs=%d epochMaxAlloc=%d "+
+			"hits=%d misses=%d reuses=%d resets=%d freeList=%d overflowStream=%t managed=%t\n",
+		path, requested, aligned,
+		d.CapacityBytes, d.OffsetBytes, d.EpochAllocs, d.EpochMaxAllocBytes,
+		d.Hits, d.Misses, d.Reuses, d.Resets, d.FreeListLen, d.OverflowStreamSet, d.Managed)
+}
+
+// SetArenaOverflowLogger overrides the first-overflow diagnostic sink. Passing
+// nil restores the default stderr logger.
+func SetArenaOverflowLogger(fn ArenaOverflowFunc) {
+	if fn == nil {
+		fn = defaultArenaOverflowLog
+	}
+	arenaOverflowFn = fn
+}
 
 // NewArenaPool allocates a contiguous GPU region of the given capacity bytes
 // on the specified device. A fallback MemPool handles any overflow.
@@ -133,6 +196,17 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 	// Align to 256 bytes for GPU memory access patterns.
 	aligned := (byteSize + 255) &^ 255
 
+	// Per-epoch diagnostics (issue #118): count this alloc and track the largest
+	// single request since the last Reset. These let the first-overflow log say
+	// whether the arena filled via a runaway buffer or a legitimately full pass.
+	a.epochAllocs.Add(1)
+	for {
+		cur := a.epochMaxAlloc.Load()
+		if int64(aligned) <= cur || a.epochMaxAlloc.CompareAndSwap(cur, int64(aligned)) {
+			break
+		}
+	}
+
 	a.mu.Lock()
 
 	// Check free-list for a best-fit block (smallest block >= aligned).
@@ -162,6 +236,27 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 
 	// Arena exhausted -- fall back to MemPool.
 	a.misses.Add(1)
+
+	// First-overflow diagnostic (issue #118): the first time the exhaustion
+	// branch is reached in a reset-epoch, emit a one-shot snapshot so we can see
+	// why a tiny alloc overflowed a large arena. Compute the route that will be
+	// taken so the log names it. Fires at most once per epoch (reset clears it).
+	if a.overflowLogged.CompareAndSwap(false, true) {
+		a.mu.Lock()
+		capturing := a.fallback != nil && a.fallback.IsCapturing()
+		hasOverflow := a.overflowStream != nil
+		a.mu.Unlock()
+		var path string
+		switch {
+		case CaptureActive() && !capturing:
+			path = "capture-refused"
+		case hasOverflow && !capturing:
+			path = "async"
+		default:
+			path = "mempool"
+		}
+		arenaOverflowFn(a.Diagnostics(), byteSize, aligned, path)
+	}
 
 	// Capture-aware guard (issue #111, ADR 004): if a CUDA graph capture is
 	// active and the fallback is NOT capture-aware, it would issue a synchronous
@@ -311,6 +406,37 @@ func (a *ArenaPool) Reset() {
 	a.freeList = a.freeList[:0]
 	a.mu.Unlock()
 	a.resets.Add(1)
+	// Clear per-epoch diagnostics so the next pass's first-overflow log fires
+	// and reports counts for that pass alone (issue #118).
+	a.epochAllocs.Store(0)
+	a.epochMaxAlloc.Store(0)
+	a.overflowLogged.Store(false)
+}
+
+// Diagnostics returns a point-in-time snapshot of arena state for logging
+// (issue #118). It takes the lock to read offset and free-list length; the
+// counters are atomics. Safe to call concurrently with Alloc/Free.
+func (a *ArenaPool) Diagnostics() ArenaDiagnostics {
+	a.mu.Lock()
+	offset := a.offset
+	capacity := a.capacity
+	freeListLen := len(a.freeList)
+	overflowSet := a.overflowStream != nil
+	managed := a.managed
+	a.mu.Unlock()
+	return ArenaDiagnostics{
+		CapacityBytes:      capacity,
+		OffsetBytes:        offset,
+		Hits:               a.hits.Load(),
+		Misses:             a.misses.Load(),
+		Reuses:             a.reuses.Load(),
+		Resets:             a.resets.Load(),
+		EpochAllocs:        a.epochAllocs.Load(),
+		EpochMaxAllocBytes: a.epochMaxAlloc.Load(),
+		FreeListLen:        freeListLen,
+		OverflowStreamSet:  overflowSet,
+		Managed:            managed,
+	}
 }
 
 // SetOverflowStream sets the stream used for the arena's exhaustion fallback.
