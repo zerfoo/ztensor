@@ -36,7 +36,12 @@ var (
 	// blow up on the offending sample (the sample-0 forward is clean, so a
 	// first-forward dump misses it). Capped to bound log volume. Diagnostic only.
 	traceForward      = os.Getenv("ZTENSOR_TRACE_FORWARD") != ""
-	forwardTraceCount int64
+	// ZTENSOR_TRACE_FORWARD=verbose logs EVERY node's forward-output max|.| on the
+	// first forward passes (capped), so a clean batch-0 GPU run can be diffed
+	// against CPU to find the forward op whose magnitude diverges below the
+	// blow-up threshold. Diagnostic only.
+	traceForwardVerbose = os.Getenv("ZTENSOR_TRACE_FORWARD") == "verbose"
+	forwardTraceCount   int64
 )
 
 const forwardTraceThreshold = 1000.0
@@ -283,7 +288,12 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 		g.memo[n] = output
 
-		if traceForward && output != nil && atomic.LoadInt64(&forwardTraceCount) < 60 {
+		if traceForwardVerbose && output != nil && atomic.LoadInt64(&forwardTraceCount) < 280 {
+			maxAbs, bad := scanGradFinite(output)
+			atomic.AddInt64(&forwardTraceCount, 1)
+			fmt.Fprintf(os.Stderr, "[ZT-FWD] node[%d] op=%-20s out_max=%.6g bad=%d shape=%v\n",
+				nodeIdx, n.OpType(), maxAbs, bad, output.Shape())
+		} else if traceForward && output != nil && atomic.LoadInt64(&forwardTraceCount) < 60 {
 			maxAbs, bad := scanGradFinite(output)
 			if maxAbs > forwardTraceThreshold || bad > 0 {
 				atomic.AddInt64(&forwardTraceCount, 1)
