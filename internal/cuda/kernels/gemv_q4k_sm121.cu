@@ -34,6 +34,7 @@
 #include "gemv_q4k.h"   /* decode_scales_mins is shared */
 #include <cuda_fp16.h>
 #include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h> // CUDA 13: cg::reduce/cg::plus moved here
 #include <stdint.h>
 
 namespace cg = cooperative_groups;
