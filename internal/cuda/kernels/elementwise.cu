@@ -225,16 +225,27 @@ __global__ void kernel_cos(const float* a, float* c, int n) {
     if (idx < n) c[idx] = cosf(a[idx]);
 }
 
+// tanh saturates to +/-1 for |x| >= ~9 (tanh(9) rounds to 1.0f in float32).
+// This file is compiled with --use_fast_math, whose approximate tanhf does NOT
+// saturate for large arguments -- it returns a growing value, which turns the
+// tanh-approximation GELU (0.5*x*(1+tanh(u)), u ~ 0.0357*x^3) into a quartic and
+// blows activations up to 1e27/NaN in f32 (the GPU "CrossAsset cliff"; CPU uses
+// the accurate math.Tanh and is unaffected). Clamping the argument to [-20,20]
+// keeps tanhf in its accurate range and is exact: tanhf(+/-20) == +/-1.0f.
+__device__ __forceinline__ float tanh_sat(float x) {
+    return tanhf(fminf(fmaxf(x, -20.0f), 20.0f));
+}
+
 __global__ void kernel_tanh(const float* a, float* c, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) c[idx] = tanhf(a[idx]);
+    if (idx < n) c[idx] = tanh_sat(a[idx]);
 }
 
 // tanh_prime: (1 - tanh(a)^2) * upstream
 __global__ void kernel_tanh_prime(const float* a, const float* upstream, float* c, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
-        float t = tanhf(a[idx]);
+        float t = tanh_sat(a[idx]);
         c[idx] = (1.0f - t * t) * upstream[idx];
     }
 }
