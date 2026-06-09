@@ -30,13 +30,16 @@ var (
 	traceBackwardVerbose = os.Getenv("ZTENSOR_TRACE_BACKWARD") == "verbose"
 	backwardOriginOnce   sync.Once
 
-	// ZTENSOR_TRACE_FORWARD dumps every node's forward-output max|.|/NaN count on
-	// the FIRST forward pass, naming each op via OpType. Used to compare the
-	// training-graph forward op-by-op between CPU and GPU and pin the op whose
-	// f32 output diverges (Wolf docs/plan-gpu-f32-residual). Diagnostic only.
-	traceForward            = os.Getenv("ZTENSOR_TRACE_FORWARD") != ""
-	forwardTraceArmed int32 = 1
+	// ZTENSOR_TRACE_FORWARD dumps a node's forward-output max|.|/NaN count the
+	// first time that node's output grows large (max|.| > forwardTraceThreshold)
+	// or goes non-finite, naming the op via OpType. Pins the FIRST forward op to
+	// blow up on the offending sample (the sample-0 forward is clean, so a
+	// first-forward dump misses it). Capped to bound log volume. Diagnostic only.
+	traceForward      = os.Getenv("ZTENSOR_TRACE_FORWARD") != ""
+	forwardTraceCount int64
 )
+
+const forwardTraceThreshold = 1000.0
 
 // scanGradFinite returns the max finite |value| and the count of NaN/Inf entries
 // in t. It reads host data (a D2H copy for GPU storage; a direct unified read on
@@ -280,10 +283,13 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 		g.memo[n] = output
 
-		if traceForward && output != nil && atomic.LoadInt32(&forwardTraceArmed) == 1 {
+		if traceForward && output != nil && atomic.LoadInt64(&forwardTraceCount) < 60 {
 			maxAbs, bad := scanGradFinite(output)
-			fmt.Fprintf(os.Stderr, "[ZT-FWD] node[%d] op=%-20s out_max=%.5g bad=%d shape=%v\n",
-				nodeIdx, n.OpType(), maxAbs, bad, output.Shape())
+			if maxAbs > forwardTraceThreshold || bad > 0 {
+				atomic.AddInt64(&forwardTraceCount, 1)
+				fmt.Fprintf(os.Stderr, "[ZT-FWD] node[%d] op=%-20s out_max=%.6g bad=%d shape=%v\n",
+					nodeIdx, n.OpType(), maxAbs, bad, output.Shape())
+			}
 		}
 
 		// Debug: log node output for ONNX diagnosis.
@@ -335,11 +341,6 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		if t := g.memo[kv.output]; t != nil {
 			kv.input.SetStored(t)
 		}
-	}
-
-	// Disarm the forward trace after the first full forward pass.
-	if traceForward {
-		atomic.StoreInt32(&forwardTraceArmed, 0)
 	}
 
 	return g.memo[g.output], nil
