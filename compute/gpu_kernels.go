@@ -16,6 +16,24 @@ const f32Size = int(unsafe.Sizeof(float32(0)))
 // Off by default to avoid any performance impact in normal operation.
 var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
+// syncOpsAfterKernel makes every element-wise/scalar/binary GPU op synchronize
+// the stream immediately after its kernel launch (ZTENSOR_SYNC_OPS=1). This
+// serializes op execution and forces arena buffer reuse to wait for the prior
+// writer, eliminating cross-stream/reuse races at a large throughput cost. Used
+// to test+work around the GPU f32 CrossAsset corruption (Wolf
+// docs/plan-gpu-f32-residual): a sync (a .Data() D2H copy) was observed to mask
+// the GELU-chain over-amplification. Correctness-first; off by default.
+var syncOpsAfterKernel = os.Getenv("ZTENSOR_SYNC_OPS") != ""
+
+// maybeSyncOps synchronizes the engine stream when ZTENSOR_SYNC_OPS is set.
+func (e *GPUEngine[T]) maybeSyncOps() error {
+	if !syncOpsAfterKernel {
+		return nil
+	}
+
+	return e.stream.Synchronize()
+}
+
 // largeAllocThreshold is the byte size above which allocations are logged
 // when debugGPU is enabled (100 MB).
 const largeAllocThreshold = 100 * 1024 * 1024
@@ -568,6 +586,10 @@ func gpuBinaryOp[T tensor.Numeric](
 		return nil, err
 	}
 
+	if err := e.maybeSyncOps(); err != nil {
+		return nil, err
+	}
+
 	if reused {
 		return finishReusedDst[T](dst[0], a.Shape()), nil
 	}
@@ -611,6 +633,10 @@ func gpuUnaryOp[T tensor.Numeric](
 			e.pool.Free(e.deviceID, devC, byteSize)
 		}
 
+		return nil, err
+	}
+
+	if err := e.maybeSyncOps(); err != nil {
 		return nil, err
 	}
 
@@ -658,6 +684,10 @@ func gpuScalarOp[T tensor.Numeric](
 			e.pool.Free(e.deviceID, devC, byteSize)
 		}
 
+		return nil, err
+	}
+
+	if err := e.maybeSyncOps(); err != nil {
 		return nil, err
 	}
 
