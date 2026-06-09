@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
@@ -28,6 +29,13 @@ var (
 	traceBackward        = os.Getenv("ZTENSOR_TRACE_BACKWARD") != ""
 	traceBackwardVerbose = os.Getenv("ZTENSOR_TRACE_BACKWARD") == "verbose"
 	backwardOriginOnce   sync.Once
+
+	// ZTENSOR_TRACE_FORWARD dumps every node's forward-output max|.|/NaN count on
+	// the FIRST forward pass, naming each op via OpType. Used to compare the
+	// training-graph forward op-by-op between CPU and GPU and pin the op whose
+	// f32 output diverges (Wolf docs/plan-gpu-f32-residual). Diagnostic only.
+	traceForward            = os.Getenv("ZTENSOR_TRACE_FORWARD") != ""
+	forwardTraceArmed int32 = 1
 )
 
 // scanGradFinite returns the max finite |value| and the count of NaN/Inf entries
@@ -272,6 +280,12 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 		g.memo[n] = output
 
+		if traceForward && output != nil && atomic.LoadInt32(&forwardTraceArmed) == 1 {
+			maxAbs, bad := scanGradFinite(output)
+			fmt.Fprintf(os.Stderr, "[ZT-FWD] node[%d] op=%-20s out_max=%.5g bad=%d shape=%v\n",
+				nodeIdx, n.OpType(), maxAbs, bad, output.Shape())
+		}
+
 		// Debug: log node output for ONNX diagnosis.
 		if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" && output != nil {
 			opType := n.OpType()
@@ -321,6 +335,11 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		if t := g.memo[kv.output]; t != nil {
 			kv.input.SetStored(t)
 		}
+	}
+
+	// Disarm the forward trace after the first full forward pass.
+	if traceForward {
+		atomic.StoreInt32(&forwardTraceArmed, 0)
 	}
 
 	return g.memo[g.output], nil
