@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.2](https://github.com/zerfoo/ztensor/compare/v1.10.1...v1.10.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* **cuda:** include cooperative_groups/reduce.h for cg::reduce on CUDA 13 ([bcbdd9d](https://github.com/zerfoo/ztensor/commit/bcbdd9d4cc97c5fc79661f1e03e47f71e1e7d95b))
+
 ## [1.10.1](https://github.com/zerfoo/ztensor/compare/v1.10.0...v1.10.1) (2026-06-09)
 
 
