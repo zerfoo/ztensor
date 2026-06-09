@@ -190,6 +190,9 @@ func (a *ArenaPool) IsManaged() bool {
 
 // Alloc returns a device pointer of at least byteSize bytes from the arena.
 // Allocations are 256-byte aligned for GPU coalescing. Alloc first checks
+// arenaNoReuse disables free-list reuse within a step (ZTENSOR_ARENA_NO_REUSE).
+var arenaNoReuse = os.Getenv("ZTENSOR_ARENA_NO_REUSE") != ""
+
 // the free-list for a best-fit reusable block. If none is found, it bumps
 // the offset. If the arena is full, falls back to the MemPool.
 func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
@@ -210,7 +213,14 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 	a.mu.Lock()
 
 	// Check free-list for a best-fit block (smallest block >= aligned).
-	if bestIdx := a.findBestFit(aligned); bestIdx >= 0 {
+	// ZTENSOR_ARENA_NO_REUSE forces always-bump allocation (no free-list reuse)
+	// within a step. Layer caches held across forward->backward (e.g. LayerNorm
+	// stats) are not graph-refcounted, so free-list reuse can hand their buffers
+	// to a later forward op and corrupt them before Backward reads them -- the
+	// residual GPU f32 "CrossAsset cliff". No-reuse trades per-step memory for
+	// correctness; the per-step ResetPool reclaims it. See Wolf
+	// docs/plan-gpu-f32-residual.
+	if bestIdx := a.findBestFit(aligned); !arenaNoReuse && bestIdx >= 0 {
 		blk := a.freeList[bestIdx]
 		// Remove the block from the free-list.
 		a.freeList = append(a.freeList[:bestIdx], a.freeList[bestIdx+1:]...)
