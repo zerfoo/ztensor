@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/zerfoo/ztensor/compare/v1.10.0...v1.10.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **xblas:** retire broken arm64 NEON SoftmaxF32; use stable Go softmax everywhere ([c1863fe](https://github.com/zerfoo/ztensor/commit/c1863fe540da902b14b44f08e98cc9e46cfda731))
+
 ## [1.10.0](https://github.com/zerfoo/ztensor/compare/v1.9.0...v1.10.0) (2026-06-08)
 
 
