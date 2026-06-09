@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"sort"
 	"sync"
@@ -13,6 +14,43 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
+
+// Backward-pass NaN/Inf instrumentation (diagnostic only, env-gated).
+//
+// ZTENSOR_TRACE_BACKWARD pins the first backward op whose output gradient goes
+// non-finite while its incoming (output-side) gradient was still finite -- i.e.
+// the op whose f32 backward introduces the NaN/Inf. Used to pin the residual
+// GPU f32 "CrossAsset cliff" backward overflow (Wolf docs/plan-gpu-f32-residual).
+//
+//	ZTENSOR_TRACE_BACKWARD=1        -> log the FIRST origin op once per process.
+//	ZTENSOR_TRACE_BACKWARD=verbose  -> also log every node's in/out grad magnitude.
+var (
+	traceBackward        = os.Getenv("ZTENSOR_TRACE_BACKWARD") != ""
+	traceBackwardVerbose = os.Getenv("ZTENSOR_TRACE_BACKWARD") == "verbose"
+	backwardOriginOnce   sync.Once
+)
+
+// scanGradFinite returns the max finite |value| and the count of NaN/Inf entries
+// in t. It reads host data (a D2H copy for GPU storage; a direct unified read on
+// coherent-memory hardware such as the GB10). nil tensors scan as clean.
+func scanGradFinite[T tensor.Numeric](t *tensor.TensorNumeric[T]) (maxAbs float64, bad int) {
+	if t == nil {
+		return 0, 0
+	}
+	for _, v := range t.Data() {
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			bad++
+
+			continue
+		}
+		if a := math.Abs(f); a > maxAbs {
+			maxAbs = a
+		}
+	}
+
+	return maxAbs, bad
+}
 
 // TensorReleaser can release tensors back to a pool for reuse.
 type TensorReleaser[T tensor.Numeric] interface {
@@ -34,9 +72,9 @@ type kvPair[T tensor.Numeric] struct {
 
 // Graph represents a computation graph with a defined execution order.
 type Graph[T tensor.Numeric] struct {
-	mu          sync.Mutex
-	engine      compute.Engine[T]
-	engineProxy *compute.EngineProxy[T]
+	mu           sync.Mutex
+	engine       compute.Engine[T]
+	engineProxy  *compute.EngineProxy[T]
 	nodes        []Node[T]
 	dependencies map[Node[T]][]Node[T]
 	inputs       []Node[T]
@@ -50,9 +88,9 @@ type Graph[T tensor.Numeric] struct {
 	kvPairs []kvPair[T]
 
 	// Cached decode-time allocations to avoid per-forward GC pressure.
-	cachedRefCount   map[Node[T]]int // static reference counts (recomputed on clear)
+	cachedRefCount   map[Node[T]]int            // static reference counts (recomputed on clear)
 	cachedNodeInputs []*tensor.TensorNumeric[T] // reusable buffer for node inputs
-	maxDeps          int                         // max dependencies per node
+	maxDeps          int                        // max dependencies per node
 }
 
 // Resettable is implemented by nodes that carry state between forward passes
@@ -308,6 +346,29 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 			inputGrads, err := node.Backward(ctx, mode, grad, nodeInputs...)
 			if err != nil {
 				return err
+			}
+
+			if traceBackward {
+				inMax, inBad := scanGradFinite(grad)
+				for j, ig := range inputGrads {
+					outMax, outBad := scanGradFinite(ig)
+					if traceBackwardVerbose {
+						fmt.Fprintf(os.Stderr,
+							"[ZT-BWD] node[%d] op=%s in_max=%.5g in_bad=%d -> input[%d] out_max=%.5g out_bad=%d\n",
+							i, node.OpType(), inMax, inBad, j, outMax, outBad)
+					}
+					// Origin = this op's backward turned a finite incoming gradient
+					// into a non-finite outgoing gradient. Reverse-topo order means
+					// the first such node is the one closest to the loss output.
+					if inBad == 0 && outBad > 0 {
+						idx, opType := i, node.OpType()
+						backwardOriginOnce.Do(func() {
+							fmt.Fprintf(os.Stderr,
+								"[ZT-BWD-ORIGIN] first non-finite backward gradient: op=%s node_idx=%d input=%d in_max=%.6g out_max=%.6g out_bad=%d\n",
+								opType, idx, j, inMax, outMax, outBad)
+						})
+					}
+				}
 			}
 
 			for j, dep := range g.dependencies[node] {
