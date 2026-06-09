@@ -355,6 +355,15 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 	grads := make(map[Node[T]]*tensor.TensorNumeric[T])
 	grads[g.output] = initialGradient
 
+	if traceBackward {
+		if m, b := scanGradFinite(initialGradient); b > 0 {
+			backwardOriginOnce.Do(func() {
+				fmt.Fprintf(os.Stderr,
+					"[ZT-BWD-ORIGIN] loss gradient (Backward seed) is non-finite: max=%.6g bad=%d\n", m, b)
+			})
+		}
+	}
+
 	for i := len(g.nodes) - 1; i >= 0; i-- {
 		node := g.nodes[i]
 		if grad, ok := grads[node]; ok {
@@ -399,6 +408,20 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 					addedGrad, err := g.engine.Add(ctx, existingGrad, inputGrads[j])
 					if err != nil {
 						return fmt.Errorf("error accumulating gradients: %w", err)
+					}
+
+					if traceBackward {
+						_, exBad := scanGradFinite(existingGrad)
+						_, inBadA := scanGradFinite(inputGrads[j])
+						sumMax, sumBad := scanGradFinite(addedGrad)
+						if exBad == 0 && inBadA == 0 && sumBad > 0 {
+							depOp := dep.OpType()
+							backwardOriginOnce.Do(func() {
+								fmt.Fprintf(os.Stderr,
+									"[ZT-BWD-ORIGIN] gradient accumulation Add overflowed at consumer of op=%s node_idx=%d: sum_max=%.6g sum_bad=%d (both inputs finite)\n",
+									depOp, i, sumMax, sumBad)
+							})
+						}
 					}
 
 					grads[dep] = addedGrad
