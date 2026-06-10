@@ -210,6 +210,11 @@ func (a *ArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 	a.mu.Lock()
 
 	// Check free-list for a best-fit block (smallest block >= aligned).
+	// Under ZTENSOR_ARENA_POISON the block (and any split remainder) already
+	// holds the NaN sentinel: it was filled when it entered the free-list
+	// (FreeArena) or when the whole span was reclaimed (Reset). Reuse hands
+	// out poisoned bytes -- arena memory is uninitialized by contract -- so no
+	// additional fill is needed here, keeping Alloc free of poison overhead.
 	if bestIdx := a.findBestFit(aligned); bestIdx >= 0 {
 		blk := a.freeList[bestIdx]
 		// Remove the block from the free-list.
@@ -381,6 +386,14 @@ func (a *ArenaPool) FreeArena(ptr unsafe.Pointer, byteSize int) {
 	if offset < 0 || offset+aligned > a.capacity {
 		return // not an arena pointer
 	}
+	// Poison-on-free (ADR 006, ZTENSOR_ARENA_POISON=1): fill the block with
+	// NaN sentinels BEFORE it enters the free-list, so a stale cached pointer
+	// into it reads poison immediately -- even before the block is reused. The
+	// caller still exclusively owns the region here, so the fill cannot race a
+	// new owner.
+	if arenaPoisonEnabled {
+		a.poisonRegion(ptr, aligned, "FreeArena")
+	}
 	a.mu.Lock()
 	a.insertFreeBlock(freeBlock{offset: offset, size: aligned})
 	a.mu.Unlock()
@@ -402,6 +415,15 @@ func (a *ArenaPool) FreeManaged(deviceID int, ptr unsafe.Pointer, byteSize int) 
 // memory above the floor is reclaimed.
 func (a *ArenaPool) Reset() {
 	a.mu.Lock()
+	// Poison-on-reset (ADR 006, ZTENSOR_ARENA_POISON=1): before the span above
+	// the reset floor becomes reusable, fill it with NaN sentinels so any node
+	// that cached a pointer into it reads a deterministic NaN instead of
+	// silently-recycled data. Done under the lock so no concurrent Alloc can
+	// hand the span out before the fill is issued. Buffers below the floor
+	// (weights, optimizer state, captured-graph buffers) are never poisoned.
+	if arenaPoisonEnabled && a.base != nil && a.offset > a.resetFloor {
+		a.poisonRegion(unsafe.Add(a.base, a.resetFloor), a.offset-a.resetFloor, "Reset")
+	}
 	a.offset = a.resetFloor
 	a.freeList = a.freeList[:0]
 	a.mu.Unlock()
