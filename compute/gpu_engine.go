@@ -263,6 +263,14 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 			"capacityGB", fmt.Sprintf("%d", arenaSize/(1<<30)),
 			"managedMemory", fmt.Sprintf("%v", arenaPool.Inner().IsManaged()),
 			"overflowStream", "set")
+		// Poison-on-reset debug mode (ADR 006, ZTENSOR_ARENA_POISON=1): make it
+		// unmistakable in the logs that reclaimed arena regions are NaN-filled
+		// before reuse -- it slows ResetPool and turns every use-after-reset bug
+		// (zerfoo#842/#845 class) into an immediate NaN at the corruption site.
+		if cuda.ArenaPoisonEnabled() {
+			l.Warn("ZTENSOR_ARENA_POISON=1: arena poison-on-reset debug mode active; " +
+				"reclaimed regions are NaN-filled before reuse (debug only, slows ResetPool)")
+		}
 		cuda.SetArenaOverflowLogger(func(d cuda.ArenaDiagnostics, requested, aligned int, path string) {
 			l.Warn("arena first-overflow",
 				"path", path,
