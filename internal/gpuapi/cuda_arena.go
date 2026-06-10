@@ -31,6 +31,10 @@ func NewCUDAArenaPool(deviceID, capacityBytes int, fallback *cuda.MemPool) (*CUD
 	if err != nil {
 		return nil, err
 	}
+	// ZTENSOR_ARENA_POISON=1 (ADR 006): use the on-device fill kernel for
+	// poison fills instead of the slow host-staged Memcpy default. No-op when
+	// the mode is off.
+	registerArenaPoisonKernelFill()
 	return &CUDAArenaPool{inner: arena}, nil
 }
 
