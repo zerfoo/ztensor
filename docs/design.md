@@ -363,6 +363,13 @@ Structured, leveled logging with Debug, Info, Warn, and Error levels. Two implem
 
 Evaluation metrics for model performance: Pearson correlation, Spearman correlation, MSE, RMSE, and MAE. Used by training and evaluation pipelines to assess model quality.
 
+## testing/ (verification harnesses)
+
+Per-op verification infrastructure (zerfoo ADR 091); test-only — the production stack stays pure Go.
+
+- **testing/gradcheck** — finite-difference gradient checker modeled on `torch.autograd.gradcheck`: a node's analytic Backward vs float64 central differences on the CPU engine, driven by an OpInfo registry of op constructors, representative shapes, input domains, and tolerances. The op wrappers are generic over `tensor.Float`; `NewRegistryNode[T]` is the single source of truth for constructor arguments, so both harnesses exercise identical op configurations. Catches wrong Jacobians as named CI tests.
+- **testing/oracle** — the ztensor side of the PyTorch-as-oracle harness: for each registry op it runs forward+backward on the float32 CPU engine (GPU-engine variant regenerates through the same format on the DGX) and dumps a case bundle (manifest.json + raw little-endian tensor files: inputs, upstream gradient, forward output, input/parameter gradients). `scripts/oracle/run_oracle.py` replays the bundles in torch inside the pinned NGC container (`nvcr.io/nvidia/pytorch:26.02-py3`) on the GB10 via a Spark pod and diffs both directions within per-op tolerances (`|ztensor − torch| ≤ atol + rtol·|torch|`, NaN always fails). Catches numerics-convention divergence (fast-math, reduction ordering, eps placement) that both Go engines could share. Procedure and format spec: `scripts/oracle/README.md`, `testing/oracle/bundle.go`.
+
 ## Memory Architecture
 
 ### CPU Memory
