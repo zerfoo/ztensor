@@ -1,8 +1,83 @@
 package gradcheck
 
 import (
+	"fmt"
+
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
+
+// NewRegistryNode constructs the registry op named name on the given engine
+// at any float precision. It is the single source of truth for constructor
+// arguments (activation slopes, axes, reshape targets, layernorm width), so
+// the float64 gradcheck harness and the float32 PyTorch-oracle harness
+// (testing/oracle) exercise byte-identical op configurations.
+func NewRegistryNode[T tensor.Float](name string, e compute.Engine[T]) (graph.Node[T], error) {
+	switch name {
+	case "Add":
+		return newAddNode(e), nil
+	case "Sub":
+		return newSubNode(e), nil
+	case "Mul":
+		return newMulNode(e), nil
+	case "Div":
+		return newDivNode(e), nil
+	case "Pow":
+		return newPowNode(e), nil
+	case "Tanh":
+		return newTanhNode(e), nil
+	case "Sigmoid":
+		return newSigmoidNode(e), nil
+	case "ReLU":
+		return newReLUNode(e), nil
+	case "LeakyReLU":
+		return newLeakyReLUNode(e, 0.1), nil
+	case "Exp":
+		return newExpNode(e), nil
+	case "Log":
+		return newLogNode(e), nil
+	case "Sqrt":
+		return newSqrtNode(e), nil
+	case "Rsqrt":
+		return newRsqrtNode(e), nil
+	case "Sin":
+		return newSinNode(e), nil
+	case "Cos":
+		return newCosNode(e), nil
+	case "AddScalar":
+		return newAddScalarNode(e, 0.7), nil
+	case "MulScalar":
+		return newMulScalarNode(e, -1.3), nil
+	case "MatMul":
+		return newMatMulNode(e), nil
+	case "Transpose":
+		return newTransposeNode(e), nil
+	case "Reshape":
+		return newReshapeNode(e, []int{3, 2}), nil
+	case "HadamardTransform":
+		return newHadamardNode(e), nil
+	case "Softmax":
+		return newSoftmaxNode(e, 1), nil
+	case "ReduceSum":
+		return newReduceSumNode(e, 1), nil
+	case "ReduceMean":
+		return newReduceMeanNode(e, 1), nil
+	case "ReduceMax":
+		return newReduceMaxNode(e), nil
+	case "LayerNorm":
+		return newLayerNormNode(e, 4)
+	default:
+		return nil, fmt.Errorf("gradcheck: no registry op named %q", name)
+	}
+}
+
+// registryMake adapts NewRegistryNode to the OpInfo.Make signature.
+func registryMake(name string) func(e engineT) (graph.Node[float64], error) {
+	return func(e engineT) (graph.Node[float64], error) {
+		return NewRegistryNode[float64](name, e)
+	}
+}
 
 // Registry returns the OpInfo table for every graph.Node implementation
 // shipped (as engine-op wrappers) with ztensor's gradcheck harness. ztensor's
@@ -21,28 +96,28 @@ func Registry() []OpInfo {
 		// Elementwise binary.
 		{
 			Name: "Add", Seed: 1,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newAddNode(e), nil },
+			Make:        registryMake("Add"),
 			InputShapes: [][]int{{2, 3}, {2, 3}},
 		},
 		{
 			Name: "Sub", Seed: 2,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newSubNode(e), nil },
+			Make:        registryMake("Sub"),
 			InputShapes: [][]int{{2, 3}, {2, 3}},
 		},
 		{
 			Name: "Mul", Seed: 3,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newMulNode(e), nil },
+			Make:        registryMake("Mul"),
 			InputShapes: [][]int{{2, 3}, {2, 3}},
 		},
 		{
 			Name: "Div", Seed: 4,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newDivNode(e), nil },
+			Make:        registryMake("Div"),
 			InputShapes: [][]int{{2, 3}, {2, 3}},
 			Domains:     []Sampler{DomainDefault, DomainPositive}, // denominator away from zero
 		},
 		{
 			Name: "Pow", Seed: 5,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newPowNode(e), nil },
+			Make:        registryMake("Pow"),
 			InputShapes: [][]int{{2, 3}, {2, 3}},
 			Domains:     []Sampler{DomainPositive, DomainDefault}, // base must be positive
 		},
@@ -50,118 +125,118 @@ func Registry() []OpInfo {
 		// Elementwise unary / activations.
 		{
 			Name: "Tanh", Seed: 6,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newTanhNode(e), nil },
+			Make:        registryMake("Tanh"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "Sigmoid", Seed: 7,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newSigmoidNode(e), nil },
+			Make:        registryMake("Sigmoid"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "ReLU", Seed: 8,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newReLUNode(e), nil },
+			Make:        registryMake("ReLU"),
 			InputShapes: [][]int{{2, 3}},
 			Domains:     []Sampler{DomainAwayFromZero}, // kink at 0
 		},
 		{
 			Name: "LeakyReLU", Seed: 9,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newLeakyReLUNode(e, 0.1), nil },
+			Make:        registryMake("LeakyReLU"),
 			InputShapes: [][]int{{2, 3}},
 			Domains:     []Sampler{DomainAwayFromZero}, // kink at 0
 		},
 		{
 			Name: "Exp", Seed: 10,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newExpNode(e), nil },
+			Make:        registryMake("Exp"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "Log", Seed: 11,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newLogNode(e), nil },
+			Make:        registryMake("Log"),
 			InputShapes: [][]int{{2, 3}},
 			Domains:     []Sampler{DomainPositive},
 		},
 		{
 			Name: "Sqrt", Seed: 12,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newSqrtNode(e), nil },
+			Make:        registryMake("Sqrt"),
 			InputShapes: [][]int{{2, 3}},
 			Domains:     []Sampler{DomainPositive},
 		},
 		{
 			Name: "Rsqrt", Seed: 13,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newRsqrtNode(e), nil },
+			Make:        registryMake("Rsqrt"),
 			InputShapes: [][]int{{2, 3}},
 			Domains:     []Sampler{DomainPositive},
 		},
 		{
 			Name: "Sin", Seed: 14,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newSinNode(e), nil },
+			Make:        registryMake("Sin"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "Cos", Seed: 15,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newCosNode(e), nil },
+			Make:        registryMake("Cos"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "AddScalar", Seed: 16,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newAddScalarNode(e, 0.7), nil },
+			Make:        registryMake("AddScalar"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "MulScalar", Seed: 17,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newMulScalarNode(e, -1.3), nil },
+			Make:        registryMake("MulScalar"),
 			InputShapes: [][]int{{2, 3}},
 		},
 
 		// MatMul-like and shape ops.
 		{
 			Name: "MatMul", Seed: 18,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newMatMulNode(e), nil },
+			Make:        registryMake("MatMul"),
 			InputShapes: [][]int{{2, 3}, {3, 4}},
 		},
 		{
 			Name: "Transpose", Seed: 19,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newTransposeNode(e), nil },
+			Make:        registryMake("Transpose"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "Reshape", Seed: 20,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newReshapeNode(e, []int{3, 2}), nil },
+			Make:        registryMake("Reshape"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "HadamardTransform", Seed: 21,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newHadamardNode(e), nil },
+			Make:        registryMake("HadamardTransform"),
 			InputShapes: [][]int{{2, 4}}, // dim must be a power of two
 		},
 
 		// Softmax and reductions.
 		{
 			Name: "Softmax", Seed: 22,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newSoftmaxNode(e, 1), nil },
+			Make:        registryMake("Softmax"),
 			InputShapes: [][]int{{2, 4}},
 		},
 		{
 			Name: "ReduceSum", Seed: 23,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newReduceSumNode(e, 1), nil },
+			Make:        registryMake("ReduceSum"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "ReduceMean", Seed: 24,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newReduceMeanNode(e, 1), nil },
+			Make:        registryMake("ReduceMean"),
 			InputShapes: [][]int{{2, 3}},
 		},
 		{
 			Name: "ReduceMax", Seed: 25,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newReduceMaxNode(e), nil },
+			Make:        registryMake("ReduceMax"),
 			InputShapes: [][]int{{2, 3}}, // continuous sampling avoids ties
 		},
 
 		// LayerNorm-like (trainable parameters; exercises the param path).
 		{
 			Name: "LayerNorm", Seed: 26,
-			Make:        func(e engineT) (graph.Node[float64], error) { return newLayerNormNode(e, 4) },
+			Make:        registryMake("LayerNorm"),
 			InputShapes: [][]int{{3, 4}},
 		},
 	}

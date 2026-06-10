@@ -40,7 +40,7 @@ func TestRegistry(t *testing.T) {
 // newBadTanhNode is the red-proof fixture: forward is a correct tanh, but
 // Backward deliberately returns TWICE the true gradient. gradcheck MUST flag
 // it -- this proves the harness catches the wrong-Jacobian bug class.
-func newBadTanhNode(e engineT) *opNode {
+func newBadTanhNode(e engineT) *opNode[float64] {
 	return unary("BadTanh",
 		func(ctx context.Context, x t64) (t64, error) { return e.Tanh(ctx, x) },
 		func(ctx context.Context, g, x, _ t64) (t64, error) {
@@ -81,7 +81,7 @@ func TestRedProofWrongJacobianFails(t *testing.T) {
 // checker must still pass it; reusing one instance across finite-difference
 // evaluations would corrupt the analytic Backward.
 type statefulNode struct {
-	*opNode
+	*opNode[float64]
 	calls int
 }
 
