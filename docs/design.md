@@ -130,6 +130,29 @@ Beyond the core interface, engines may implement optional capability interfaces 
 
 `GPUEngine` implements `Engine[float32]` using the GPU Runtime Abstraction Layer (GRAL). It delegates linear algebra to vendor BLAS libraries, deep-learning primitives to vendor DNN libraries, and custom fused operations to hand-written GPU kernels. It also implements the optional capability interfaces listed above.
 
+Environment toggles (all read once at engine/process init):
+
+- `ZERFOO_ARENA_SIZE_GB` — GPU arena capacity in GiB (default 2, valid range [1, 128]; `compute/gpu_engine.go`).
+- `ZERFOO_OVERFLOW_POOL_RETAIN_GB` — release threshold for the stream-ordered overflow pool (defaults to the arena capacity; ADR 005, issue #118).
+- `ZERFOO_ENABLE_MANAGED_MEM` — allocate the arena with `cudaMallocManaged` on devices with concurrent managed-memory support.
+- `ZERFOO_DEBUG_GPU` / `ZERFOO_ARENA_PROFILE` — verbose GPU op tracing / per-Alloc arena profiling to stderr.
+- `ZTENSOR_ARENA_POISON` — arena poison-on-reset debug mode (below).
+
+### Arena poison-on-reset debug mode (ZTENSOR_ARENA_POISON)
+
+Debug mode for the use-after-reset bug class (a node caches a forward intermediate in a struct field; the arena reclaims and reuses the buffer before Backward reads it — zerfoo#842 LayerNorm variance, zerfoo#845 gradient buffer, Wolf QK-norm). See ADR 006 decision 4 and issue #128.
+
+With `ZTENSOR_ARENA_POISON=1`, every arena region that becomes reusable is filled with the NaN sentinel word `0x7FF80000` **before** it can be handed out again:
+
+- `ArenaPool.Reset` (driven by `GPUEngine.ResetPool` / `StepScope.Close`) poisons the span between the reset floor and the current offset. Buffers below the floor (weights, optimizer state, captured-graph buffers preserved by `MarkStepBoundary`) are never poisoned.
+- `ArenaPool.FreeArena` poisons a freed block as it enters the free-list, so a stale read explodes even before the block is reused; free-list reuse then hands out already-poisoned bytes.
+
+A stale cached pointer reads a deterministic NaN at the corruption site instead of a delayed, non-deterministic training NaN. The fill is dtype-agnostic bytes (`00 00 F8 7F` little-endian, repeated): f32 reads and 8-byte-aligned f64 reads both decode to quiet NaN (the word is the high half of the canonical f64 qNaN — chosen over the canonical f32 qNaN `0x7FC00000`, whose repetition is a large finite f64), and i32 reads see the sentinel `0x7FF80000` (2146959360).
+
+Mechanism: the fill runs on-device via the elementwise fill kernel on the legacy default stream (registered by `internal/gpuapi` at arena construction); when the kernel library is unavailable the fallback is a host-staged synchronous `cudaMemcpy` in 4 MiB chunks (correct but slow — fine for a debug mode). Fills are **skipped with a logged warning while a CUDA graph capture is active** (ADR 004/005: capture-unsafe work would be recorded into the graph or hang the GB10 driver).
+
+Off by default and read once at init: when unset the only cost is one branch on `Reset`/`FreeArena` and none on `Alloc`. Expect slower `ResetPool` when enabled; do not run production training with it on.
+
 ### TensorArena
 
 `TensorArena` is a power-of-2 bucketed pool for float32 backing arrays. Buffers are bucketed by capacity (2^0 through 2^31) with per-bucket mutex protection. `Get(n)` returns a zeroed slice of at least n elements; `Put(buf)` returns it for reuse. `Reset()` clears all pooled buffers.
