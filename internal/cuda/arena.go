@@ -84,6 +84,24 @@ type ArenaPool struct {
 	// asyncFallbackPtrs tracks pointers allocated via the async overflow path so
 	// Free routes them to cudaFreeAsync on the overflow stream. ptr -> byteSize.
 	asyncFallbackPtrs map[unsafe.Pointer]int
+
+	// pins tracks refcounted pinned spans (save-for-backward contract, ADR 006
+	// decisions 1-2; issue #128), keyed by byte offset from the arena base.
+	// Pinned spans survive Reset (the rewind floor is raised past them), never
+	// enter the free-list (FreeArena on them is deferred), and are never
+	// poisoned until released. See arena_pin.go.
+	pins map[int]*pinSpan
+	// deferredFrees holds FreeArena requests that overlapped a pinned span.
+	// They are applied (poison fill + free-list insert) by the last Unpin
+	// that uncovers them. Reset clears them: the rewind either reclaims the
+	// block wholesale or retains it as dead bytes below the raised floor,
+	// which the next Reset after the last Unpin reclaims.
+	deferredFrees []freeBlock
+	// pinnedBytes / pinnedHighWater track the current and maximum bytes held
+	// by pins -- the monitoring numbers for the watermark cost of the
+	// save-for-backward contract (ADR 006 consequence).
+	pinnedBytes     int
+	pinnedHighWater int
 }
 
 // arenaMallocAsyncFn and arenaFreeAsyncFn are indirection points for the
@@ -386,6 +404,17 @@ func (a *ArenaPool) FreeArena(ptr unsafe.Pointer, byteSize int) {
 	if offset < 0 || offset+aligned > a.capacity {
 		return // not an arena pointer
 	}
+	// Pinned spans defer the free (ADR 006 decision 2; arena_pin.go): the
+	// block must stay out of the free-list -- and unpoisoned -- until the last
+	// Unpin covering it. The deferred free (including its poison fill) is
+	// applied by that Unpin, exactly as if the free had happened then.
+	a.mu.Lock()
+	if a.overlapsPinLocked(offset, aligned) {
+		a.deferredFrees = append(a.deferredFrees, freeBlock{offset: offset, size: aligned})
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Unlock()
 	// Poison-on-free (ADR 006, ZTENSOR_ARENA_POISON=1): fill the block with
 	// NaN sentinels BEFORE it enters the free-list, so a stale cached pointer
 	// into it reads poison immediately -- even before the block is reused. The
@@ -415,17 +444,39 @@ func (a *ArenaPool) FreeManaged(deviceID int, ptr unsafe.Pointer, byteSize int) 
 // memory above the floor is reclaimed.
 func (a *ArenaPool) Reset() {
 	a.mu.Lock()
-	// Poison-on-reset (ADR 006, ZTENSOR_ARENA_POISON=1): before the span above
-	// the reset floor becomes reusable, fill it with NaN sentinels so any node
-	// that cached a pointer into it reads a deterministic NaN instead of
-	// silently-recycled data. Done under the lock so no concurrent Alloc can
-	// hand the span out before the fill is issued. Buffers below the floor
-	// (weights, optimizer state, captured-graph buffers) are never poisoned.
-	if arenaPoisonEnabled && a.base != nil && a.offset > a.resetFloor {
-		a.poisonRegion(unsafe.Add(a.base, a.resetFloor), a.offset-a.resetFloor, "Reset")
+	// Pinned spans must survive Reset (ADR 006 decision 2; arena_pin.go):
+	// raise the effective rewind floor to the end of the highest pinned span
+	// so the bump allocator can never re-issue a pinned byte. Watermark
+	// consequence: every byte between the reset floor and that raised floor
+	// -- including dead, unpinned buffers allocated before the pinned one --
+	// stays retained until the pins are released; the next Reset after the
+	// last Unpin reclaims the whole retained span.
+	floor := a.resetFloor
+	if len(a.pins) > 0 {
+		floor = a.pinnedFloorLocked()
 	}
-	a.offset = a.resetFloor
+	// Poison-on-reset (ADR 006, ZTENSOR_ARENA_POISON=1): before the span above
+	// the reset floor becomes reusable (or dead-but-retained below a raised
+	// floor), fill it with NaN sentinels so any node that cached a pointer
+	// into it reads a deterministic NaN instead of silently-recycled data.
+	// Done under the lock so no concurrent Alloc can hand the span out before
+	// the fill is issued. Buffers below the floor (weights, optimizer state,
+	// captured-graph buffers) and pinned spans are never poisoned.
+	if arenaPoisonEnabled && a.base != nil && a.offset > a.resetFloor {
+		if len(a.pins) > 0 {
+			a.poisonUnpinnedSpanLocked(a.resetFloor, a.offset)
+		} else {
+			a.poisonRegion(unsafe.Add(a.base, a.resetFloor), a.offset-a.resetFloor, "Reset")
+		}
+	}
+	a.offset = floor
 	a.freeList = a.freeList[:0]
+	// Deferred frees are dropped wholesale: blocks above the raised floor are
+	// subsumed by the rewind, and blocks within the retained span stay dead
+	// until the Reset that follows the last Unpin. Releasing them into the
+	// free-list here (or later, on Unpin) could alias the bump path, because
+	// a deferred block may extend above the raised floor.
+	a.deferredFrees = a.deferredFrees[:0]
 	a.mu.Unlock()
 	a.resets.Add(1)
 	// Clear per-epoch diagnostics so the next pass's first-overflow log fires
@@ -499,6 +550,11 @@ func (a *ArenaPool) Drain() error {
 		a.offset = 0
 		a.capacity = 0
 		a.freeList = nil
+		// Pins cannot outlive the allocation they protect. pinnedHighWater is
+		// kept for post-mortem monitoring.
+		a.pins = nil
+		a.deferredFrees = nil
+		a.pinnedBytes = 0
 	}
 
 	if err := a.fallback.Drain(); err != nil && firstErr == nil {

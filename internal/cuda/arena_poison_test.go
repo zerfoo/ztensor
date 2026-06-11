@@ -51,13 +51,7 @@ func swapPoisonWarnForTest(t *testing.T) *[]string {
 // TestArenaDiagnostics_Fields).
 func newHostArena(t *testing.T, size int) *ArenaPool {
 	t.Helper()
-	buf := make([]byte, size)
-	return &ArenaPool{
-		base:         unsafe.Pointer(&buf[0]),
-		capacity:     size,
-		fallback:     NewMemPool(),
-		fallbackPtrs: make(map[unsafe.Pointer]int),
-	}
+	return NewHostBackedArenaForTesting(make([]byte, size))
 }
 
 // TestArenaPoisonWord_Pattern pins down the sentinel: the repeated 32-bit
