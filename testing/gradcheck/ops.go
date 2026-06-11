@@ -26,16 +26,25 @@ type t64 = tn[float64]
 // exercises). Like production nodes, it caches its forward output for use in
 // Backward -- which is exactly why the checker constructs a fresh instance
 // per evaluation.
+//
+// The cached output is registered through the save-for-backward contract
+// (graph.SaverAware, ztensor ADR 006) when a Saver is wired: on arena-backed
+// engines the cache would otherwise be recycled by a ResetPool between
+// Forward and Backward (the zerfoo#842 bug class). Harnesses that never
+// reset an arena between the two passes (gradcheck itself, testing/oracle)
+// simply leave the Saver nil.
 type opNode[T tensor.Float] struct {
 	graph.NoParameters[T]
 	opType string
 	fwd    func(ctx context.Context, inputs []tn[T]) (tn[T], error)
 	bwd    func(ctx context.Context, g tn[T], inputs []tn[T], out tn[T]) ([]tn[T], error)
-	out    tn[T] // cached forward output
+	out    tn[T] // cached forward output, saved for backward
+	saver  graph.Saver[T]
 }
 
 func (n *opNode[T]) OpType() string                     { return n.opType }
 func (n *opNode[T]) Attributes() map[string]interface{} { return nil }
+func (n *opNode[T]) SetSaver(s graph.Saver[T])          { n.saver = s }
 func (n *opNode[T]) OutputShape() []int {
 	if n.out == nil {
 		return nil
@@ -49,6 +58,9 @@ func (n *opNode[T]) Forward(ctx context.Context, inputs ...tn[T]) (tn[T], error)
 		return nil, err
 	}
 	n.out = y
+	if n.saver != nil {
+		n.saver.SaveForBackward(y)
+	}
 	return y, nil
 }
 
@@ -60,6 +72,14 @@ func (n *opNode[T]) Backward(ctx context.Context, _ types.BackwardMode, g tn[T],
 }
 
 type engineT = compute.Engine[float64]
+
+// The op wrappers participate in the save-for-backward contract so harnesses
+// that reset an arena between Forward and Backward (testing/parity) can pin
+// their cached intermediates.
+var (
+	_ graph.SaverAware[float32] = (*opNode[float32])(nil)
+	_ graph.SaverAware[float32] = (*layerNormNode[float32])(nil)
+)
 
 // unary builds an opNode for a single-input op.
 func unary[T tensor.Float](
@@ -467,15 +487,19 @@ func newReduceMaxNode[T tensor.Float](e compute.Engine[T]) *opNode[T] {
 // layerNormNode normalizes the last axis of a 2D input and applies a
 // trainable elementwise affine (gamma, beta), mirroring the production
 // LayerNorm whose cached-statistics GPU bug motivated this harness. It caches
-// xhat and the inverse stddev in Forward and consumes them in Backward.
+// xhat and the inverse stddev in Forward and consumes them in Backward,
+// registering both through the save-for-backward contract when a Saver is
+// wired (graph.SaverAware, ztensor ADR 006) -- the exact migration the
+// pre-fix LayerNorm needed.
 type layerNormNode[T tensor.Float] struct {
 	engine compute.Engine[T]
 	gamma  *graph.Parameter[T]
 	beta   *graph.Parameter[T]
 	eps    float64
 
-	xhat tn[T]
-	inv  tn[T]
+	xhat  tn[T]
+	inv   tn[T]
+	saver graph.Saver[T]
 }
 
 func newTensorOf[T tensor.Float](shape []int, data []T) (tn[T], error) {
@@ -517,6 +541,7 @@ func (n *layerNormNode[T]) Attributes() map[string]interface{} {
 func (n *layerNormNode[T]) Parameters() []*graph.Parameter[T] {
 	return []*graph.Parameter[T]{n.gamma, n.beta}
 }
+func (n *layerNormNode[T]) SetSaver(s graph.Saver[T]) { n.saver = s }
 
 func (n *layerNormNode[T]) OutputShape() []int {
 	if n.xhat == nil {
@@ -561,6 +586,9 @@ func (n *layerNormNode[T]) Forward(ctx context.Context, inputs ...tn[T]) (tn[T],
 	}
 	n.xhat = xhat
 	n.inv = inv
+	if n.saver != nil {
+		n.saver.SaveForBackward(xhat, inv)
+	}
 	scaled, err := e.Mul(ctx, xhat, n.gamma.Value)
 	if err != nil {
 		return nil, err
