@@ -32,10 +32,32 @@ const (
 	maxArenaSizeGB = 128
 )
 
+// arenaBytesOverride, when positive, takes absolute precedence over
+// ZERFOO_ARENA_SIZE_GB and the default, bypassing the GB granularity and the
+// [min, max] bounds. Set only via SetArenaBytesForTesting: the engine-parity
+// harness (testing/parity, ADR 006/091) constructs GPU engines with a
+// deliberately SMALL arena so buffer reuse between an op's forward and its
+// backward is forced, which env-driven GB-granular sizing cannot express.
+var arenaBytesOverride int64
+
+// SetArenaBytesForTesting overrides the arena capacity (in bytes) for
+// engines constructed after the call, returning a func that restores the
+// previous override. Pass 0 to clear. Test-infrastructure hook; not covered
+// by the v1 stability guarantee and never set on production paths.
+func SetArenaBytesForTesting(n int64) (restore func()) {
+	prev := arenaBytesOverride
+	arenaBytesOverride = n
+	return func() { arenaBytesOverride = prev }
+}
+
 // arenaSizeBytes resolves the arena capacity in bytes. ZERFOO_ARENA_SIZE_GB,
 // if set to an integer in [minArenaSizeGB, maxArenaSizeGB], overrides the
-// default. Invalid / out-of-range values are logged and ignored.
+// default. Invalid / out-of-range values are logged and ignored. A
+// SetArenaBytesForTesting override wins over everything.
 func arenaSizeBytes(l log.Logger) int64 {
+	if arenaBytesOverride > 0 {
+		return arenaBytesOverride
+	}
 	gb := int64(defaultArenaSizeGB)
 	if raw := os.Getenv("ZERFOO_ARENA_SIZE_GB"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)

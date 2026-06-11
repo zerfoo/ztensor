@@ -131,7 +131,7 @@ func generateOne(ctx context.Context, root string, op gradcheck.OpInfo, expr str
 	}
 
 	// Upstream gradient: deterministic, +-[0.25, 1.0], from the op seed.
-	upstream, err := seededUpstream(y.Shape(), op.Seed)
+	upstream, err := SeededUpstream(y.Shape(), op.Seed)
 	if err != nil {
 		return err
 	}
@@ -196,12 +196,13 @@ func generateOne(ctx context.Context, root string, op gradcheck.OpInfo, expr str
 	return WriteBundle(dir, &manifest)
 }
 
-// seededUpstream builds a deterministic upstream gradient with entries of
+// SeededUpstream builds a deterministic upstream gradient with entries of
 // magnitude in [0.25, 1.0] and pseudo-random sign (the gradcheck convention:
 // a randomized upstream catches structural Jacobian errors an all-ones
 // upstream can mask). The values are recorded in the bundle, so torch
-// backprops exactly these bytes.
-func seededUpstream(shape []int, seed int64) (*tensor.TensorNumeric[float32], error) {
+// backprops exactly these bytes. Exported so the engine-parity harness
+// (testing/parity) feeds byte-identical upstreams to both engines.
+func SeededUpstream(shape []int, seed int64) (*tensor.TensorNumeric[float32], error) {
 	// math/rand (not crypto) is intentional: deterministic test data.
 	r := rand.New(rand.NewSource(seed)) //nolint:gosec
 	data := make([]float32, shapeSize(shape))
