@@ -56,6 +56,10 @@ func (b *Builder[T]) Build(outputNode Node[T]) (*Graph[T], error) {
 		output:       outputNode,
 	}
 
+	// Hand every SaverAware node its save-for-backward handle (ADR 006;
+	// see save_for_backward.go).
+	g.wireSavers()
+
 	return g, nil
 }
 

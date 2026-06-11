@@ -49,6 +49,11 @@ type Graph[T tensor.Numeric] struct {
 	// is copied back into the corresponding stateful input node.
 	kvPairs []kvPair[T]
 
+	// saved holds the per-node save-for-backward sets (ADR 006; see
+	// save_for_backward.go). Guarded by its own mutex because saves happen
+	// from node Forwards, which run concurrently under ParallelForward.
+	saved savedSets[T]
+
 	// Cached decode-time allocations to avoid per-forward GC pressure.
 	cachedRefCount   map[Node[T]]int // static reference counts (recomputed on clear)
 	cachedNodeInputs []*tensor.TensorNumeric[T] // reusable buffer for node inputs
@@ -150,6 +155,10 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	if len(inputs) != len(g.inputs) {
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
+
+	// Release save-for-backward sets left over from a forward-only pass
+	// (no Backward ran), so inference loops do not accumulate arena pins.
+	g.releaseAllSaved()
 
 	// Reuse memo map: clear and repopulate instead of reallocating.
 	if g.memo == nil {
@@ -306,6 +315,10 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 			}
 
 			inputGrads, err := node.Backward(ctx, mode, grad, nodeInputs...)
+			// The node's saved set is consumed (or, on error, abandoned):
+			// unpin it now so the arena can reclaim the intermediates at the
+			// next reset (ADR 006; see save_for_backward.go).
+			g.releaseSaved(node)
 			if err != nil {
 				return err
 			}
@@ -325,6 +338,10 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 			}
 		}
 	}
+
+	// Nodes that never received a gradient (pruned paths) still hold saved
+	// sets; the step is over, so release them all.
+	g.releaseAllSaved()
 
 	return nil
 }

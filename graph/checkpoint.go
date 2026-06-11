@@ -31,7 +31,17 @@ type checkpointNode[T tensor.Numeric] struct {
 	NoParameters[T]
 	segment     *CheckpointedSegment[T]
 	outputShape []int
+	// saver is the save-for-backward handle wired by Builder.Build (ADR 006).
+	// The saved inputs are re-read in Backward to recompute the segment, so
+	// their storage must be pinned against arena reclamation; without the
+	// contract, a ResetPool between forward and backward would recycle them
+	// (the zerfoo#842 bug class). Nil when the node is used outside a Graph.
+	saver Saver[T]
 }
+
+// SetSaver implements SaverAware: Builder.Build hands the node its
+// save-for-backward handle.
+func (n *checkpointNode[T]) SetSaver(s Saver[T]) { n.saver = s }
 
 func (n *checkpointNode[T]) OpType() string                     { return "Checkpoint" }
 func (n *checkpointNode[T]) OutputShape() []int                 { return n.outputShape }
@@ -40,9 +50,14 @@ func (n *checkpointNode[T]) Attributes() map[string]interface{} { return map[str
 func (n *checkpointNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	seg := n.segment
 
-	// Save inputs for recomputation during backward.
+	// Save inputs for recomputation during backward. The struct field keeps
+	// the Go handles; SaveForBackward pins the underlying (arena-backed)
+	// storage so the buffers survive until this node's Backward completes.
 	seg.savedInputs = make([]*tensor.TensorNumeric[T], len(inputs))
 	copy(seg.savedInputs, inputs)
+	if n.saver != nil {
+		n.saver.SaveForBackward(seg.savedInputs...)
+	}
 
 	// Run the subgraph forward.
 	outputs, err := seg.forward(ctx, inputs)

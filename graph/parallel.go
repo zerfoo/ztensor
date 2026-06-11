@@ -20,6 +20,10 @@ func ParallelForward[T tensor.Numeric](ctx context.Context, g *Graph[T], inputs 
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
 
+	// Release save-for-backward sets left over from a forward-only pass
+	// (mirrors sequential Forward; see save_for_backward.go).
+	g.releaseAllSaved()
+
 	nodes := g.nodes
 	deps := g.dependencies
 
