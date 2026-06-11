@@ -117,5 +117,30 @@ func (p *CUDAArenaPool) UsedBytes() int {
 	return p.inner.UsedBytes()
 }
 
-// Compile-time interface assertion.
-var _ MemPool = (*CUDAArenaPool)(nil)
+// PinBuffer pins the arena span at ptr against Reset/reuse/poison until the
+// matching UnpinBuffer (ADR 006 save-for-backward contract, issue #128).
+func (p *CUDAArenaPool) PinBuffer(ptr unsafe.Pointer, byteSize int) bool {
+	return p.inner.Pin(ptr, byteSize)
+}
+
+// UnpinBuffer drops one pin reference taken by PinBuffer.
+func (p *CUDAArenaPool) UnpinBuffer(ptr unsafe.Pointer) {
+	p.inner.Unpin(ptr)
+}
+
+// PinnedBytes returns the bytes currently pinned in the arena.
+func (p *CUDAArenaPool) PinnedBytes() int {
+	return p.inner.PinnedBytes()
+}
+
+// PinnedHighWaterBytes returns the maximum pinned bytes observed -- the
+// monitoring number for the save-for-backward contract's watermark cost.
+func (p *CUDAArenaPool) PinnedHighWaterBytes() int {
+	return p.inner.PinnedHighWaterBytes()
+}
+
+// Compile-time interface assertions.
+var (
+	_ MemPool        = (*CUDAArenaPool)(nil)
+	_ BackwardPinner = (*CUDAArenaPool)(nil)
+)
