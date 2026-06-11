@@ -23,16 +23,17 @@ import (
 // releases memory (back to pool or via cudaFree). This avoids both double-free
 // and GC-dependent cleanup for reshape/transpose views.
 type GPUStorage[T Numeric] struct {
-	devicePtr unsafe.Pointer  // GPU device pointer
-	length    int             // number of elements
-	byteSize  int             // total bytes = length * sizeof(T)
-	deviceID  int             // GPU device ordinal
-	runtime   gpuapi.Runtime  // GPU runtime for memory operations
-	managed   bool            // true if allocated via cudaMallocManaged
-	pool      gpuapi.MemPool  // pool used for managed alloc/free (nil for discrete)
-	view      bool            // true if this is a non-owning view (Free is a no-op)
-	refcount  *atomic.Int32   // shared refcount for view-based ownership; nil for legacy/non-refcounted
-	allocSize int             // original allocation byte size (for pool Free); 0 means use byteSize
+	devicePtr unsafe.Pointer // GPU device pointer
+	length    int            // number of elements
+	byteSize  int            // total bytes = length * sizeof(T)
+	deviceID  int            // GPU device ordinal
+	runtime   gpuapi.Runtime // GPU runtime for memory operations
+	managed   bool           // true if allocated via cudaMallocManaged
+	pool      gpuapi.MemPool // pool used for managed alloc/free (nil for discrete)
+	view      bool           // true if this is a non-owning view (Free is a no-op)
+	refcount  *atomic.Int32  // shared refcount for view-based ownership; nil for legacy/non-refcounted
+	allocSize int            // original allocation byte size (for pool Free); 0 means use byteSize
+	pinnedPtr unsafe.Pointer // devicePtr captured by PinForBackward; survives Free so Unpin stays balanced (see storage_pin.go)
 }
 
 // NewGPUStorage allocates GPU device memory for the given number of elements

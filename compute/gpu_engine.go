@@ -354,6 +354,17 @@ func (e *GPUEngine[T]) SetArenaResetFloor(floor int) {
 	}
 }
 
+// ArenaPinnedBytes returns the current and high-water bytes pinned in the
+// arena by the save-for-backward contract (ADR 006) -- the monitoring
+// numbers for how much the contract raises the arena watermark. Returns
+// zeros if the pool is not arena-backed.
+func (e *GPUEngine[T]) ArenaPinnedBytes() (current, highWater int) {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		return arena.PinnedBytes(), arena.PinnedHighWaterBytes()
+	}
+	return 0, 0
+}
+
 // setDevice ensures the correct GPU device context for the calling goroutine.
 func (e *GPUEngine[T]) setDevice() {
 	_ = e.runtime.SetDevice(e.deviceID)
