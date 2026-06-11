@@ -145,6 +145,41 @@ func TestSaveForBackward_ForwardOnlyReleasedOnNextForward(t *testing.T) {
 	}
 }
 
+// TestSaveForBackward_MultiConsumer: two nodes saving the SAME tensor each
+// take their own pin (refcounted in the pool); each node's Backward releases
+// only its own reference, so the tensor stays pinned until the last consumer
+// has run.
+func TestSaveForBackward_MultiConsumer(t *testing.T) {
+	shared, s := newFakePinTensor(t, 4)
+	n1 := &savingNode{toSave: []*tensor.TensorNumeric[float32]{shared}}
+	n2 := &savingNode{toSave: []*tensor.TensorNumeric[float32]{shared}}
+
+	b := NewBuilder[float32](nil)
+	in := b.Input([]int{2})
+	b.AddNode(n1, in)
+	b.AddNode(n2, n1)
+	g, err := b.Build(n2)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := g.Forward(context.Background(), mustTensor(t, []float32{1, 2})); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if s.pins != 2 || s.unpins != 0 {
+		t.Fatalf("after Forward: pins=%d unpins=%d, want 2/0 (one pin per consumer)", s.pins, s.unpins)
+	}
+	if err := g.Backward(context.Background(), types.FullBackprop, mustTensor(t, []float32{1, 1})); err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	if s.unpins != 2 {
+		t.Fatalf("after Backward: unpins=%d, want 2 (each consumer releases its own pin)", s.unpins)
+	}
+	if g.SavedForBackward(n1) != nil || g.SavedForBackward(n2) != nil {
+		t.Fatal("saved sets not cleared after Backward")
+	}
+}
+
 // TestSaveForBackward_BackwardErrorStillReleases: a failing Backward must
 // not leak the node's pins into the next step.
 func TestSaveForBackward_BackwardErrorStillReleases(t *testing.T) {
