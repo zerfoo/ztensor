@@ -24,23 +24,51 @@ type Skip struct {
 
 // Summary reports one generation run.
 type Summary struct {
+	// Engine names the recording engine ("cpu-f32" or "gpu-f32") so a
+	// report can always be traced back to what it actually measured.
+	// Empty in pre-T3.1 summaries.
+	Engine string `json:"engine,omitempty"`
 	// Written lists the op names that produced bundles, in registry order.
 	Written []string `json:"written"`
 	// Skipped lists ops with no clean torch equivalent, with reasons.
 	Skipped []Skip `json:"skipped"`
 }
 
+// EngineConfig selects the recording engine for a generation run.
+type EngineConfig struct {
+	// Name is recorded in generation.json ("cpu-f32", "gpu-f32").
+	Name string
+	// Engine runs every op forward+backward; its outputs are the recorded
+	// "ztensor" side of the torch diff.
+	Engine compute.Engine[float32]
+	// Reset, when non-nil, runs after each op's bundle has been written to
+	// the host (GPU arena hygiene between ops; nil for the CPU engine).
+	Reset func()
+}
+
 // GenerateAll runs every gradcheck registry op forward+backward on the
 // float32 CPU engine with deterministic seeded inputs and upstream gradients,
-// and writes one case bundle per op under dir (first cut of T1.3; the
-// GPU-engine variant runs on the DGX later through the same format). Ops
-// without a clean torch equivalent are recorded in Summary.Skipped. A
-// generation.json summary is written alongside the bundles.
+// and writes one case bundle per op under dir. Ops without a clean torch
+// equivalent are recorded in Summary.Skipped. A generation.json summary is
+// written alongside the bundles.
 func GenerateAll(ctx context.Context, dir string) (*Summary, error) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	return GenerateAllWith(ctx, dir, EngineConfig{Name: "cpu-f32", Engine: eng})
+}
+
+// GenerateAllWith is GenerateAll recording an arbitrary engine. The
+// GPU-engine variant runs on the DGX through the exact same bundle format --
+// the oracle gate for the kernel-numerics work (zerfoo plan T3.x): the
+// recorded forward/gradients come from the CUDA kernels under test and torch
+// judges them within the per-op tolerances.
+func GenerateAllWith(ctx context.Context, dir string, ec EngineConfig) (*Summary, error) {
+	if ec.Engine == nil {
+		return nil, fmt.Errorf("oracle: EngineConfig.Engine must not be nil")
+	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("oracle: creating %s: %w", dir, err)
 	}
-	sum := &Summary{}
+	sum := &Summary{Engine: ec.Name}
 	for _, op := range gradcheck.Registry() {
 		mapping, ok := torchMap[op.Name]
 		if !ok {
@@ -51,8 +79,11 @@ func GenerateAll(ctx context.Context, dir string) (*Summary, error) {
 			sum.Skipped = append(sum.Skipped, Skip{Op: op.Name, Reason: mapping.SkipReason})
 			continue
 		}
-		if err := generateOne(ctx, dir, op, mapping.Expr); err != nil {
+		if err := generateOne(ctx, dir, op, mapping.Expr, ec.Engine); err != nil {
 			return nil, fmt.Errorf("oracle: generating bundle for %s: %w", op.Name, err)
+		}
+		if ec.Reset != nil {
+			ec.Reset()
 		}
 		sum.Written = append(sum.Written, op.Name)
 	}
@@ -73,14 +104,14 @@ func writeSummary(dir string, sum *Summary) error {
 	return nil
 }
 
-// generateOne runs one registry op at f32 and writes its bundle.
-func generateOne(ctx context.Context, root string, op gradcheck.OpInfo, expr string) error {
+// generateOne runs one registry op at f32 on the given engine and writes its
+// bundle.
+func generateOne(ctx context.Context, root string, op gradcheck.OpInfo, expr string, engine compute.Engine[float32]) error {
 	dir := filepath.Join(root, op.Name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	node, err := gradcheck.NewRegistryNode[float32](op.Name, engine)
 	if err != nil {
 		return err
