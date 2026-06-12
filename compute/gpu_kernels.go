@@ -6,6 +6,7 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/zerfoo/ztensor/internal/cuda"
 	"github.com/zerfoo/ztensor/internal/gpuapi"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -148,6 +149,32 @@ func finishReusedDst[T tensor.Numeric](dst *tensor.TensorNumeric[T], shape []int
 // device pointer. When the tensor is freed, the pointer is returned to the pool
 // for reuse instead of calling cudaFree.
 func makeGPUResult[T tensor.Numeric](e *GPUEngine[T], shape []int, devPtr unsafe.Pointer, numElems int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	// dst-form contract (zerfoo#850/#852 follow-up): when the caller supplies a
+	// dst whose storage is a same-size GPUStorage, copy the result INTO dst's
+	// existing device buffer and preserve dst's storage identity. The previous
+	// behavior (SetStorage onto the freshly pool-allocated buffer) silently
+	// re-homed persistent tensors -- parameter-gradient accumulators, optimizer
+	// state -- into the arena, which the per-step Reset then recycled behind
+	// the live reference (the Wolf batch-3 stale-gradient corruption; same
+	// class as the gpuFill bug fixed in zerfoo#845). Skipped during CUDA graph
+	// capture, where a synchronous Memcpy is not capturable; capture paths
+	// keep the legacy re-homing behavior.
+	if len(dst) > 0 && dst[0] != nil && !cuda.CaptureActive() {
+		if dgs, ok := dst[0].GetStorage().(*tensor.GPUStorage[T]); ok && dgs.Len() == numElems && dgs.Ptr() != nil {
+			var z T
+			byteSize := numElems * int(unsafe.Sizeof(z))
+			if dgs.Ptr() != devPtr {
+				if err := e.runtime.Memcpy(dgs.Ptr(), devPtr, byteSize, gpuapi.MemcpyDeviceToDevice); err != nil {
+					return nil, fmt.Errorf("makeGPUResult: in-place copy into dst storage: %w", err)
+				}
+				e.pool.Free(e.deviceID, devPtr, byteSize)
+			}
+			dst[0].SetShape(shape)
+
+			return dst[0], nil
+		}
+	}
+
 	gs, err := tensor.NewGPUStorageFromPool[T](devPtr, numElems, e.pool, e.deviceID)
 	if err != nil {
 		return nil, err
