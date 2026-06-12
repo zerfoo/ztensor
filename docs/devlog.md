@@ -1,5 +1,79 @@
 # ztensor Development Log
 
+## 2026-06-12: T3.1/S3.1.1 -- global --use_fast_math removed; GPU-engine oracle green on GB10 (25/25)
+
+**Type:** validation
+**Tags:** kernels, fast-math, oracle, parity, gb10, spark, T3.1, S3.1.1, #125, #142
+
+**What changed (PR #142, commit 393d8eb):** dropped `--use_fast_math` from
+`NVCC_FLAGS` (internal/cuda/kernels/Makefile) per the torch numerics
+convention (zerfoo plan-gpu-training-hardening T3.1). One selective fast
+intrinsic re-enabled in kernel source: `__expf` in `kernel_softmax`
+(elementwise.cu) AFTER max-subtraction (argument <= 0, result in (0,1],
+~2^-21 rel error). Everything else now uses accurate libdevice functions.
+The tanh saturation clamp (#125) is RETAINED as defense-in-depth. Gate
+plumbing shipped alongside: `oracle-gen -engine gpu`
+(`oracle.GenerateAllWith`) records `compute.GPUEngine` bundles through the
+T1.3 format, and `compute/gpu_kernel_bench_test.go` adds per-kernel GPU
+micro-benchmarks.
+
+**Build:** sm_121 `libkernels.so` rebuilt from the branch on the DGX in Spark
+pod `ztensor-t31-build-393d8eb` (NGC nvcc, `make CUDA_ARCH=sm_121 shared`),
+staged at `/home/ndungu/ztensor-kernels-build-393d8eb` so the shared
+`/home/ndungu/ztensor-kernels-build` stayed untouched while other agents ran.
+
+**Oracle gate (S3.1.1) -- the first live GPU-engine oracle run.** Pod
+`ztensor-t31-gate-new-393d8eb` generated 25 GPU-engine bundles against the
+rebuilt kernels; pod `ztensor-t31-oracle-393d8eb` judged them in torch
+2.11.0a0+nv26.02 on the GB10: **25 passed / 0 failed / 0 errored**
+(report.json archived at /home/ndungu/t31/393d8eb/). Highlights (fwd
+max_abs / max_rel): Softmax with `__expf` 6.0e-8 / 1.4e-7 (tolerance 1e-6 /
+1e-4 -- the selective intrinsic is proven equivalent); Tanh 0.0 / 0.0
+(accurate saturating tanhf); Exp/Log/Sqrt/Rsqrt/Sin/Cos/Div all 0.0;
+LayerNorm 6.0e-8 / 3.7e-7; ReduceMean 9.3e-10 / 6.7e-8. Gradients all
+within per-op tolerances.
+
+**Parity sanity (kernel codegen changed):** full #140-pattern suite against
+the rebuilt kernels in the same pod -- `TestParity_GPUvsCPU_
+ArenaStressSchedules_GPU` PASS (0.38s, both schedules),
+`TestParity_GPURedProof_GPU` PASS, `TestTrainingLoop_WolfPattern_GPU` PASS
+(W1/W2 finite, GPU within atol 1e-5 / rtol 1e-3 of CPU). Identical suite
+also run against the OLD fast-math kernels as baseline (pod
+`ztensor-t31-gate-old-393d8eb`): also green, so the parity gate did not get
+weaker or stronger -- the kernels changed under a constant gate.
+
+**Perf delta (GB10, engine-level micro-bench, 4M f32 elems, 3x100 iters,
+mean):**
+
+| kernel | fast-math µs | no-fast-math µs | delta |
+|---|---|---|---|
+| Exp | 425.6 | 417.1 | -2.0% |
+| Log | 419.7 | 423.9 | +1.0% |
+| Sqrt | 417.9 | 420.3 | +0.6% |
+| Rsqrt | 417.9 | 426.1 | +2.0% |
+| Sin | 419.3 | 423.3 | +0.9% |
+| Cos | 421.7 | 427.9 | +1.5% |
+| Tanh | 417.7 | 421.1 | +0.8% |
+| Div | 778.4 | 778.9 | +0.1% |
+| Softmax (4096x1024) | 428.2 | 430.6 | +0.6% |
+
+End-to-end indicator: parity suite wall-clock 0.720s (old) vs 0.691s (new).
+Honest read: at these sizes the engine path is bandwidth-bound on unified
+memory (~40 GB/s plateau), so the measured deltas are within run-to-run
+noise (~±2%) -- **no measurable engine-level regression** from removing
+fast-math. A larger compute-bound delta may exist inside individual kernels
+but does not surface through the engine path Wolf actually uses.
+
+**No kernel needed fast-math to pass:** every op is green with accurate
+functions (plus the one proven `__expf`), so no divergent-slow-path issue
+to file (task step 8: n/a).
+
+**Ops note:** the DGX rebooted mid-session (network outage ~22:30->10:30);
+after reboot the Spark v1.13.1 reconciler leaked every completed pod with a
+non-terminal phase (spark#37 class) -- watch `GET /pods/{name}/events` for
+`completed`/`failed` instead of the pod phase, and DELETE pods after
+capturing results (all four T3.1 pods deleted).
+
 ## 2026-06-12: T2.4 -- Wolf-pattern attention stress test green on GB10 under poison
 
 **Type:** validation
