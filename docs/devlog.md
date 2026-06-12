@@ -1,5 +1,48 @@
 # ztensor Development Log
 
+## 2026-06-11: #137 + #138 -- host-access stream ordering and arena reset-epoch frees validated end-to-end on GB10
+
+**Type:** finding
+**Tags:** gb10, unified-memory, stream-sync, arena, reset-epoch, gc-finalizer, #137, #138
+
+**Problem:** f32 training on the GB10 still corrupted gradients after every
+kernel-level fix: a deterministic NaN around batch 3-4 with clean forwards and
+finite per-sample gradients. Two stacked contract gaps, not numerics:
+
+1. **#137 — unordered host access to device memory.** GPUStorage host paths
+   (TrySlice/Slice/CopyTo/TrySet/Set) relied on synchronous cudaMemcpy's
+   implicit legacy-stream ordering. On GB10 cache-coherent unified memory that
+   ordering does not hold for pageable copies against a non-default stream,
+   and managed storage is host-accessed through the unified pointer with no
+   CUDA call at all — host reads observed bytes from before still-async kernel
+   writes. Fix (3bf58b9d): per-device host-access sync hooks
+   (`tensor.RegisterHostAccessSync`); the GPU engine registers a
+   capture-guarded `stream.Synchronize()` and unregisters on Close. Companion
+   API `Graph.Engine()` (a94c316) lets training utilities run accumulation on
+   the graph's own stream, removing the host round-trip entirely.
+2. **#138 — stale GC-finalizer frees after arena Reset.** GPUStorage frees are
+   Go-GC-finalizer-driven and fire arbitrarily late; the consumer training
+   loop's first big GC landed deterministically around batch 3-4 and released
+   thousands of dead pre-Reset storages. Each stale FreeArena poison-filled
+   (under ZTENSOR_ARENA_POISON=1: forward softmax scores all-NaN — the poison
+   harness named the allocator, not the math) or free-listed (double-issued
+   block, silent aliasing) memory owned by LIVE current-epoch tensors. Fix
+   (6f571ced): `Reset` advances an epoch; pool-backed storage captures it at
+   allocation (`gpuapi.EpochMemPool`) and frees through `FreeAtEpoch`, which
+   atomically drops cross-epoch frees.
+
+**Evidence the bug was GC-timing, not kernels:** with fix 1 alone the failure
+moved from batch 3 to batch 4 (allocation-volume dependence); the poison run
+flipped it into the forward pass at a nameable op. Both fixes carry
+red-without/green-with regression tests (stale free dropped, same-epoch reuse
+preserved, views carry their allocation epoch).
+
+**Measured outcome (GB10, f32 training, both fixes):** two consecutive clean
+end-to-end runs — zero NaN, epoch loss 0.778373, accuracy within 0.05pp of the
+CPU baseline, ~390 samples/s. Closes the gpu-training-hardening plan's Bug 11;
+design.md now documents the host-access synchronization contract, the dst-form
+accumulation policy, arena pinning, and reset-epoch free semantics.
+
 ## 2026-06-07: #118 -- arena diagnostics + async-overflow hardening (GB10)
 
 **Type:** finding
