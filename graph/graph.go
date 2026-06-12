@@ -109,6 +109,14 @@ func (g *Graph[T]) AddKVPair(input StatefulInputNode[T], output Node[T]) {
 	g.kvPairs = append(g.kvPairs, kvPair[T]{input: input, output: output})
 }
 
+// Engine returns the compute engine this graph executes on (the engine the
+// builder was constructed with). Training utilities use it to run gradient
+// maintenance ops (e.g. persistent-accumulator adds) on the same engine --
+// and therefore the same device stream -- as the graph's own kernels.
+func (g *Graph[T]) Engine() compute.Engine[T] {
+	return g.engine
+}
+
 // SetEngineProxy stores a reference to the EngineProxy used by this graph's layers.
 func (g *Graph[T]) SetEngineProxy(proxy *compute.EngineProxy[T]) {
 	g.mu.Lock()
