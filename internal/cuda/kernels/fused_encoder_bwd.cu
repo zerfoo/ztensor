@@ -19,7 +19,9 @@
  *   Attention bwd:  dV, dScores, dQ, dK via batched Sgemm (4 calls)
  *   Q/K/V bwd:     dW*3, dInput*3 via Sgemm (6 calls)
  *
- * Compile: nvcc -O3 --use_fast_math -arch=sm_121 -lcublas -c fused_encoder_bwd.cu
+ * Compile: nvcc -O3 -arch=sm_121 -lcublas -c fused_encoder_bwd.cu
+ * (no --use_fast_math: removed globally per zerfoo plan T3.1; accurate
+ *  expf/tanhf are required here -- see the T3.4 fused-encoder numerics audit)
  */
 
 #include "fused_encoder_bwd.h"

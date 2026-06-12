@@ -4,7 +4,14 @@ NVCC ?= nvcc
 #   make CUDA_ARCH=sm_89   # Ada Lovelace L4/L40
 #   make CUDA_ARCH=sm_121  # Blackwell GB10 (DGX Spark)
 CUDA_ARCH ?= sm_75
-NVCC_FLAGS ?= -O3 --use_fast_math -arch=$(CUDA_ARCH)
+# NO global --use_fast_math (zerfoo plan-gpu-training-hardening T3.1, the
+# torch numerics convention). The flag swapped every expf/tanhf/logf/division
+# for unsafe approximations library-wide; the non-saturating fast tanhf caused
+# the GELU blowup behind the GPU f32 "CrossAsset cliff" (ztensor#125). Fast
+# intrinsics are re-enabled selectively IN KERNEL SOURCE (e.g. __expf in
+# kernel_softmax after max-subtraction) only where the PyTorch-oracle gate
+# (testing/oracle + testing/parity) proves equivalence within tolerance.
+NVCC_FLAGS ?= -O3 -arch=$(CUDA_ARCH)
 
 # Use larger flash attention tile on Blackwell (228KB shared memory per SM).
 ifeq ($(CUDA_ARCH),sm_121)

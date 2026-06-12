@@ -226,12 +226,16 @@ __global__ void kernel_cos(const float* a, float* c, int n) {
 }
 
 // tanh saturates to +/-1 for |x| >= ~9 (tanh(9) rounds to 1.0f in float32).
-// This file is compiled with --use_fast_math, whose approximate tanhf does NOT
-// saturate for large arguments -- it returns a growing value, which turns the
-// tanh-approximation GELU (0.5*x*(1+tanh(u)), u ~ 0.0357*x^3) into a quartic and
-// blows activations up to 1e27/NaN in f32 (the GPU "CrossAsset cliff"; CPU uses
-// the accurate math.Tanh and is unaffected). Clamping the argument to [-20,20]
-// keeps tanhf in its accurate range and is exact: tanhf(+/-20) == +/-1.0f.
+// HISTORY (ztensor#125): this file used to be compiled with --use_fast_math,
+// whose approximate tanhf does NOT saturate for large arguments -- it returns
+// a growing value, which turns the tanh-approximation GELU
+// (0.5*x*(1+tanh(u)), u ~ 0.0357*x^3) into a quartic and blows activations up
+// to 1e27/NaN in f32 (the GPU "CrossAsset cliff"; CPU uses the accurate
+// math.Tanh and is unaffected). The global flag is now removed (zerfoo plan
+// T3.1), so tanhf is the accurate, saturating libdevice version -- the clamp
+// is RETAINED as defense-in-depth against any future build that reintroduces
+// a fast tanh (per-file flags, a vendor toolchain default). Clamping the
+// argument to [-20,20] is exact: tanhf(+/-20) == +/-1.0f.
 __device__ __forceinline__ float tanh_sat(float x) {
     return tanhf(fminf(fmaxf(x, -20.0f), 20.0f));
 }
@@ -290,11 +294,18 @@ __global__ void kernel_softmax(const float* input, float* output,
     float max_val = sdata[0];
     __syncthreads();
 
-    // Phase 2: Compute exp(x - max) and accumulate sum
+    // Phase 2: Compute exp(x - max) and accumulate sum.
+    // __expf is a SELECTIVE fast intrinsic (the only one re-enabled after the
+    // global --use_fast_math removal, plan T3.1): after max-subtraction the
+    // argument is <= 0, so the result lies in (0, 1] where __expf stays
+    // within ~2^-21 relative error -- proven equivalent by the oracle gate
+    // (Softmax fwd atol 1e-6 / rtol 1e-4, testing/oracle + testing/parity).
+    // Unlike fast tanhf there is no unsaturated tail: exp of a clamped-
+    // nonpositive argument cannot blow up.
     float local_sum = 0.0f;
     for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
         int idx = base + k * step;
-        float ex = expf(input[idx] - max_val);
+        float ex = __expf(input[idx] - max_val);
         output[idx] = ex;
         local_sum += ex;
     }

@@ -22,7 +22,9 @@
  *   1x Sgemm for FFN1 projection
  *   1x Sgemm for FFN2 projection
  *
- * Compile: nvcc -O3 --use_fast_math -arch=sm_121 -lcublas -c fused_encoder_fwd.cu
+ * Compile: nvcc -O3 -arch=sm_121 -lcublas -c fused_encoder_fwd.cu
+ * (no --use_fast_math: removed globally per zerfoo plan T3.1; accurate
+ *  expf/tanhf are required here -- see the T3.4 fused-encoder numerics audit)
  */
 
 #include "fused_encoder_fwd.h"
