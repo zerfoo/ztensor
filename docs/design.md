@@ -61,6 +61,12 @@ The `Storage[T]` interface decouples tensor data from its physical location:
 - **GPUStorage**: device-resident memory; `Slice()` performs a device-to-host copy.
 - **MmapStorage**: memory-mapped file backing for zero-copy model loading.
 
+### Host-Access Synchronization (tensor/host_access_sync.go)
+
+GPU compute engines launch kernels asynchronously on their own streams, so a host access to device-resident storage is only well-defined once pending device work touching that memory has completed. The implicit ordering of synchronous copies against the legacy default stream is **not** a sufficient guarantee: on cache-coherent unified-memory platforms (Tegra, GH200, GB10) a "synchronous" pageable-memory copy may be serviced by the CPU without waiting on kernels pending on a non-default stream, and managed storage is host-accessed directly through the unified pointer with no runtime call at all — a host read can observe bytes from before a still-async kernel write.
+
+The contract: **host reads and writes of device memory are stream-ordered via registered synchronization hooks.** A compute engine registers a per-device hook (`tensor.RegisterHostAccessSync`) that blocks until the engine's pending device work is complete; the GPU engine registers a capture-guarded `stream.Synchronize()` (synchronizing during CUDA graph capture is illegal, and capture paths never host-read kernel outputs) and unregisters the hook on `Close` so a destroyed stream is never synchronized. Every GPUStorage host-access path (`TrySlice`, `Slice`, `CopyTo`, `TrySet`, `Set`) invokes all hooks registered for its device before touching memory. Multiple engines may coexist on one device (each with its own stream); all registered hooks run. Devices with no registered hook synchronize nothing (CPU-only tests, storage created before any engine exists). The registration indirection exists because `tensor` cannot import `compute` — the same pattern as the arena poison fill hook.
+
 ### Quantized Storage Types
 
 Quantized storage types store weights in compressed formats and dequantize on read:
@@ -105,6 +111,8 @@ The `compute` package defines the `Engine[T]` interface and provides CPU and GPU
 - **Utilities**: RandomUniform, OneHot, UnaryOp
 
 All methods accept a `context.Context` and an optional variadic `dst` tensor for in-place buffer reuse, reducing allocation pressure during inference.
+
+**dst-form accumulation policy:** when a `dst` is supplied, the result is written into `dst`'s *existing* storage — an op never re-homes `dst` onto a fresh pool allocation. This storage-identity guarantee is what makes dst-form accumulation safe for persistent tensors (gradient accumulators, optimizer state): a caller that repeatedly issues `Add(ctx, acc, g, acc)` keeps the same device buffer for `acc`, outside the arena's per-step reuse, instead of being silently converted into an arena tensor that the next `Reset` recycles behind the live reference. On GPU, when `dst` carries a same-size GPUStorage the result is copied device-to-device into `dst`'s buffer and the temporary returns to the pool (skipped during CUDA graph capture, where the synchronous copy is not capturable).
 
 ### Optional Engine Capabilities
 
@@ -199,6 +207,8 @@ The `graph` package provides a computation graph that supports forward/backward 
 - **Parallel mode**: when enabled, independent nodes execute concurrently using a goroutine pool.
 - **KV cache feedback**: stateful input nodes can be linked to output nodes so that each forward pass feeds the output back as input to the next pass.
 - **Parameter access**: `Parameters()` returns all trainable parameters sorted by name; `LoadParameters()` loads values by name from a map.
+- **Engine access**: `Engine()` exposes the graph's compute engine so training utilities can run gradient-maintenance ops (persistent accumulator adds, optimizer-state updates) on the same engine — and therefore the same device stream — as the graph's own kernels, keeping the training step device-resident instead of round-tripping through the host.
+- **Save-for-backward**: nodes register forward intermediates their `Backward` will read via the per-node `Saver` (ADR 006); the graph owns their lifetime, pinning the buffers in the arena until the owning node's backward completes (or until `MarkStepBoundary` for non-training forwards). Caching intermediates in node struct fields and reading them in Backward is deprecated — nodes must either save-for-backward or recompute from the `inputs` the graph passes to Backward.
 
 ### Node[T] Interface
 
@@ -384,7 +394,11 @@ Quantized tensors can hold both a CPU-side block array and an optional GPU devic
 
 ### Arena Reset
 
-At the start of each inference pass, `PoolResetter.ResetPool()` reclaims all per-pass intermediate allocations in O(1) by resetting the arena's free pointer. This avoids per-tensor deallocation overhead.
+At the start of each inference pass, `PoolResetter.ResetPool()` reclaims all per-pass intermediate allocations in O(1) by resetting the arena's free pointer. This avoids per-tensor deallocation overhead. Two mechanisms make the wholesale rewind safe for references that must or may outlive the pass:
+
+**Pinning (ADR 006).** The arena supports refcounted `Pin`/`Unpin` per buffer. Saved-for-backward tensors are pinned at registration and unpinned when the owning node's backward completes; pinned buffers raise the reset floor, so `Reset` and intra-step reuse never reclaim them. Long-lived allocations below the floor (weights, optimizer state, captured-graph buffers preserved by `MarkStepBoundary`) are likewise never recycled by a reset.
+
+**Reset epochs.** An arena allocation's lifetime cannot extend across `Reset`: the rewind reclaims it wholesale and the bump allocator re-issues its bytes to new allocations — but explicit frees can arrive arbitrarily late, because GPUStorage release is GC-finalizer-driven. The contract: `Reset` advances an arena epoch; pool-backed storage captures the epoch at allocation (`gpuapi.EpochMemPool`) and releases through `FreeAtEpoch`, which atomically drops arena-range frees whose epoch has passed — **a free after Reset is a no-op.** Without the guard, a stale free would poison-fill or free-list (and eventually double-issue) memory already owned by live current-epoch tensors. The epoch check, poison fill, and free-list insert run in one critical section with `Reset`'s epoch increment, so no interleaving can slip a stale block in; views propagate their allocation epoch, and a storage resize re-captures the current epoch. This makes GC-finalizer-driven frees safe across `Reset` by construction.
 
 ## CUDA Graph Capture Lifecycle
 
