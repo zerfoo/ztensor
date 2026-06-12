@@ -34,6 +34,15 @@ type GPUStorage[T Numeric] struct {
 	refcount  *atomic.Int32  // shared refcount for view-based ownership; nil for legacy/non-refcounted
 	allocSize int            // original allocation byte size (for pool Free); 0 means use byteSize
 	pinnedPtr unsafe.Pointer // devicePtr captured by PinForBackward; survives Free so Unpin stays balanced (see storage_pin.go)
+
+	// poolEpoch is the pool's reset epoch captured at allocation time, when
+	// the pool implements gpuapi.EpochMemPool (arena pools). Free releases
+	// through FreeAtEpoch so a GC-finalizer-driven Free that fires after the
+	// Reset that already reclaimed this allocation is dropped instead of
+	// corrupting the current epoch's live allocations (Bug 11 residual: the
+	// Wolf batch-3/4 forward corruption).
+	poolEpoch    uint64
+	poolEpochSet bool
 }
 
 // NewGPUStorage allocates GPU device memory for the given number of elements
@@ -151,6 +160,10 @@ func NewGPUStorageFromPool[T Numeric](devPtr unsafe.Pointer, length int, pool gp
 		refcount:  rc,
 		allocSize: byteSize,
 	}
+	if ep, ok := pool.(gpuapi.EpochMemPool); ok {
+		gs.poolEpoch = ep.Epoch()
+		gs.poolEpochSet = true
+	}
 	runtime.SetFinalizer(gs, func(s *GPUStorage[T]) { _ = s.Free() })
 
 	return gs, nil
@@ -196,6 +209,21 @@ func NewManagedGPUStorage[T Numeric](pool gpuapi.MemPool, length int, deviceID .
 	runtime.SetFinalizer(gs, func(s *GPUStorage[T]) { _ = s.Free() })
 
 	return gs, nil
+}
+
+// poolFree releases a non-managed pool allocation, dropping the free as
+// stale when the pool's reset epoch has advanced past this storage's
+// allocation epoch (gpuapi.EpochMemPool; see the poolEpoch field). All
+// pool releases of non-managed device memory must go through here --
+// GPUStorage frees are GC-finalizer-driven and can fire arbitrarily late.
+func (s *GPUStorage[T]) poolFree(ptr unsafe.Pointer, byteSize int) {
+	if s.poolEpochSet {
+		if ep, ok := s.pool.(gpuapi.EpochMemPool); ok {
+			ep.FreeAtEpoch(s.deviceID, ptr, byteSize, s.poolEpoch)
+			return
+		}
+	}
+	s.pool.Free(s.deviceID, ptr, byteSize)
 }
 
 // Managed returns true if this storage uses unified (managed) memory.
@@ -310,7 +338,7 @@ func (s *GPUStorage[T]) TrySet(data []T) error {
 			if s.managed {
 				s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
 			} else {
-				s.pool.Free(s.deviceID, s.devicePtr, s.byteSize)
+				s.poolFree(s.devicePtr, s.byteSize)
 			}
 		} else {
 			_ = s.runtime.Free(s.devicePtr)
@@ -323,6 +351,12 @@ func (s *GPUStorage[T]) TrySet(data []T) error {
 				ptr, err = s.pool.AllocManaged(s.deviceID, newByteSize)
 			} else {
 				ptr, err = s.pool.Alloc(s.deviceID, newByteSize)
+				// Re-capture the pool epoch: the replacement allocation
+				// belongs to the CURRENT epoch, whatever the original was.
+				if ep, ok := s.pool.(gpuapi.EpochMemPool); ok {
+					s.poolEpoch = ep.Epoch()
+					s.poolEpochSet = true
+				}
 			}
 		} else {
 			ptr, err = s.runtime.Malloc(newByteSize)
@@ -338,6 +372,13 @@ func (s *GPUStorage[T]) TrySet(data []T) error {
 		s.devicePtr = ptr
 		s.length = len(data)
 		s.byteSize = newByteSize
+		if s.allocSize != 0 {
+			// Keep the recorded allocation size in sync so a later Free
+			// returns exactly the bytes this allocation owns (a stale,
+			// larger allocSize would free-list bytes belonging to a
+			// neighboring live allocation).
+			s.allocSize = newByteSize
+		}
 	}
 
 	if len(data) > 0 {
@@ -445,7 +486,7 @@ func (s *GPUStorage[T]) Free() error {
 			if s.managed {
 				s.pool.FreeManaged(s.deviceID, s.devicePtr, freeSize)
 			} else {
-				s.pool.Free(s.deviceID, s.devicePtr, freeSize)
+				s.poolFree(s.devicePtr, freeSize)
 			}
 			s.devicePtr = nil
 			s.length = 0
@@ -471,7 +512,7 @@ func (s *GPUStorage[T]) Free() error {
 		if s.managed {
 			s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
 		} else {
-			s.pool.Free(s.deviceID, s.devicePtr, s.byteSize)
+			s.poolFree(s.devicePtr, s.byteSize)
 		}
 		s.devicePtr = nil
 		s.length = 0
@@ -525,6 +566,9 @@ func (s *GPUStorage[T]) View(length int) *GPUStorage[T] {
 			managed:   s.managed,
 			refcount:  s.refcount,
 			allocSize: s.allocSize,
+
+			poolEpoch:    s.poolEpoch,
+			poolEpochSet: s.poolEpochSet,
 		}
 	}
 

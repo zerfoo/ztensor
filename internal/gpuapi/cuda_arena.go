@@ -67,6 +67,19 @@ func (p *CUDAArenaPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 	p.inner.Free(deviceID, ptr, byteSize)
 }
 
+// Epoch returns the arena's current reset epoch (see EpochMemPool).
+func (p *CUDAArenaPool) Epoch() uint64 {
+	return p.inner.Epoch()
+}
+
+// FreeAtEpoch frees ptr only if the arena has not been Reset since
+// allocEpoch; stale frees (GC finalizers firing after the Reset that
+// reclaimed the allocation) are dropped instead of corrupting the current
+// epoch's live allocations (see EpochMemPool).
+func (p *CUDAArenaPool) FreeAtEpoch(deviceID int, ptr unsafe.Pointer, byteSize int, allocEpoch uint64) {
+	p.inner.FreeAtEpoch(deviceID, ptr, byteSize, allocEpoch)
+}
+
 func (p *CUDAArenaPool) AllocManaged(deviceID, byteSize int) (unsafe.Pointer, error) {
 	return p.inner.AllocManaged(deviceID, byteSize)
 }

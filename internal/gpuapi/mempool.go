@@ -23,6 +23,26 @@ type MemPool interface {
 	Stats() (allocations int, totalBytes int)
 }
 
+// EpochMemPool is implemented by pools whose Reset reclaims allocations
+// wholesale (arena/bump allocators). An allocation's lifetime cannot extend
+// across a Reset, so a Free that arrives after the Reset that reclaimed it
+// -- the canonical case is a Go GC finalizer on a dead GPUStorage firing one
+// collection cycle late -- must be dropped: by then the same bytes belong to
+// a live allocation of the current epoch, and honoring the stale free would
+// poison live data and double-issue the block through the pool's free-list.
+//
+// Storage that frees lazily (finalizer-driven) captures Epoch() at
+// allocation time and releases through FreeAtEpoch. Pools that never
+// bulk-reclaim (bucketed MemPool) do not implement this interface and are
+// freed unconditionally.
+type EpochMemPool interface {
+	// Epoch returns the pool's current reset epoch.
+	Epoch() uint64
+	// FreeAtEpoch frees ptr only if the pool has not been Reset since
+	// allocEpoch; otherwise the free is dropped as stale.
+	FreeAtEpoch(deviceID int, ptr unsafe.Pointer, byteSize int, allocEpoch uint64)
+}
+
 // CaptureAwareAllocator is implemented by memory pools that support
 // CUDA graph capture. When capture mode is active, allocations use
 // cudaMallocAsync on the capture stream instead of cudaMalloc on the
