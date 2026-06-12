@@ -66,6 +66,19 @@ type ArenaPool struct {
 	// reset-epoch instead of on every exhausted Alloc.
 	overflowLogged atomic.Bool
 
+	// epoch counts Reset calls. An arena allocation's lifetime cannot extend
+	// across a Reset: the rewind reclaims it wholesale. A Free that arrives
+	// AFTER the Reset that reclaimed its allocation (the canonical case: a Go
+	// GC finalizer on a dead GPUStorage firing one collection cycle late) must
+	// therefore be a no-op -- by then the same bytes belong to a LIVE
+	// allocation of the current epoch, and honoring the stale free would
+	// poison live data and double-issue the block through the free-list (the
+	// Wolf batch-3/4 forward corruption, Bug 11 residual). Epoch-carrying
+	// callers use FreeArenaAtEpoch; Reset increments the epoch.
+	epoch atomic.Uint64
+	// staleFrees counts dropped cross-epoch frees, for diagnostics.
+	staleFrees atomic.Int64
+
 	// freeList holds freed blocks sorted by offset, available for reuse.
 	// Alloc checks for a best-fit block before bumping the offset.
 	freeList []freeBlock
@@ -390,6 +403,75 @@ func (a *ArenaPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 	a.FreeArena(ptr, byteSize)
 }
 
+// Epoch returns the current reset epoch. Callers that may free an arena
+// allocation later than the next Reset (anything GC-finalizer-driven, i.e.
+// every pool-backed GPUStorage) must capture the epoch at allocation time and
+// free through FreeArenaAtEpoch / FreeAtEpoch so a stale free is dropped.
+func (a *ArenaPool) Epoch() uint64 {
+	return a.epoch.Load()
+}
+
+// StaleFrees returns the number of cross-epoch frees that were dropped.
+func (a *ArenaPool) StaleFrees() int64 {
+	return a.staleFrees.Load()
+}
+
+// FreeAtEpoch is the epoch-guarded variant of Free. For arena-range pointers
+// allocated at allocEpoch, the free is honored only while the same epoch is
+// still current; after a Reset the allocation was already reclaimed wholesale
+// and the free is dropped (see the epoch field comment). Non-arena pointers
+// (fallback / async-overflow allocations) are not subject to Reset
+// reclamation and are routed to Free unconditionally.
+func (a *ArenaPool) FreeAtEpoch(deviceID int, ptr unsafe.Pointer, byteSize int, allocEpoch uint64) {
+	if ptr == nil || byteSize <= 0 {
+		return
+	}
+	a.mu.Lock()
+	inArena := a.base != nil &&
+		uintptr(ptr) >= uintptr(a.base) &&
+		uintptr(ptr) < uintptr(a.base)+uintptr(a.capacity)
+	a.mu.Unlock()
+	if !inArena {
+		// Fallback / async-overflow pointers are never reclaimed by Reset;
+		// route through the normal free (which dispatches on its ptr maps).
+		a.Free(deviceID, ptr, byteSize)
+		return
+	}
+	a.freeArenaEpochGuarded(ptr, byteSize, allocEpoch)
+}
+
+// freeArenaEpochGuarded is FreeArena with the epoch check, the poison fill,
+// and the free-list insert in ONE critical section, so a concurrent Reset
+// (which increments the epoch under the same lock) can never interleave
+// between the check and the mutation. A failed check counts a stale free and
+// touches nothing -- the bytes belong to the current epoch's allocations.
+func (a *ArenaPool) freeArenaEpochGuarded(ptr unsafe.Pointer, byteSize int, allocEpoch uint64) {
+	aligned := (byteSize + 255) &^ 255
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.epoch.Load() != allocEpoch {
+		a.staleFrees.Add(1)
+		return
+	}
+	offset := int(uintptr(ptr) - uintptr(a.base))
+	if offset < 0 || offset+aligned > a.capacity {
+		return // not an arena pointer (base may have changed; defensive)
+	}
+	if a.overlapsPinLocked(offset, aligned) {
+		a.deferredFrees = append(a.deferredFrees, freeBlock{offset: offset, size: aligned})
+		return
+	}
+	// Poison-on-free under the lock: epoch verified, so the caller's (dead)
+	// allocation still exclusively owns the region, and no Reset or Alloc can
+	// re-issue it mid-fill.
+	if arenaPoisonEnabled {
+		a.poisonRegion(ptr, aligned, "FreeArena")
+	}
+	a.insertFreeBlock(freeBlock{offset: offset, size: aligned})
+}
+
 // FreeArena returns an arena allocation to the free-list. The pointer must
 // have been returned by a previous Alloc from this arena (not from fallback).
 // The byteSize must match the original allocation request (it will be aligned
@@ -477,6 +559,10 @@ func (a *ArenaPool) Reset() {
 	// free-list here (or later, on Unpin) could alias the bump path, because
 	// a deferred block may extend above the raised floor.
 	a.deferredFrees = a.deferredFrees[:0]
+	// Advance the reset epoch under the lock: every allocation issued before
+	// this point is now reclaimed, and any Free for it that arrives later
+	// (GC finalizers) must be dropped by freeArenaEpochGuarded.
+	a.epoch.Add(1)
 	a.mu.Unlock()
 	a.resets.Add(1)
 	// Clear per-epoch diagnostics so the next pass's first-overflow log fires
