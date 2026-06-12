@@ -1,5 +1,41 @@
 # ztensor Development Log
 
+## 2026-06-11: S2.3.1 -- poison-mode full-suite run green on GB10 (parity + Wolf-pattern training loop)
+
+**Type:** validation
+**Tags:** gb10, spark, poison, arena, parity, save-for-backward, S2.3.1, #130, #133, #140
+
+**What ran:** the framework-level proof for zerfoo plan S2.3.1 (UC-GH-004), as a
+single Spark pod on the DGX GB10 -- pod `ztensor-parity-4b4d759c`, image
+`docker.io/library/golang:1.26-bookworm` + hostPath CUDA/kernels, ref
+`test/s231-poison-gb10` (4b4d759c, = v1.11.0/ebf0008b + the new training-loop
+test, PR #140), `ZTENSOR_ARENA_POISON=1`, 64 MiB test arena
+(`SetArenaBytesForTesting`), memory limit 16Gi, GPU serialized (no other pods).
+
+**Results (all PASS, pod exit 0, `VALIDATION_OK`):**
+- `TestParity_GPUvsCPU_ArenaStressSchedules_GPU`: full gradcheck registry,
+  CPU-f32 vs GPU-f32, forward+backward. `no-reset`: 26/26 passed, 0 failed,
+  0 errored. `reset-between-fwd-bwd` (the Wolf per-sample-ResetPool hazard,
+  poison on): 26/26 passed, 0 failed, 0 errored. Per-schedule JSON reports
+  archived from `/home/ndungu/parity/4b4d759c/` (max_abs/max_rel per op all
+  within per-op tolerances; worst observed ~7e-06 on Tanh gradients).
+- `TestParity_GPURedProof_GPU`: raw cached-intermediate fixture flagged red on
+  the real CUDA arena; contract twin green -- the run retains its sensitivity.
+- `TestTrainingLoop_WolfPattern_GPU` (new, PR #140): two-layer net trained
+  3 batches x 4 samples with the exact gr-12 hazard schedule -- per-sample
+  forward+backward, in-place gradient accumulation into persistent non-arena
+  GPUStorage, ResetPool every sample, in-place SGD step per batch -- under
+  poison. All parameters finite and within f32 tolerance (atol 1e-5 /
+  rtol 1e-3) of the byte-identical CPU-engine run; engine Add/Sub preserved
+  the persistent dst storage (no re-homing, the #850/#855 failure mode).
+
+**Meaning:** with v1.11.0 (host-access stream-ordering #137, reset-epoch frees
+#138, dst preservation #134, SaveForBackward/pinning #132, poison #130) the
+lifetime contract holds on real GB10 hardware under the schedule shapes that
+produced the zerfoo#842/#845/#850 corruption class. M2's GB10 leg
+(poison-mode full suite) is done; T2.4 (attention-like integration stress)
+remains the broader follow-up.
+
 ## 2026-06-11: #137 + #138 -- host-access stream ordering and arena reset-epoch frees validated end-to-end on GB10
 
 **Type:** finding
