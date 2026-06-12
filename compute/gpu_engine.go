@@ -162,6 +162,11 @@ type GPUEngine[T tensor.Numeric] struct {
 	// and frees it in Close. Empty on engines that never receive a
 	// large-N UploadWeights call.
 	bulkUploadBuffers []unsafe.Pointer
+
+	// unregisterHostSync removes this engine's host-access synchronization
+	// hook (tensor.RegisterHostAccessSync) on Close, so a destroyed stream
+	// is never synchronized by a later host read.
+	unregisterHostSync func()
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -228,6 +233,25 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 			return nil, fmt.Errorf("failed to set DNN stream: %w", err)
 		}
 	}
+
+	// Host-access ordering contract (Bug 11, zerfoo#850 lineage): host reads
+	// and writes of GPU storage (tensor Data()/Set() and friends) must be
+	// stream-ordered with respect to kernels pending on this engine's stream.
+	// On cache-coherent unified-memory platforms (GB10 NVLink-C2C) the
+	// implicit ordering of synchronous cudaMemcpy against non-default streams
+	// does not hold for pageable host memory, so GPUStorage synchronizes
+	// explicitly through this per-device hook before touching device memory.
+	unregisterHostSync := tensor.RegisterHostAccessSync(dev, func() error {
+		if cuda.CaptureActive() {
+			// cudaStreamSynchronize during CUDA graph capture is illegal and
+			// would invalidate the capture. Capture-phase code never
+			// host-reads kernel outputs (the capture guards refuse those
+			// paths), so skipping the sync here cannot reorder a real host
+			// access.
+			return nil
+		}
+		return stream.Synchronize()
+	})
 
 	// Managed memory (cudaMallocManaged) is opt-in: on GB10 it causes ~13%
 	// throughput regression due to page fault overhead. Enable with
@@ -324,6 +348,8 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 			deviceID:      dev,
 			managedMem:    managedMem,
 			maxAllocBytes: DefaultMaxAllocBytes,
+
+			unregisterHostSync: unregisterHostSync,
 		}, nil
 	}
 
@@ -339,6 +365,8 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		deviceID:      dev,
 		managedMem:    managedMem,
 		maxAllocBytes: DefaultMaxAllocBytes,
+
+		unregisterHostSync: unregisterHostSync,
 	}, nil
 }
 
@@ -1096,6 +1124,13 @@ func (e *GPUEngine[T]) DestroyGraph(handle GraphHandle) error {
 // The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {
 	var firstErr error
+
+	// Drop the host-access synchronization hook before the stream is
+	// destroyed, so no host read can synchronize a dead stream.
+	if e.unregisterHostSync != nil {
+		e.unregisterHostSync()
+		e.unregisterHostSync = nil
+	}
 
 	// Free bulk-upload buffers (one per UploadWeights call that hit the
 	// bulk path). Per-tensor views into these buffers have a no-op Free,
