@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.11.0](https://github.com/zerfoo/ztensor/compare/v1.10.2...v1.11.0) (2026-06-12)
+
+
+### Features
+
+* **arena:** refcounted Pin/Unpin with reset-floor raising and deferred frees (ADR 006, T2.2) ([661871f](https://github.com/zerfoo/ztensor/commit/661871fe59aa4bbbca662048ffcb738210d8f144))
+* **arena:** ZTENSOR_ARENA_POISON poison-on-reset debug mode (ADR 006, [#128](https://github.com/zerfoo/ztensor/issues/128)) ([c415268](https://github.com/zerfoo/ztensor/commit/c4152683cf7779b176c95d66ce4e349db4e2e129))
+* **compute:** log when arena poison debug mode is active ([3193048](https://github.com/zerfoo/ztensor/commit/31930480582178fef25f926e11c3191d14c1203d))
+* **gpuapi:** register on-device kernel fill for arena poison mode ([b19779d](https://github.com/zerfoo/ztensor/commit/b19779d81705553bd77aac8a75678d40b5a3a8ff))
+* **gradcheck:** engine-op wrapper nodes and OpInfo registry ([6b04448](https://github.com/zerfoo/ztensor/commit/6b04448f3c73c44411bc75305d2f67543948761a))
+* **gradcheck:** float64 central-difference gradient checker core ([1687f64](https://github.com/zerfoo/ztensor/commit/1687f644f15b9f9e5205e0cdb88743838179ef26))
+* **gradcheck:** generic op wrappers + NewRegistryNode factory for cross-precision reuse ([3d813bd](https://github.com/zerfoo/ztensor/commit/3d813bd869eef68ea118d33a7c609392ddfded6c))
+* **graph:** expose the graph's compute engine via Graph.Engine() ([a94c316](https://github.com/zerfoo/ztensor/commit/a94c3163d55e5a4e6ae591c002061b1744856c3c))
+* **graph:** SaveForBackward contract with per-node Saver and pin lifecycle (ADR 006, T2.1) ([e7419ef](https://github.com/zerfoo/ztensor/commit/e7419ef30c08f42f1275ec86617d4d42c8fdfcdc))
+* **oracle:** case-bundle exchange format, f32 CPU writer, red-proof fixture (T1.3) ([ec242b3](https://github.com/zerfoo/ztensor/commit/ec242b36b9cd51c9c9a47666373b0f97bfe84f8b))
+* **oracle:** NGC torch runner, Spark pod template, DGX run procedure (T1.3) ([32d2642](https://github.com/zerfoo/ztensor/commit/32d264277743e20ab0a9dc1096ad737a61b7ce33))
+* **parity:** CPU-vs-GPU schedule runner, host-arena stress engine, red-proof fixtures (ADR 091, T1.2) ([fc8fc28](https://github.com/zerfoo/ztensor/commit/fc8fc283bf33af290b03855df3f02c35c13e78a3))
+* **parity:** GB10 Spark pod runner + DGX procedure (T1.2) ([0c6f4ee](https://github.com/zerfoo/ztensor/commit/0c6f4eea4b64ce4d7212bde7ec64e8841c333fa5))
+* **tensor,gpuapi:** PinnableStorage plumbing from GPUStorage to the arena pinner (T2.2) ([b07308f](https://github.com/zerfoo/ztensor/commit/b07308f9e72523bb4be51160500e65069dbdae42))
+* **testing:** save-for-backward in gradcheck op wrappers + small-arena test hook (ADR 091, T1.2) ([29ce255](https://github.com/zerfoo/ztensor/commit/29ce255f830e5c37f520df0f574b7655582c2647))
+
+
+### Bug Fixes
+
+* **arena:** drop stale cross-epoch frees -- a Free after Reset must be a no-op ([6f571ce](https://github.com/zerfoo/ztensor/commit/6f571ced234282c4d0db0834b233e664c312c739))
+* **compute:** dst-form ops write into dst's storage, never re-home it to the arena ([dc2ac65](https://github.com/zerfoo/ztensor/commit/dc2ac65b1d7e652693683a14bc76b93e4d8cc3ff))
+* **compute:** GPU engine registers a host-access sync hook for its stream ([3bf58b9](https://github.com/zerfoo/ztensor/commit/3bf58b9dd6e27751cd32d95c7715d2e14f226a52))
+* **cuda:** saturate kernel_tanh argument (--use_fast_math tanhf overflow) ([7c275fa](https://github.com/zerfoo/ztensor/commit/7c275fae6e349c79fe5a7b43b3a1d01c2d125909))
+* **tensor:** stream-order GPUStorage host access via per-device sync hooks ([a4da3f9](https://github.com/zerfoo/ztensor/commit/a4da3f9da8c4d6b0fe28340729cd627b39f7a705))
+
 ## [1.10.2](https://github.com/zerfoo/ztensor/compare/v1.10.1...v1.10.2) (2026-06-09)
 
 
