@@ -74,6 +74,43 @@ non-terminal phase (spark#37 class) -- watch `GET /pods/{name}/events` for
 `completed`/`failed` instead of the pod phase, and DELETE pods after
 capturing results (all four T3.1 pods deleted).
 
+## 2026-06-12: T2.4 -- Wolf-pattern attention stress test green on GB10 under poison
+
+**Type:** validation
+**Tags:** gb10, spark, poison, arena, attention, save-for-backward, T2.4, #140, #141
+
+**What:** zerfoo plan T2.4 (UC-GH-004/UC-GH-007): the Wolf-pattern integration
+stress test on an ATTENTION-SHAPED synthetic graph (PR #141), extending the
+linear-net training loop of #140 with the graph shape that produced Wolf's
+actual hazards. Single-head attention node (Q@K^T -> scale -> softmax -> @V,
+trainable Wq/Wk/Wv as graph.Parameters) + residual/RMS-norm node (saves the
+pre-norm activation and normalization inverse -- the Wolf QK-norm
+cached-inverse shape), built on graph.Node/Builder with SaveForBackward
+(ADR 006) for the multi-consumer intermediates (attention weights are read
+three ways in backward: dV, dA, and the softmax denominator reduction); the
+input feeds both nodes, exercising the graph's converging-gradient path.
+Schedule: per-sample Forward + host-materialized loss gradient + arena reset
+BETWEEN forward and backward (every saved lifetime load-bearing) + Backward
+with in-place gradient accumulation into persistent Parameters + per-sample
+ResetPool; in-place SGD per batch; 2 epochs x 2 batches x 3 samples; poison
+on, 64 MiB arena.
+
+**GB10 evidence:** Spark pod `ztensor-parity-853a7fa1`, image
+golang:1.26-bookworm + hostPath CUDA/kernels (v1.11.0 kernels), ref
+`test/wolf-pattern-stress` (853a7fa1), `ZTENSOR_ARENA_POISON=1`, memory
+limit 16Gi, GPU serialized. Pod exit 0, `VALIDATION_OK`:
+`--- PASS: TestAttentionTraining_WolfPattern_GPU (0.39s)` -- Wq/Wk/Wv all
+64 values finite, GPU within atol 1e-5 / rtol 1e-3 of the byte-identical
+CPU-engine run; persistent storage never re-homed; plus the full existing
+gate (parity schedules 26/26 + 26/26, GPU red-proof red, #140 training
+loop) still green. CI leg: TestAttentionTraining_WolfPattern_StressCI
+(host-backed-arena StressEngine) green with zero leaked pins.
+
+**Red-proof:** removing the SaveForBackward calls makes the CI variant fail
+deterministically (`Wq.Gradient[0] = NaN: non-finite under poison`), so the
+saved lifetimes are load-bearing, not decorative. scripts/parity/run.sh now
+hard-gates the new test (exit 7). M2's Wolf-pattern stress leg is done.
+
 ## 2026-06-11: S2.3.1 -- poison-mode full-suite run green on GB10 (parity + Wolf-pattern training loop)
 
 **Type:** validation
