@@ -213,9 +213,18 @@ func (s *GPUStorage[T]) ByteSize() int { return s.byteSize }
 // TrySlice copies device memory to a new CPU slice.
 // For managed storage, the data is read directly from the unified pointer
 // without a D2H Memcpy. Returns an error if the copy fails.
+//
+// The read is stream-ordered: registered host-access synchronization hooks
+// (RegisterHostAccessSync) run first, so a kernel still pending on the
+// owning engine's stream cannot race the host read (Bug 11; see
+// host_access_sync.go).
 func (s *GPUStorage[T]) TrySlice() ([]T, error) {
 	if s.length == 0 {
 		return []T{}, nil
+	}
+
+	if err := syncForHostAccess(s.deviceID); err != nil {
+		return nil, fmt.Errorf("GPUStorage.TrySlice: host-access sync: %w", err)
 	}
 
 	_ = s.runtime.SetDevice(s.deviceID)
@@ -252,12 +261,18 @@ func (s *GPUStorage[T]) Slice() []T {
 
 // CopyTo copies GPU device memory into an existing CPU slice without allocating.
 // The destination must have at least Len() elements. Returns an error on failure.
+// The read is stream-ordered via the registered host-access synchronization
+// hooks (see TrySlice).
 func (s *GPUStorage[T]) CopyTo(dst []T) error {
 	if s.length == 0 {
 		return nil
 	}
 	if len(dst) < s.length {
 		return fmt.Errorf("GPUStorage.CopyTo: dst too small (%d < %d)", len(dst), s.length)
+	}
+
+	if err := syncForHostAccess(s.deviceID); err != nil {
+		return fmt.Errorf("GPUStorage.CopyTo: host-access sync: %w", err)
 	}
 
 	_ = s.runtime.SetDevice(s.deviceID)
@@ -276,7 +291,14 @@ func (s *GPUStorage[T]) CopyTo(dst []T) error {
 // If the new slice has a different length, the old device memory is freed and
 // new memory is allocated. For managed storage, data is written directly to the
 // unified pointer without Memcpy. Returns an error on failure.
+// The write is stream-ordered via the registered host-access synchronization
+// hooks (see TrySlice): a kernel still pending against the current contents
+// completes before the host overwrites (or frees) them.
 func (s *GPUStorage[T]) TrySet(data []T) error {
+	if err := syncForHostAccess(s.deviceID); err != nil {
+		return fmt.Errorf("GPUStorage.TrySet: host-access sync: %w", err)
+	}
+
 	_ = s.runtime.SetDevice(s.deviceID)
 
 	var zero T
