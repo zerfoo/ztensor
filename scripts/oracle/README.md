@@ -82,13 +82,18 @@ The runner exits 0 only if every bundle passed; the pod phase reflects that.
 `report.json` carries per-op `max_abs`/`max_rel` for forward and for every
 input/parameter gradient -- attach it to the devlog entry for the run.
 
-### GPU-engine bundles (next cut)
+### GPU-engine bundles (`-engine gpu`)
 
-This first cut records the **CPU f32** engine. The GPU-engine variant reuses
-the exact same format: a Go runner on the DGX (Spark pod, ztensor GPU build)
-regenerates the bundles with `compute.GPUEngine` outputs, then the same
-`run_oracle.py` invocation judges them. That is the gate for the kernel
-numerics work (plan T3.x: fast-math removal, reduction ordering).
+`oracle-gen -engine gpu` records the **CUDA GPU engine** through the exact
+same bundle format: a Go runner on the DGX (Spark pod, golang image + mounted
+CUDA + `libkernels.so`) regenerates the bundles with `compute.GPUEngine`
+outputs, then the same `run_oracle.py` invocation judges them. That is the
+gate for the kernel numerics work (plan T3.x: fast-math removal, reduction
+ordering) -- the recorded forward/gradients come from the CUDA kernels under
+test. Generation MUST run on the GB10 via Spark (it needs CUDA); point
+`LD_LIBRARY_PATH` at the kernel build under test (e.g. a fresh
+`/home/ndungu/ztensor-kernels-build-<sha>` hostPath) so the bundles record
+that exact `libkernels.so`.
 
 ## Skipped ops
 
