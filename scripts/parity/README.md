@@ -106,3 +106,16 @@ curl -s -X DELETE $SPARK/api/v1/pods/ztensor-parity-$RUNID
 `run.sh` exits non-zero unless BOTH GPU tests genuinely passed (a
 CUDA-unavailable SKIP is a hard failure), so the pod phase is the verdict.
 Test a non-main ref by setting `ZTENSOR_REF` in the manifest env.
+
+## Wolf-pattern training loop (S2.3.1)
+
+`TestTrainingLoop_WolfPattern_GPU` adds the third GB10 gate: a small
+two-layer training loop running the exact Wolf gr-12 hazard schedule
+(per-sample forward+backward, gradients accumulated in place into
+persistent non-arena device buffers, `ResetPool` after every sample,
+in-place SGD step once per batch) under poison with the small arena.
+PASS requires finite parameters AND f32-tolerance agreement with a plain
+CPU-engine run of the byte-identical loop. A CI twin
+(`TestTrainingLoop_WolfPattern_StressCI`) runs the same loop against the
+host-backed-arena StressEngine, so lifetime regressions in the pattern
+are caught before a GB10 round trip.

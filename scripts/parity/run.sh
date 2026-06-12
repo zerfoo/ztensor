@@ -35,9 +35,10 @@ grep -- 'parity ' /tmp/out.txt || true
 
 grep -q -- '--- PASS: TestParity_GPUvsCPU_ArenaStressSchedules_GPU' /tmp/out.txt || { echo FATAL: schedule parity not PASS; exit 3; }
 grep -q -- '--- PASS: TestParity_GPURedProof_GPU' /tmp/out.txt || { echo FATAL: GPU red-proof not PASS; exit 5; }
+grep -q -- '--- PASS: TestTrainingLoop_WolfPattern_GPU' /tmp/out.txt || { echo FATAL: Wolf-pattern training loop not PASS; exit 6; }
 grep -q -- '--- SKIP: TestParity_GPUvsCPU_ArenaStressSchedules_GPU' /tmp/out.txt && { echo FATAL: SKIPPED no CUDA; exit 4; }
 test "$code" -eq 0 || { echo "FATAL: go test exit $code"; exit "$code"; }
 
 echo "reports:"
 ls -l "$REPORT_DIR"
-echo "VALIDATION_OK: CPU-vs-GPU parity (both schedules) + GPU red-proof passed on GB10"
+echo "VALIDATION_OK: CPU-vs-GPU parity (both schedules) + GPU red-proof + Wolf-pattern training loop passed on GB10"
