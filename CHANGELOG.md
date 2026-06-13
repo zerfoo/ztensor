@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.1](https://github.com/zerfoo/ztensor/compare/v1.11.0...v1.11.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **compute:** N-D transpose kernel params are device-resident, engine-owned ([58fc331](https://github.com/zerfoo/ztensor/commit/58fc3316364fe47992dec5ca4a66122216b2417d))
+* **kernels:** remove global --use_fast_math; selective __expf in softmax only (T3.1) ([1fd2e89](https://github.com/zerfoo/ztensor/commit/1fd2e89f8376016e34a0c0c85528d404f99de040))
+
 ## [1.11.0](https://github.com/zerfoo/ztensor/compare/v1.10.2...v1.11.0) (2026-06-12)
 
 
