@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -167,6 +168,15 @@ type GPUEngine[T tensor.Numeric] struct {
 	// hook (tensor.RegisterHostAccessSync) on Close, so a destroyed stream
 	// is never synchronized by a later host read.
 	unregisterHostSync func()
+
+	// transposeParams caches device-resident {inStrides, outStrides, perm}
+	// int32 parameter blocks for the N-D transpose kernel, keyed by
+	// signature. Kernel parameter arrays must live in engine-owned device
+	// memory: per-call Go slices raced the GC on the async launch and,
+	// under CUDA-graph capture, left recorded kernel nodes pointing at
+	// recycled Go heap. Freed in Close.
+	transposeParamsMu sync.Mutex
+	transposeParams   map[string]unsafe.Pointer
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -1141,6 +1151,16 @@ func (e *GPUEngine[T]) Close() error {
 		}
 	}
 	e.bulkUploadBuffers = nil
+
+	// Free the device-resident N-D transpose parameter blocks.
+	e.transposeParamsMu.Lock()
+	for _, ptr := range e.transposeParams {
+		if err := e.runtime.Free(ptr); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	e.transposeParams = nil
+	e.transposeParamsMu.Unlock()
 
 	// Free FP8 scratch buffers before draining the pool.
 	if e.fp8Scratch != nil {
