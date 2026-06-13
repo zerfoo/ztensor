@@ -184,7 +184,31 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		perm32[i] = int32(axes[i])
 	}
 
-	if err := e.kernels.TransposeND(devIn, devOut, inStrides32, outStrides32, perm32, rank, total, e.stream); err != nil {
+	// The strides/perm arrays the kernel reads MUST be device-resident
+	// (engine-owned, stable lifetime). Passing the per-call Go slices
+	// directly -- the previous behavior -- handed the kernel raw Go-heap
+	// pointers: it only worked at all on unified-memory devices, the
+	// async launch raced the garbage collector even in eager mode, and
+	// under CUDA-graph capture the recorded kernel node baked the heap
+	// address in, so the first GC after capture made every later replay
+	// read recycled memory (Wolf T9.1: nondeterministic illegal-memory-
+	// access after 100-250 replays, pinned by compute-sanitizer to
+	// kernel_transpose_nd's int* parameters).
+	devParams, perr := e.transposeNDDeviceParams(inStrides32, outStrides32, perm32)
+	if perr != nil {
+		if !reused {
+			e.pool.Free(e.deviceID, devOut, byteSize)
+		}
+		return nil, perr
+	}
+	// Device-backed slice headers: same kernel ABI ([]int32 -> &s[0]), but
+	// the element pointers are device memory. Never dereference these on
+	// the host.
+	devIS := unsafe.Slice((*int32)(devParams), rank)
+	devOS := unsafe.Slice((*int32)(unsafe.Add(devParams, 4*rank)), rank)
+	devPerm := unsafe.Slice((*int32)(unsafe.Add(devParams, 8*rank)), rank)
+
+	if err := e.kernels.TransposeND(devIn, devOut, devIS, devOS, devPerm, rank, total, e.stream); err != nil {
 		if !reused {
 			e.pool.Free(e.deviceID, devOut, byteSize)
 		}
@@ -733,4 +757,55 @@ func (e *GPUEngine[T]) ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tens
 		return nil, fmt.Errorf("ConvertFP16ToF32: wrap tensor: %w", err)
 	}
 	return out, nil
+}
+
+// transposeNDDeviceParams returns the device pointer of an engine-owned
+// parameter block holding {inStrides, outStrides, perm} (3*rank int32,
+// contiguous) for the N-D transpose kernel, allocating and uploading it on
+// first use for each distinct signature.
+//
+// Kernel parameter arrays must be device-resident with engine lifetime:
+// per-call Go slices (the previous behavior) handed the async kernel raw
+// Go-heap pointers -- a GC race in eager mode, and a guaranteed
+// use-after-free under CUDA-graph capture, where the recorded kernel node
+// kept the heap address across replays (Wolf T9.1, compute-sanitizer:
+// invalid global reads in kernel_transpose_nd's int* parameters).
+//
+// New signatures cannot be allocated while a CUDA-graph capture is active
+// (cudaMalloc would break the capture); callers capture only after a
+// warmup pass over the same graph, which populates the cache.
+func (e *GPUEngine[T]) transposeNDDeviceParams(inStrides, outStrides, perm []int32) (unsafe.Pointer, error) {
+	rank := len(perm)
+	key := fmt.Sprintf("%v|%v|%v", inStrides, outStrides, perm)
+
+	e.transposeParamsMu.Lock()
+	defer e.transposeParamsMu.Unlock()
+	if ptr, ok := e.transposeParams[key]; ok {
+		return ptr, nil
+	}
+
+	if err := e.ensureNotCapturing(); err != nil {
+		return nil, fmt.Errorf("transposeNDDeviceParams: new transpose signature %s during CUDA-graph capture (run a warmup pass first): %w", key, err)
+	}
+
+	host := make([]int32, 0, 3*rank)
+	host = append(host, inStrides...)
+	host = append(host, outStrides...)
+	host = append(host, perm...)
+	byteSize := len(host) * 4
+
+	devPtr, err := e.runtime.Malloc(byteSize)
+	if err != nil {
+		return nil, fmt.Errorf("transposeNDDeviceParams: alloc %d bytes: %w", byteSize, err)
+	}
+	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		_ = e.runtime.Free(devPtr)
+		return nil, fmt.Errorf("transposeNDDeviceParams: upload: %w", err)
+	}
+
+	if e.transposeParams == nil {
+		e.transposeParams = make(map[string]unsafe.Pointer)
+	}
+	e.transposeParams[key] = devPtr
+	return devPtr, nil
 }
