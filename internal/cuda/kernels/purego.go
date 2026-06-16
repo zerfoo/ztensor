@@ -143,6 +143,11 @@ type KernelLib struct {
 	// fused_adamw bf16 (on-device AdamW on bf16 params, f32/f64 state sidecars)
 	launchFusedAdamWBF16 uintptr
 
+	// fused norm bf16 (forward-only: add+rmsnorm, norm+add, qk-norm+rope)
+	launchFusedAddRMSNormBF16 uintptr
+	launchFusedNormAddBF16    uintptr
+	launchFusedQKNormRoPEBF16 uintptr
+
 	// FP8 ops
 	launchDequantFP8E4M3ToFP16 uintptr
 	launchFP8Add               uintptr
@@ -354,6 +359,10 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_bf16_to_f32", &k.launchBF16ToF32},
 			// fused_adamw bf16
 			{"fused_adamw_bf16", &k.launchFusedAdamWBF16},
+			// fused norm bf16 (forward-only)
+			{"fused_add_rmsnorm_bf16", &k.launchFusedAddRMSNormBF16},
+			{"fused_norm_add_bf16", &k.launchFusedNormAddBF16},
+			{"fused_qk_norm_rope_bf16", &k.launchFusedQKNormRoPEBF16},
 			// FP8 ops
 			{"launch_dequant_fp8e4m3_to_fp16", &k.launchDequantFP8E4M3ToFP16},
 			{"launch_fp8_add", &k.launchFP8Add},
@@ -461,6 +470,9 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_f32_to_bf16":              true,
 			"launch_bf16_to_f32":              true,
 			"fused_adamw_bf16":                true,
+			"fused_add_rmsnorm_bf16":          true,
+			"fused_norm_add_bf16":             true,
+			"fused_qk_norm_rope_bf16":         true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
