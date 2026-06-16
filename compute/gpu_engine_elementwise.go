@@ -349,6 +349,13 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	weight *tensor.TensorNumeric[T],
 	eps float32,
 ) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
+	// Native bf16 path: T == float16.BFloat16, GPUStorage holds 2-byte elements
+	// and the bf16 kernel operates directly on __nv_bfloat16 memory (FP32
+	// reductions inside). Routed before the FP16 dtype check, which is the
+	// keep-T-float32 Float16Storage path.
+	if isBFloat16[T]() {
+		return gpuFusedAddRMSNormBF16(e, input, residual, weight, eps)
+	}
 	// FP16 paths — skip entirely for F32 compute.
 	if e.dtype != DTypeF32 {
 		// Native FP16 path: input and residual already have Float16Storage — no conversion needed.
@@ -426,6 +433,9 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 // GPUFusedNormAdd computes output = rmsnorm(input, weight, eps) + residual
 // in a single GPU kernel launch. Replaces separate RMSNorm + Add (2 launches → 1).
 func (e *GPUEngine[T]) GPUFusedNormAdd(input, weight, residual *tensor.TensorNumeric[T], eps float32) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuFusedNormAddBF16(e, input, weight, residual, eps)
+	}
 	inShape := input.Shape()
 	if len(inShape) < 2 {
 		return nil, fmt.Errorf("GPUFusedNormAdd: input must be at least 2D, got %v", inShape)
@@ -481,6 +491,9 @@ func (e *GPUEngine[T]) GPUFusedQKNormRoPE(
 	eps float32,
 	totalHeads, headDim, numQHeads, halfRotary int,
 ) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuFusedQKNormRoPEBF16(e, input, weightQ, weightK, cosAngles, sinAngles, eps, totalHeads, headDim, numQHeads, halfRotary)
+	}
 	inPtr, inCleanup, err := getDevicePtr(e, input)
 	if err != nil {
 		return nil, fmt.Errorf("GPUFusedQKNormRoPE input: %w", err)

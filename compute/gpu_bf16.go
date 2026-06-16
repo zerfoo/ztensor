@@ -13,6 +13,7 @@ package compute
 
 import (
 	"context"
+	"fmt"
 	"unsafe"
 
 	"github.com/zerfoo/float16"
@@ -133,6 +134,179 @@ func gpuSoftmaxBF16[T tensor.Numeric](
 	}
 
 	return makeGPUResult[T](e, shape, devOut, n, dst...)
+}
+
+// gpuFusedAddRMSNormBF16 runs the native bf16 fused add+RMSNorm kernel
+// (sum = input+residual, normed = rmsnorm(sum)*weight) with FP32 reductions.
+// It is the bf16 analogue of the f32 GPUFusedAddRMSNorm body. bf16 buffers are
+// 2 bytes/element; getDevicePtr/makeGPUResult are element-size-generic.
+func gpuFusedAddRMSNormBF16[T tensor.Numeric](
+	e *GPUEngine[T],
+	input, residual, weight *tensor.TensorNumeric[T],
+	eps float32,
+) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
+	inShape := input.Shape()
+	if len(inShape) < 2 {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16): input must be at least 2D, got %v", inShape)
+	}
+	D := inShape[len(inShape)-1]
+	rows := 1
+	for i := 0; i < len(inShape)-1; i++ {
+		rows *= inShape[i]
+	}
+
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16) input: %w", err)
+	}
+	defer inCleanup()
+
+	resPtr, resCleanup, err := getDevicePtr(e, residual)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16) residual: %w", err)
+	}
+	defer resCleanup()
+
+	wPtr, wCleanup, err := getDevicePtr(e, weight)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16) weight: %w", err)
+	}
+	defer wCleanup()
+
+	outElems := rows * D
+	outBytes := outElems * bf16Size
+	e.setDevice()
+	devNormed, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16) alloc normed: %w", err)
+	}
+	devSum, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm(bf16) alloc sum: %w", err)
+	}
+
+	if err := e.kernels.FusedAddRMSNormBF16(inPtr, resPtr, wPtr, devNormed, devSum, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		e.pool.Free(e.deviceID, devSum, outBytes)
+		return nil, nil, nil, err
+	}
+
+	normed, err = makeGPUResult[T](e, inShape, devNormed, outElems)
+	if err != nil {
+		e.pool.Free(e.deviceID, devSum, outBytes)
+		return nil, nil, nil, err
+	}
+	residualOut, err = makeGPUResult[T](e, inShape, devSum, outElems)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return normed, residualOut, nil, nil
+}
+
+// gpuFusedNormAddBF16 runs the native bf16 fused RMSNorm+add kernel
+// (output = rmsnorm(input)*weight + residual) with FP32 reductions. The bf16
+// analogue of the f32 GPUFusedNormAdd body.
+func gpuFusedNormAddBF16[T tensor.Numeric](
+	e *GPUEngine[T],
+	input, weight, residual *tensor.TensorNumeric[T],
+	eps float32,
+) (*tensor.TensorNumeric[T], error) {
+	inShape := input.Shape()
+	if len(inShape) < 2 {
+		return nil, fmt.Errorf("GPUFusedNormAdd(bf16): input must be at least 2D, got %v", inShape)
+	}
+	D := inShape[len(inShape)-1]
+	rows := 1
+	for i := 0; i < len(inShape)-1; i++ {
+		rows *= inShape[i]
+	}
+
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd(bf16) input: %w", err)
+	}
+	defer inCleanup()
+
+	wPtr, wCleanup, err := getDevicePtr(e, weight)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd(bf16) weight: %w", err)
+	}
+	defer wCleanup()
+
+	resPtr, resCleanup, err := getDevicePtr(e, residual)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd(bf16) residual: %w", err)
+	}
+	defer resCleanup()
+
+	outElems := rows * D
+	outBytes := outElems * bf16Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd(bf16) alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedNormAddBF16(inPtr, wPtr, resPtr, devOut, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+	return makeGPUResult[T](e, inShape, devOut, outElems)
+}
+
+// gpuFusedQKNormRoPEBF16 runs the native bf16 fused per-head RMSNorm+RoPE kernel
+// with FP32 reductions and RoPE arithmetic. The bf16 analogue of the f32
+// GPUFusedQKNormRoPE body. cos/sin are bf16 (the engine's generic tensor type).
+func gpuFusedQKNormRoPEBF16[T tensor.Numeric](
+	e *GPUEngine[T],
+	input, weightQ, weightK, cosAngles, sinAngles *tensor.TensorNumeric[T],
+	eps float32,
+	totalHeads, headDim, numQHeads, halfRotary int,
+) (*tensor.TensorNumeric[T], error) {
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) input: %w", err)
+	}
+	defer inCleanup()
+
+	wqPtr, wqCleanup, err := getDevicePtr(e, weightQ)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) weightQ: %w", err)
+	}
+	defer wqCleanup()
+
+	wkPtr, wkCleanup, err := getDevicePtr(e, weightK)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) weightK: %w", err)
+	}
+	defer wkCleanup()
+
+	cosPtr, cosCleanup, err := getDevicePtr(e, cosAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) cos: %w", err)
+	}
+	defer cosCleanup()
+
+	sinPtr, sinCleanup, err := getDevicePtr(e, sinAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) sin: %w", err)
+	}
+	defer sinCleanup()
+
+	outElems := totalHeads * headDim
+	outBytes := outElems * bf16Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE(bf16) alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedQKNormRoPEBF16(inPtr, wqPtr, wkPtr, cosPtr, sinPtr, devOut, eps, totalHeads, headDim, numQHeads, halfRotary, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+	return makeGPUResult[T](e, []int{totalHeads, headDim}, devOut, outElems)
 }
 
 // gpuUnaryOpBF16 runs a native bf16 unary kernel (c = op(a)).
