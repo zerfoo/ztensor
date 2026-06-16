@@ -135,6 +135,13 @@ type KernelRunner interface {
 	// output[i] = w1[i] * sigmoid(w1[i]) * w3[i]. All arrays have n elements.
 	FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, stream Stream) error
 
+	// FusedAdamWF32 performs one on-device AdamW mixed-precision step in place.
+	// param/m/grad are f32 device buffers; v is an f64 device sidecar. grad is
+	// zeroed in place. Scalars (alpha, lrWd, one-minus-betas) are precomputed on
+	// the host to match the host stepMixedV trajectory bit-for-bit modulo f32
+	// rounding. All buffers have n elements.
+	FusedAdamWF32(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, stream Stream) error
+
 	// FusedAddRMSNormF32 fuses residual addition and RMSNorm into one kernel launch.
 	// sum_out = input + residual, normed_out = rmsnorm(sum_out, weight, eps).
 	// input: [rows, D], residual: [rows, D], weight: [D],

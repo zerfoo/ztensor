@@ -216,6 +216,10 @@ func (stubKernelRunner) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ in
 func (stubKernelRunner) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+
+func (stubKernelRunner) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ gpuapi.Stream) error { //nolint:gocritic // interface match
+	return nil
+}
 func (stubKernelRunner) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }

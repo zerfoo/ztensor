@@ -222,6 +222,10 @@ func (k *CUDAKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, s Str
 	return kernels.FusedSwiGLUF32(w1, w3, output, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedAdamWF32(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.FusedAdamWF32(param, m, v, grad, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
 }

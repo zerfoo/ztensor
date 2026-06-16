@@ -177,6 +177,24 @@ type GPUEngine[T tensor.Numeric] struct {
 	// recycled Go heap. Freed in Close.
 	transposeParamsMu sync.Mutex
 	transposeParams   map[string]unsafe.Pointer
+
+	// adamwState holds the device-resident AdamW optimizer moments, keyed by
+	// the parameter's device pointer. The first moment (m, f32) and second
+	// moment (v, f64) are allocated once per parameter on first use and persist
+	// device-resident across steps -- the ADR 070 end state / ADR 075 lever L1.
+	// This removes the ~200 synchronous host<->device memcpys/step the host
+	// stepMixedV path incurred (param/grad D2H + param/m H2D). Freed in Close.
+	adamwStateMu sync.Mutex
+	adamwState   map[unsafe.Pointer]*adamwDeviceState
+}
+
+// adamwDeviceState holds one parameter's device-resident AdamW moments.
+type adamwDeviceState struct {
+	m     unsafe.Pointer // f32[n] first moment
+	v     unsafe.Pointer // f64[n] second moment (the precision the f32 path needs)
+	n     int
+	mSize int // m byte size (n * 4)
+	vSize int // v byte size (n * 8)
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -1161,6 +1179,23 @@ func (e *GPUEngine[T]) Close() error {
 	}
 	e.transposeParams = nil
 	e.transposeParamsMu.Unlock()
+
+	// Free device-resident AdamW optimizer moments (m: f32, v: f64).
+	e.adamwStateMu.Lock()
+	for _, st := range e.adamwState {
+		if st.m != nil {
+			if err := e.runtime.Free(st.m); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if st.v != nil {
+			if err := e.runtime.Free(st.v); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	e.adamwState = nil
+	e.adamwStateMu.Unlock()
 
 	// Free FP8 scratch buffers before draining the pool.
 	if e.fp8Scratch != nil {
