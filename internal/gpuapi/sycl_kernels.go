@@ -319,3 +319,52 @@ func (k *SYCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream)
 func (k *SYCLKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *SYCLKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *SYCLKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+
+func (k *SYCLKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) SubBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) MulBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) DivBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) TanhBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("TanhBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SqrtBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ExpBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) LogBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("LogBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) ScaledSoftmaxBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) F32ToBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToBF16: not implemented for SYCL")
+}
+
+func (k *SYCLKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("BF16ToF32: not implemented for SYCL")
+}
+
+//nolint:gocritic // interface match
+func (k *SYCLKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAdamWBF16: not implemented for SYCL")
+}

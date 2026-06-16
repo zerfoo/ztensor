@@ -328,3 +328,52 @@ func (k *OpenCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Strea
 func (k *OpenCLKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *OpenCLKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *OpenCLKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+
+func (k *OpenCLKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) SubBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) MulBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) DivBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) TanhBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("TanhBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SqrtBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ExpBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) LogBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("LogBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) ScaledSoftmaxBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) F32ToBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("BF16ToF32: not implemented for OpenCL")
+}
+
+//nolint:gocritic // interface match
+func (k *OpenCLKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAdamWBF16: not implemented for OpenCL")
+}

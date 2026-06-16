@@ -268,6 +268,44 @@ func (stubKernelRunner) F32ToFP16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) FP16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) AddBF16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) SubBF16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) MulBF16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) DivBF16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) TanhBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) SqrtBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) ExpBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) LogBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) ScaledSoftmaxBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) F32ToBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) BF16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+
+//nolint:gocritic // interface match
+func (stubKernelRunner) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ gpuapi.Stream) error {
 	return nil
 }

@@ -601,3 +601,52 @@ func (k *MetalKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream
 func (k *MetalKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *MetalKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *MetalKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+
+func (k *MetalKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) SubBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) MulBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) DivBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) TanhBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("TanhBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SqrtBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ExpBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) LogBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("LogBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) ScaledSoftmaxBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) F32ToBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("BF16ToF32: not implemented for Metal")
+}
+
+//nolint:gocritic // interface match
+func (k *MetalKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAdamWBF16: not implemented for Metal")
+}

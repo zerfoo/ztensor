@@ -189,6 +189,30 @@ type KernelRunner interface {
 	// FP16ToF32 converts n FP16 elements to float32 on device.
 	FP16ToF32(src, dst unsafe.Pointer, n int, stream Stream) error
 
+	// bf16 elementwise operations: inputs and outputs are __nv_bfloat16 (2 bytes each).
+	AddBF16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	SubBF16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	MulBF16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	DivBF16(a, b, c unsafe.Pointer, n int, stream Stream) error
+
+	// bf16 unary operations (FP32 transcendental, bf16 in/out).
+	TanhBF16(a, c unsafe.Pointer, n int, stream Stream) error
+	SqrtBF16(a, c unsafe.Pointer, n int, stream Stream) error
+	ExpBF16(a, c unsafe.Pointer, n int, stream Stream) error
+	LogBF16(a, c unsafe.Pointer, n int, stream Stream) error
+
+	// ScaledSoftmaxBF16 computes softmax(input * scale) on bf16 data with FP32 accumulation.
+	ScaledSoftmaxBF16(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
+
+	// F32ToBF16 converts n float32 elements to bf16 on device.
+	F32ToBF16(src, dst unsafe.Pointer, n int, stream Stream) error
+
+	// BF16ToF32 converts n bf16 elements to float32 on device.
+	BF16ToF32(src, dst unsafe.Pointer, n int, stream Stream) error
+
+	// FusedAdamWBF16 performs one on-device AdamW step on bf16 params (f32 m, f64 v sidecars).
+	FusedAdamWBF16(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, stream Stream) error
+
 	// DequantFP8E4M3ToFP16 dequantizes n FP8 E4M3 bytes to FP16 on device.
 	// output[i] = fp8_to_fp16(input[i]) * scale.
 	DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, stream Stream) error

@@ -318,3 +318,52 @@ func (k *ROCmKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream)
 func (k *ROCmKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *ROCmKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
 func (k *ROCmKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+
+func (k *ROCmKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) SubBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) MulBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) DivBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) TanhBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("TanhBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SqrtBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ExpBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) LogBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("LogBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) ScaledSoftmaxBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) F32ToBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToBF16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("BF16ToF32: not implemented for ROCm")
+}
+
+//nolint:gocritic // interface match
+func (k *ROCmKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAdamWBF16: not implemented for ROCm")
+}

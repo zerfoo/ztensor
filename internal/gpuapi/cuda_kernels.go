@@ -280,6 +280,54 @@ func (k *CUDAKernels) FP16ToF32(src, dst unsafe.Pointer, n int, s Stream) error 
 	return kernels.FP16ToF32(src, dst, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) AddBF16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.AddBF16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) SubBF16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.SubBF16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) MulBF16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.MulBF16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) DivBF16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.DivBF16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) TanhBF16(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.TanhBF16(a, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) SqrtBF16(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.SqrtBF16(a, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) ExpBF16(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.ExpBF16(a, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) LogBF16(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.LogBF16(a, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) ScaledSoftmaxBF16(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
+	return kernels.ScaledSoftmaxBF16(input, output, outer, inner, axisSize, scale, streamPtr(s))
+}
+
+func (k *CUDAKernels) F32ToBF16(src, dst unsafe.Pointer, n int, s Stream) error {
+	return kernels.F32ToBF16(src, dst, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) BF16ToF32(src, dst unsafe.Pointer, n int, s Stream) error {
+	return kernels.BF16ToF32(src, dst, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedAdamWBF16(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.FusedAdamWBF16(param, m, v, grad, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, s Stream) error {
 	return kernels.DequantFP8E4M3ToFP16(input, output, scale, n, streamPtr(s))
 }
