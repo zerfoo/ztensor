@@ -323,11 +323,19 @@ func (k *OpenCLKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)
 
-func (k *OpenCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+func (k *OpenCLKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("GatherQ8F32 not implemented")
+}
 
-func (k *OpenCLKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *OpenCLKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *OpenCLKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *OpenCLKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *OpenCLKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *OpenCLKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
 
 func (k *OpenCLKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("AddBF16: not implemented for OpenCL")
@@ -376,4 +384,16 @@ func (k *OpenCLKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
 //nolint:gocritic // interface match
 func (k *OpenCLKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAdamWBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedAddRMSNormBF16(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAddRMSNormBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedNormAddBF16(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedNormAddBF16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedQKNormRoPEBF16(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedQKNormRoPEBF16: not implemented for OpenCL")
 }

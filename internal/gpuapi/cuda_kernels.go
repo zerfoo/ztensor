@@ -328,6 +328,18 @@ func (k *CUDAKernels) FusedAdamWBF16(param, m, v, grad unsafe.Pointer, beta1, be
 	return kernels.FusedAdamWBF16(param, m, v, grad, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedAddRMSNormBF16(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.FusedAddRMSNormBF16(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedNormAddBF16(input, weight, residual, output unsafe.Pointer, eps float32, rows, D int, s Stream) error {
+	return kernels.FusedNormAddBF16(input, weight, residual, output, eps, rows, D, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedQKNormRoPEBF16(input, weightQ, weightK, cosAngles, sinAngles, output unsafe.Pointer, eps float32, totalHeads, headDim, numQHeads, halfRotary int, s Stream) error {
+	return kernels.FusedQKNormRoPEBF16(input, weightQ, weightK, cosAngles, sinAngles, output, eps, totalHeads, headDim, numQHeads, halfRotary, streamPtr(s))
+}
+
 func (k *CUDAKernels) DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, s Stream) error {
 	return kernels.DequantFP8E4M3ToFP16(input, output, scale, n, streamPtr(s))
 }

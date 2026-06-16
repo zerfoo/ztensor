@@ -596,11 +596,19 @@ func (k *MetalKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream)
 // Compile-time interface assertion.
 var _ KernelRunner = (*MetalKernels)(nil)
 
-func (k *MetalKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+func (k *MetalKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("GatherQ8F32 not implemented")
+}
 
-func (k *MetalKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *MetalKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *MetalKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *MetalKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *MetalKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *MetalKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
 
 func (k *MetalKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("AddBF16: not implemented for Metal")
@@ -649,4 +657,16 @@ func (k *MetalKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
 //nolint:gocritic // interface match
 func (k *MetalKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAdamWBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) FusedAddRMSNormBF16(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAddRMSNormBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) FusedNormAddBF16(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedNormAddBF16: not implemented for Metal")
+}
+
+func (k *MetalKernels) FusedQKNormRoPEBF16(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedQKNormRoPEBF16: not implemented for Metal")
 }

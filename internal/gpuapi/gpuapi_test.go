@@ -11,20 +11,20 @@ import (
 // stubStream implements gpuapi.Stream for compile-time interface verification.
 type stubStream struct{}
 
-func (stubStream) Synchronize() error        { return nil }
-func (stubStream) Destroy() error            { return nil }
-func (stubStream) Ptr() unsafe.Pointer       { return nil }
+func (stubStream) Synchronize() error  { return nil }
+func (stubStream) Destroy() error      { return nil }
+func (stubStream) Ptr() unsafe.Pointer { return nil }
 
 var _ gpuapi.Stream = stubStream{}
 
 // stubRuntime implements gpuapi.Runtime for compile-time interface verification.
 type stubRuntime struct{}
 
-func (stubRuntime) DeviceType() device.Type                                  { return device.CPU }
-func (stubRuntime) SetDevice(int) error                                      { return nil }
-func (stubRuntime) GetDeviceCount() (int, error)                             { return 0, nil }
-func (stubRuntime) Malloc(int) (unsafe.Pointer, error)                       { return nil, nil }
-func (stubRuntime) Free(unsafe.Pointer) error                                { return nil }
+func (stubRuntime) DeviceType() device.Type                                      { return device.CPU }
+func (stubRuntime) SetDevice(int) error                                          { return nil }
+func (stubRuntime) GetDeviceCount() (int, error)                                 { return 0, nil }
+func (stubRuntime) Malloc(int) (unsafe.Pointer, error)                           { return nil, nil }
+func (stubRuntime) Free(unsafe.Pointer) error                                    { return nil }
 func (stubRuntime) Memcpy(_, _ unsafe.Pointer, _ int, _ gpuapi.MemcpyKind) error { return nil }
 func (stubRuntime) MemcpyAsync(_, _ unsafe.Pointer, _ int, _ gpuapi.MemcpyKind, _ gpuapi.Stream) error {
 	return nil
@@ -306,6 +306,15 @@ func (stubKernelRunner) BF16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedAddRMSNormBF16(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) FusedNormAddBF16(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) FusedQKNormRoPEBF16(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ gpuapi.Stream) error {
 	return nil
 }
@@ -356,8 +365,16 @@ func TestInterfaceStubs(t *testing.T) {
 	t.Log("all GRAL interface stubs satisfy their interfaces")
 }
 
-func (stubKernelRunner) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ gpuapi.Stream) error { return nil }
+func (stubKernelRunner) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
-func (stubKernelRunner) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }
-func (stubKernelRunner) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }
-func (stubKernelRunner) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error { return nil }
+func (stubKernelRunner) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
