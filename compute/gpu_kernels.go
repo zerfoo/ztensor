@@ -17,6 +17,13 @@ const f32Size = int(unsafe.Sizeof(float32(0)))
 // Off by default to avoid any performance impact in normal operation.
 var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
+// traceH2D, when ZERFOO_TRACE_H2D=1, makes getDevicePtr emit one line per
+// CPU-backed host->device upload, tagged with the operand shape. It exists to
+// attribute the per-op H2D firehose (the [256,256]/[1024,256] weight-class
+// re-uploads measured by the T11.0c nsys backtrace) to the exact operand reads
+// that arrive CPU-backed. Off by default; pure diagnostic, no behavior change.
+var traceH2D = os.Getenv("ZERFOO_TRACE_H2D") == "1"
+
 // largeAllocThreshold is the byte size above which allocations are logged
 // when debugGPU is enabled (100 MB).
 const largeAllocThreshold = 100 * 1024 * 1024
@@ -64,6 +71,9 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 	if debugGPU {
 		e.logger.Debug("getDevicePtr: CPUStorage H2D path",
 			"storageType", fmt.Sprintf("%T", t.GetStorage()))
+	}
+	if traceH2D {
+		fmt.Fprintf(os.Stderr, "H2D-UPLOAD shape=%v storage=%T\n", t.Shape(), t.GetStorage())
 	}
 	data := t.Data()
 	n := len(data)
