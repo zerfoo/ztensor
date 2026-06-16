@@ -3,6 +3,7 @@ package graph
 import (
 	"errors"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -90,6 +91,20 @@ func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 		for i := range gdst {
 			gdst[i] = any(any(gdst[i]).(uint64) + any(gsrc[i]).(uint64)).(T)
 		}
+	case float16.BFloat16:
+		// bf16 accumulates through f32 (the type has no native add); the bf16
+		// round on store matches how every bf16 op publishes its result. This
+		// unblocks bf16 autograd training (the layer backwards accumulate grads
+		// here). bf16 shares f32's exponent range, so no overflow vs f32.
+		for i := range gdst {
+			sum := any(gdst[i]).(float16.BFloat16).ToFloat32() + any(gsrc[i]).(float16.BFloat16).ToFloat32()
+			gdst[i] = any(float16.BFloat16FromFloat32(sum)).(T)
+		}
+	case float16.Float16:
+		for i := range gdst {
+			sum := any(gdst[i]).(float16.Float16).ToFloat32() + any(gsrc[i]).(float16.Float16).ToFloat32()
+			gdst[i] = any(float16.FromFloat32(sum)).(T)
+		}
 	default:
 		return errors.New("AddGradient unsupported for this numeric type; use engine ops instead")
 	}
@@ -140,6 +155,14 @@ func (p *Parameter[T]) ClearGradient() {
 	case uint64:
 		for i := range gdst {
 			gdst[i] = any(uint64(0)).(T)
+		}
+	case float16.BFloat16:
+		for i := range gdst {
+			gdst[i] = any(float16.BFloat16FromFloat32(0)).(T)
+		}
+	case float16.Float16:
+		for i := range gdst {
+			gdst[i] = any(float16.FromFloat32(0)).(T)
 		}
 	default:
 		// Unsupported numeric types: set via copy from a zeroed slice of same length if possible

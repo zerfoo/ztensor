@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -377,6 +378,37 @@ func TestParameter_AddGradient_Float64(t *testing.T) {
 
 func TestParameter_AddGradient_Int(t *testing.T) {
 	testAddGradientType(t, "int", []int{1, 2}, []int{3, 4})
+}
+
+func TestParameter_AddGradient_BFloat16(t *testing.T) {
+	// Unblocks bf16 autograd training: layer backwards accumulate grads here.
+	vals := []float16.BFloat16{float16.BFloat16FromFloat32(1.0), float16.BFloat16FromFloat32(2.0)}
+	grads := []float16.BFloat16{float16.BFloat16FromFloat32(0.5), float16.BFloat16FromFloat32(0.25)}
+	testAddGradientType(t, "bf16", vals, grads)
+}
+
+func TestParameter_AddGradient_BFloat16_Value(t *testing.T) {
+	value, _ := tensor.New[float16.BFloat16]([]int{2}, []float16.BFloat16{float16.BFloat16FromFloat32(0), float16.BFloat16FromFloat32(0)})
+	param, _ := NewParameter("bf16v", value, tensor.New[float16.BFloat16])
+	g1, _ := tensor.New[float16.BFloat16]([]int{2}, []float16.BFloat16{float16.BFloat16FromFloat32(0.5), float16.BFloat16FromFloat32(1.0)})
+	g2, _ := tensor.New[float16.BFloat16]([]int{2}, []float16.BFloat16{float16.BFloat16FromFloat32(0.25), float16.BFloat16FromFloat32(0.5)})
+	if err := param.AddGradient(g1); err != nil {
+		t.Fatalf("AddGradient g1: %v", err)
+	}
+	if err := param.AddGradient(g2); err != nil {
+		t.Fatalf("AddGradient g2: %v", err)
+	}
+	got := param.Gradient.Data()
+	// 0.5+0.25=0.75 and 1.0+0.5=1.5 are exactly representable in bf16.
+	if got[0].ToFloat32() != 0.75 || got[1].ToFloat32() != 1.5 {
+		t.Errorf("bf16 grad accumulation = [%g %g], want [0.75 1.5]", got[0].ToFloat32(), got[1].ToFloat32())
+	}
+}
+
+func TestParameter_AddGradient_Float16(t *testing.T) {
+	vals := []float16.Float16{float16.FromFloat32(1.0), float16.FromFloat32(2.0)}
+	grads := []float16.Float16{float16.FromFloat32(0.5), float16.FromFloat32(0.25)}
+	testAddGradientType(t, "fp16", vals, grads)
 }
 
 func TestParameter_AddGradient_Int8(t *testing.T) {
