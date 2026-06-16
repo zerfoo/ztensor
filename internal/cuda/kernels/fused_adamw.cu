@@ -59,14 +59,38 @@ __global__ void kernel_fused_adamw(float* __restrict__ param,
 }
 
 // ---------- Launcher function (extern "C" for CGO / purego) ----------
+//
+// ABI NOTE (critical): zerfoo's purego kernel dispatch (internal/cuda
+// ccall / ccall_wrapper) marshals EVERY argument through INTEGER registers
+// (AAPCS64 x0-x7 + stack) -- it never populates the NEON v0-v7 FP registers.
+// A launcher declared with `double`/`float` params would therefore receive
+// garbage in the FP registers and shift the integer args (n, stream) into the
+// wrong slots, launching the kernel with a bogus element count -> SIGSEGV.
+// So the scalars cross the boundary as their raw IEEE-754 BIT PATTERNS in
+// `unsigned long long` (integer) params and are reinterpreted to double here.
+
+static inline double bits_to_double(unsigned long long b) {
+    double d;
+    __builtin_memcpy(&d, &b, sizeof(d));
+    return d;
+}
 
 extern "C" {
 
 cudaError_t fused_adamw_f32(float* param, float* m, double* v, float* grad,
-                            double beta1, double beta2,
-                            double oneMinusBeta1, double oneMinusBeta2,
-                            double eps, double alpha, double lrWd,
+                            unsigned long long beta1Bits, unsigned long long beta2Bits,
+                            unsigned long long oneMinusBeta1Bits, unsigned long long oneMinusBeta2Bits,
+                            unsigned long long epsBits, unsigned long long alphaBits,
+                            unsigned long long lrWdBits,
                             int n, cudaStream_t stream) {
+    double beta1 = bits_to_double(beta1Bits);
+    double beta2 = bits_to_double(beta2Bits);
+    double oneMinusBeta1 = bits_to_double(oneMinusBeta1Bits);
+    double oneMinusBeta2 = bits_to_double(oneMinusBeta2Bits);
+    double eps = bits_to_double(epsBits);
+    double alpha = bits_to_double(alphaBits);
+    double lrWd = bits_to_double(lrWdBits);
+
     int block = 256;
     int grid = (n + block - 1) / block;
     kernel_fused_adamw<<<grid, block, 0, stream>>>(
