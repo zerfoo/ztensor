@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cuda"
@@ -25,6 +26,71 @@ var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // re-uploads measured by the T11.0c nsys backtrace) to the exact operand reads
 // that arrive CPU-backed. Off by default; pure diagnostic, no behavior change.
 var traceH2D = os.Getenv("ZERFOO_TRACE_H2D") == "1"
+
+// traceH2DAgg aggregates CPU-backed uploads by (shape, storage-type, call
+// site) so the firehose (millions of uploads/epoch) attributes to a bounded
+// set of distinct signatures instead of drowning the log. Each unique
+// signature is printed once on first sight (with its backtrace) and a periodic
+// running-count summary is emitted. Guarded by traceH2D; never touched unless
+// ZERFOO_TRACE_H2D=1.
+var (
+	traceH2DMu    sync.Mutex
+	traceH2DSeen  = map[string]int{}
+	traceH2DTotal int
+)
+
+// traceH2DRecord attributes one CPU-backed upload to its caller chain and
+// records it under a (shape, storage, callsite) signature. The first time a
+// signature is seen it prints the full attribution line; thereafter it only
+// increments the count, and every 50k uploads it dumps the running tally so a
+// short run reveals which operand forms dominate the firehose.
+func traceH2DRecord(shape []int, storageType string) {
+	var pcs [16]uintptr
+	n := runtime.Callers(3, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	var b strings.Builder
+	depth := 0
+	for {
+		fr, more := frames.Next()
+		short := fr.Function
+		if i := strings.LastIndexByte(short, '/'); i >= 0 {
+			short = short[i+1:]
+		}
+		// Skip the trace plumbing and the generic getDevicePtr frame; surface
+		// the first ~6 meaningful caller frames (engine op -> zerfoo layer ->
+		// wolf graph) so the operand form is identifiable.
+		if short == "compute.traceH2DRecord" || short == "compute.getDevicePtr[...]" {
+			if !more {
+				break
+			}
+			continue
+		}
+		b.WriteString(short)
+		b.WriteByte(' ')
+		depth++
+		if depth >= 7 || !more {
+			break
+		}
+	}
+	callsite := b.String()
+	sig := fmt.Sprintf("shape=%v storage=%s <- %s", shape, storageType, callsite)
+
+	traceH2DMu.Lock()
+	traceH2DTotal++
+	c := traceH2DSeen[sig]
+	traceH2DSeen[sig] = c + 1
+	if c == 0 {
+		fmt.Fprintf(os.Stderr, "H2D-UPLOAD[new] %s\n", sig)
+	}
+	if traceH2DTotal%50000 == 0 {
+		fmt.Fprintf(os.Stderr, "H2D-UPLOAD[tally total=%d distinct=%d]\n",
+			traceH2DTotal, len(traceH2DSeen))
+		for s, cnt := range traceH2DSeen {
+			fmt.Fprintf(os.Stderr, "  %8d  %s\n", cnt, s)
+		}
+	}
+	traceH2DMu.Unlock()
+}
 
 // largeAllocThreshold is the byte size above which allocations are logged
 // when debugGPU is enabled (100 MB).
@@ -75,30 +141,7 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 			"storageType", fmt.Sprintf("%T", t.GetStorage()))
 	}
 	if traceH2D {
-		// Attribute the CPU-backed upload to its exact call site. The shape +
-		// storage type alone cannot distinguish "param arrived CPU-backed" from
-		// "a derived view dropped GPUStorage": the caller frames disambiguate
-		// (e.g. layers/core/linear.go Forward vs a Reshape/Transpose vs the
-		// optimizer). One compact backtrace line per upload, env-gated.
-		var pcs [12]uintptr
-		n := runtime.Callers(2, pcs[:])
-		frames := runtime.CallersFrames(pcs[:n])
-		trace := ""
-		for {
-			fr, more := frames.Next()
-			// Skip ztensor compute-internal frames; surface the first zerfoo /
-			// wolf caller chain so the operand form is identifiable.
-			short := fr.Function
-			if i := strings.LastIndexByte(short, '/'); i >= 0 {
-				short = short[i+1:]
-			}
-			trace += short + " "
-			if !more {
-				break
-			}
-		}
-		fmt.Fprintf(os.Stderr, "H2D-UPLOAD shape=%v storage=%T <- %s\n",
-			t.Shape(), t.GetStorage(), trace)
+		traceH2DRecord(t.Shape(), fmt.Sprintf("%T", t.GetStorage()))
 	}
 	data := t.Data()
 	n := len(data)
