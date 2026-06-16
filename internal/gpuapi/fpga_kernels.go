@@ -195,6 +195,10 @@ func (k *FPGAKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) er
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error { //nolint:gocritic // interface match
+	return fmt.Errorf("FusedAdamWF32: not implemented for FPGA")
+}
+
 func (k *FPGAKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for FPGA")
 }

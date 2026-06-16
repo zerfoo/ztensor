@@ -202,6 +202,10 @@ func (k *ROCmKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) er
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error { //nolint:gocritic // interface match
+	return fmt.Errorf("FusedAdamWF32: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for ROCm")
 }

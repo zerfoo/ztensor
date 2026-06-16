@@ -85,6 +85,9 @@ type KernelLib struct {
 	// fused_swiglu
 	launchFusedSwiGLUF32 uintptr
 
+	// fused_adamw (on-device AdamW mixed-precision optimizer step)
+	launchFusedAdamWF32 uintptr
+
 	// fused_repeat_interleave (GQA KV head expansion)
 	launchRepeatInterleaveF32 uintptr
 
@@ -283,6 +286,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_rope_f32", &k.launchFusedRoPEF32},
 			// fused_swiglu
 			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
+			// fused_adamw
+			{"fused_adamw_f32", &k.launchFusedAdamWF32},
 			// fused_repeat_interleave (GQA KV head expansion)
 			{"launch_repeat_interleave_f32", &k.launchRepeatInterleaveF32},
 		// fused_add_rmsnorm

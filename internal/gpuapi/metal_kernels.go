@@ -270,6 +270,10 @@ func (k *MetalKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, _ St
 		map[int][]byte{3: uint32Bytes(uint32(n))})
 }
 
+func (k *MetalKernels) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error { //nolint:gocritic // interface match
+	return fmt.Errorf("FusedAdamWF32: not implemented for Metal")
+}
+
 func (k *MetalKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, _ Stream) error {
 	return k.dispatchPerRow("kernel_fused_add_rmsnorm", rows,
 		map[int]metal.BufferBinding{

@@ -7,6 +7,8 @@ package compute
 import (
 	"context"
 	"fmt"
+	"math"
+	"unsafe"
 
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -210,6 +212,122 @@ func (e *GPUEngine[T]) GPUFusedSwiGLU(w1, w3 *tensor.TensorNumeric[T]) (*tensor.
 	}
 
 	return makeGPUResult[T](e, w1Shape, devOut, n1)
+}
+
+// GPUFusedAdamW performs one on-device AdamW mixed-precision step in place
+// (ADR 070 end state, ADR 075 lever L1). The parameter value and gradient stay
+// device-resident: this method reads their device pointers, runs the fused
+// kernel that updates param/m in place (f32), updates v in place (f64 sidecar),
+// and zeroes grad in place -- removing the ~200 synchronous host<->device
+// memcpys/step the host stepMixedV path incurred.
+//
+// The first/second moments (m, v) are engine-owned device buffers allocated
+// once per parameter (keyed by the param's device pointer) and persisted across
+// steps. The f64 v preserves the f32 training-stability fix.
+//
+// Scalars are precomputed exactly as in the host stepMixedV path:
+//
+//	alpha = lr * sqrt(1-beta2^t) / (1-beta1^t)   (bias-corrected step)
+//	lrWd  = lr * weightDecay
+//
+// so the on-device trajectory matches the host f64 update bit-for-bit modulo
+// f32 rounding (the AdamW equivalence gate).
+//
+// Both param and grad must be GPUStorage-backed; a CPU-backed tensor returns an
+// error so the caller falls back to the host stepMixedV path. The kernel is not
+// CUDA-graph capturable (it allocates on first use and uses host scalars), so it
+// must run outside capture -- the optimizer step is not part of the captured
+// inference/forward graph.
+func (e *GPUEngine[T]) GPUFusedAdamW(
+	param, grad *tensor.TensorNumeric[T],
+	beta1, beta2, eps, lr, weightDecay float64,
+	t int,
+) error {
+	pgs, ok := param.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return fmt.Errorf("GPUFusedAdamW: param not GPU-resident (storage %T)", param.GetStorage())
+	}
+	ggs, ok := grad.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return fmt.Errorf("GPUFusedAdamW: grad not GPU-resident (storage %T)", grad.GetStorage())
+	}
+
+	n := pgs.Len()
+	if gn := ggs.Len(); gn != n {
+		return fmt.Errorf("GPUFusedAdamW: param (%d) and grad (%d) length mismatch", n, gn)
+	}
+	if n == 0 {
+		return nil
+	}
+
+	paramPtr := pgs.Ptr()
+	gradPtr := ggs.Ptr()
+
+	st, err := e.adamwDeviceStateFor(paramPtr, n)
+	if err != nil {
+		return err
+	}
+
+	// Bias-corrected step size and decoupled weight-decay term, computed in
+	// f64 on the host exactly as stepMixedV does.
+	numer := math.Sqrt(1.0 - math.Pow(beta2, float64(t)))
+	denom := 1.0 - math.Pow(beta1, float64(t))
+	alpha := lr * (numer / denom)
+	lrWd := lr * weightDecay
+
+	e.setDevice()
+	return e.kernels.FusedAdamWF32(
+		paramPtr, st.m, st.v, gradPtr,
+		beta1, beta2, 1.0-beta1, 1.0-beta2,
+		eps, alpha, lrWd,
+		n, e.stream)
+}
+
+// adamwDeviceStateFor returns the engine-owned device-resident AdamW moments
+// for the parameter at paramPtr, allocating and zeroing them on first use. The
+// m (f32) and v (f64) buffers persist across steps and are freed in Close.
+func (e *GPUEngine[T]) adamwDeviceStateFor(paramPtr unsafe.Pointer, n int) (*adamwDeviceState, error) {
+	e.adamwStateMu.Lock()
+	defer e.adamwStateMu.Unlock()
+
+	if e.adamwState == nil {
+		e.adamwState = make(map[unsafe.Pointer]*adamwDeviceState)
+	}
+	if st, ok := e.adamwState[paramPtr]; ok {
+		if st.n != n {
+			return nil, fmt.Errorf("GPUFusedAdamW: parameter %p size changed (%d -> %d)", paramPtr, st.n, n)
+		}
+		return st, nil
+	}
+
+	mSize := n * f32Size
+	vSize := n * f64Size
+
+	e.setDevice()
+	mPtr, err := e.runtime.Malloc(mSize)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedAdamW: alloc m (%d bytes): %w", mSize, err)
+	}
+	vPtr, err := e.runtime.Malloc(vSize)
+	if err != nil {
+		_ = e.runtime.Free(mPtr)
+		return nil, fmt.Errorf("GPUFusedAdamW: alloc v (%d bytes): %w", vSize, err)
+	}
+	// Zero both moments (0 bytes == 0.0f and 0.0). Memset writes per byte.
+	if err := e.runtime.MemsetAsync(mPtr, 0, mSize, e.stream); err != nil {
+		_ = e.runtime.Free(mPtr)
+		_ = e.runtime.Free(vPtr)
+		return nil, fmt.Errorf("GPUFusedAdamW: zero m: %w", err)
+	}
+	if err := e.runtime.MemsetAsync(vPtr, 0, vSize, e.stream); err != nil {
+		_ = e.runtime.Free(mPtr)
+		_ = e.runtime.Free(vPtr)
+		return nil, fmt.Errorf("GPUFusedAdamW: zero v: %w", err)
+	}
+
+	st := &adamwDeviceState{m: mPtr, v: vPtr, n: n, mSize: mSize, vSize: vSize}
+	e.adamwState[paramPtr] = st
+	return st, nil
 }
 
 // GPUFusedAddRMSNorm computes sum = input + residual and

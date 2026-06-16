@@ -16,6 +16,10 @@ import (
 
 const f32Size = int(unsafe.Sizeof(float32(0)))
 
+// f64Size is the byte size of a float64, used by the on-device AdamW second
+// moment (v) sidecar.
+const f64Size = int(unsafe.Sizeof(float64(0)))
+
 // debugGPU enables verbose GPU debug logging when ZERFOO_DEBUG_GPU=1.
 // Off by default to avoid any performance impact in normal operation.
 var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
