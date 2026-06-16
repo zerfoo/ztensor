@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"strings"
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cuda"
@@ -73,7 +75,30 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 			"storageType", fmt.Sprintf("%T", t.GetStorage()))
 	}
 	if traceH2D {
-		fmt.Fprintf(os.Stderr, "H2D-UPLOAD shape=%v storage=%T\n", t.Shape(), t.GetStorage())
+		// Attribute the CPU-backed upload to its exact call site. The shape +
+		// storage type alone cannot distinguish "param arrived CPU-backed" from
+		// "a derived view dropped GPUStorage": the caller frames disambiguate
+		// (e.g. layers/core/linear.go Forward vs a Reshape/Transpose vs the
+		// optimizer). One compact backtrace line per upload, env-gated.
+		var pcs [12]uintptr
+		n := runtime.Callers(2, pcs[:])
+		frames := runtime.CallersFrames(pcs[:n])
+		trace := ""
+		for {
+			fr, more := frames.Next()
+			// Skip ztensor compute-internal frames; surface the first zerfoo /
+			// wolf caller chain so the operand form is identifiable.
+			short := fr.Function
+			if i := strings.LastIndexByte(short, '/'); i >= 0 {
+				short = short[i+1:]
+			}
+			trace += short + " "
+			if !more {
+				break
+			}
+		}
+		fmt.Fprintf(os.Stderr, "H2D-UPLOAD shape=%v storage=%T <- %s\n",
+			t.Shape(), t.GetStorage(), trace)
 	}
 	data := t.Data()
 	n := len(data)
