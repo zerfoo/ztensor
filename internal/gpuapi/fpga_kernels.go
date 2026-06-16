@@ -306,11 +306,19 @@ func (k *FPGAKernels) FusedSoftmaxVMulF32(_, _, _ unsafe.Pointer, _ float32, _, 
 // Compile-time interface assertion.
 var _ KernelRunner = (*FPGAKernels)(nil)
 
-func (k *FPGAKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error { return fmt.Errorf("GatherQ8F32 not implemented") }
+func (k *FPGAKernels) GatherQ8F32(_, _, _ unsafe.Pointer, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("GatherQ8F32 not implemented")
+}
 
-func (k *FPGAKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *FPGAKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
-func (k *FPGAKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error { return fmt.Errorf("not implemented") }
+func (k *FPGAKernels) DequantQ5KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *FPGAKernels) DequantQ6KF32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
+func (k *FPGAKernels) DequantQ5_0F32(_, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("not implemented")
+}
 
 func (k *FPGAKernels) AddBF16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("AddBF16: not implemented for FPGA")
@@ -359,4 +367,17 @@ func (k *FPGAKernels) BF16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
 //nolint:gocritic // interface match
 func (k *FPGAKernels) FusedAdamWBF16(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _, _ float64, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAdamWBF16: not implemented for FPGA")
+}
+
+func (k *FPGAKernels) FusedAddRMSNormBF16(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAddRMSNormBF16: not implemented for FPGA")
+}
+
+func (k *FPGAKernels) FusedNormAddBF16(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedNormAddBF16: not implemented for FPGA")
+}
+
+//nolint:gocritic // interface match
+func (k *FPGAKernels) FusedQKNormRoPEBF16(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedQKNormRoPEBF16: not implemented for FPGA")
 }

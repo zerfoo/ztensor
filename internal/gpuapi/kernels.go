@@ -213,6 +213,18 @@ type KernelRunner interface {
 	// FusedAdamWBF16 performs one on-device AdamW step on bf16 params (f32 m, f64 v sidecars).
 	FusedAdamWBF16(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, stream Stream) error
 
+	// FusedAddRMSNormBF16 fuses residual add + RMSNorm on bf16 data (FP32 reductions).
+	// The bf16 analogue of FusedAddRMSNormF32; forward only.
+	FusedAddRMSNormBF16(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
+	// FusedNormAddBF16 applies RMSNorm then adds residual on bf16 data (FP32 reductions).
+	// The bf16 analogue of FusedNormAddF32; forward only.
+	FusedNormAddBF16(input, weight, residual, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
+	// FusedQKNormRoPEBF16 applies per-head RMSNorm + RoPE to combined Q+K bf16 heads
+	// (FP32 reductions and RoPE arithmetic). The bf16 analogue of FusedQKNormRoPEF32; forward only.
+	FusedQKNormRoPEBF16(input, weightQ, weightK, cosAngles, sinAngles, output unsafe.Pointer, eps float32, totalHeads, headDim, numQHeads, halfRotary int, stream Stream) error
+
 	// DequantFP8E4M3ToFP16 dequantizes n FP8 E4M3 bytes to FP16 on device.
 	// output[i] = fp8_to_fp16(input[i]) * scale.
 	DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, stream Stream) error
