@@ -68,9 +68,9 @@ type KernelLib struct {
 	launchGemvQ5_0F32 uintptr
 
 	// dequant kernels (quantized to F32 for non-GEMV cuBLAS path)
-	launchDequantQ4KF32 uintptr
-	launchDequantQ5KF32 uintptr
-	launchDequantQ6KF32 uintptr
+	launchDequantQ4KF32  uintptr
+	launchDequantQ5KF32  uintptr
+	launchDequantQ6KF32  uintptr
 	launchDequantQ5_0F32 uintptr
 
 	// gemm_q8
@@ -126,6 +126,22 @@ type KernelLib struct {
 	// FP16 conversion
 	launchF32ToFP16 uintptr
 	launchFP16ToF32 uintptr
+
+	// bf16 elementwise
+	launchAddBF16, launchSubBF16, launchMulBF16, launchDivBF16 uintptr
+
+	// bf16 unary (FP32 transcendental)
+	launchTanhBF16, launchSqrtBF16, launchExpBF16, launchLogBF16 uintptr
+
+	// bf16 scaled_softmax
+	launchScaledSoftmaxBF16 uintptr
+
+	// bf16 conversion
+	launchF32ToBF16 uintptr
+	launchBF16ToF32 uintptr
+
+	// fused_adamw bf16 (on-device AdamW on bf16 params, f32/f64 state sidecars)
+	launchFusedAdamWBF16 uintptr
 
 	// FP8 ops
 	launchDequantFP8E4M3ToFP16 uintptr
@@ -183,14 +199,14 @@ type KernelLib struct {
 	launchKVDequantQ3F32 uintptr
 
 	// iq_dequant (importance-weighted quantization dequantization)
-	launchIQDequantNLF32  uintptr
-	launchIQDequant3SF32  uintptr
+	launchIQDequantNLF32   uintptr
+	launchIQDequant3SF32   uintptr
 	launchIQDequant2XXSF32 uintptr
 
 	// fused_encoder (PatchTST encoder layer orchestrator)
-	launchFusedEncoderFwdF32        uintptr
-	launchFusedEncoderFwdScratch    uintptr
-	launchFusedEncoderBwdF32        uintptr
+	launchFusedEncoderFwdF32     uintptr
+	launchFusedEncoderFwdScratch uintptr
+	launchFusedEncoderBwdF32     uintptr
 }
 
 var (
@@ -295,98 +311,115 @@ func openKernelLib() (*KernelLib, error) {
 			{"tiny_batched_gemm_f32", &k.launchTinyBatchedGemmF32},
 			// fused_repeat_interleave (GQA KV head expansion)
 			{"launch_repeat_interleave_f32", &k.launchRepeatInterleaveF32},
-		// fused_add_rmsnorm
-		{"fused_add_rmsnorm_f32", &k.launchFusedAddRMSNormF32},
-		// fused_norm_add
-		{"fused_norm_add_f32", &k.launchFusedNormAddF32},
-		// fused_qk_norm_rope
-		{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
-		// scaled_softmax
-		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
-		// flash_attention
-		{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
-		{"flash_attention_decode_f32", &k.launchFlashAttentionDecodeF32},
-		// flash_attention2
-		{"flash_attention2_forward_f32", &k.launchFlashAttention2F32},
-		{"flash_attention2_decode_f32", &k.launchFlashAttention2DecodeF32},
-		// FP16 elementwise
-		{"launch_add_fp16", &k.launchAddFP16},
-		{"launch_sub_fp16", &k.launchSubFP16},
-		{"launch_mul_fp16", &k.launchMulFP16},
-		{"launch_div_fp16", &k.launchDivFP16},
-		// FP16 rmsnorm
-		{"launch_rmsnorm_fp16", &k.launchRMSNormFP16},
-		// FP16 scaled_softmax
-		{"launch_scaled_softmax_fp16", &k.launchScaledSoftmaxFP16},
-		// FP16 conversion
-		{"launch_f32_to_fp16", &k.launchF32ToFP16},
-		{"launch_fp16_to_f32", &k.launchFP16ToF32},
-		// FP8 ops
-		{"launch_dequant_fp8e4m3_to_fp16", &k.launchDequantFP8E4M3ToFP16},
-		{"launch_fp8_add", &k.launchFP8Add},
-		{"launch_fp8_mul", &k.launchFP8Mul},
-		{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
-		// FP8 GEMM (cublasLt, sm_89+)
-		{"launch_fp8_gemm", &k.launchFP8Gemm},
-		// counter
-		{"launch_increment_counter", &k.launchIncrementCounter},
-		{"launch_reset_counter", &k.launchResetCounter},
-		// offset_memcpy
-		{"launch_offset_memcpy", &k.launchOffsetMemcpy},
-		{"launch_offset_memcpy_fp16", &k.launchOffsetMemcpyFP16},
-		// rope_select
-		{"launch_rope_select", &k.launchRoPESelect},
-		// sgemv_m1
-		{"launch_sgemv_m1", &k.launchSgemvM1},
-		// selective_scan
-		{"launch_selective_scan_forward", &k.launchSelectiveScanForward},
-		// flash_decode (split-KV)
-		{"flash_decode_splitkv_f32", &k.launchFlashDecodeSplitKVF32},
-		// paged_attention
-		{"paged_attention_forward_f32", &k.launchPagedAttentionF32},
-		// ragged_attention
-		{"ragged_attention_forward_f32", &k.launchRaggedAttentionF32},
-		// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
-		{"fp4_gemv_f16", &k.launchFP4GemvF16},
-		// gemv_warp (warp-specialized GEMV for decode phase)
-		{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
-		{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
-		// fused_softmax_vmul (fused softmax + V multiply for decode attention)
-		{"launch_fused_softmax_vmul_f32", &k.launchFusedSoftmaxVMulF32},
-		// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
-		{"ternary_gemv_f32", &k.launchTernaryGemvF32},
-		// nsa_attention (fused three-path Native Sparse Attention)
-		{"nsa_attention_f32", &k.launchNSAAttentionF32},
-		// kv_dequant (Q4/Q3 KV cache dequantization)
-		{"kv_dequant_q4_f32", &k.launchKVDequantQ4F32},
-		{"kv_dequant_q3_f32", &k.launchKVDequantQ3F32},
-		// iq_dequant (importance-weighted quantization)
-		{"iq_dequant_nl_f32", &k.launchIQDequantNLF32},
-		{"iq_dequant_3s_f32", &k.launchIQDequant3SF32},
-		{"iq_dequant_2xxs_f32", &k.launchIQDequant2XXSF32},
-		// fused_encoder (PatchTST encoder layer orchestrator)
-		{"fused_encoder_fwd_f32", &k.launchFusedEncoderFwdF32},
-		{"fused_encoder_fwd_scratch_bytes", &k.launchFusedEncoderFwdScratch},
-		{"fused_encoder_bwd_f32", &k.launchFusedEncoderBwdF32},
+			// fused_add_rmsnorm
+			{"fused_add_rmsnorm_f32", &k.launchFusedAddRMSNormF32},
+			// fused_norm_add
+			{"fused_norm_add_f32", &k.launchFusedNormAddF32},
+			// fused_qk_norm_rope
+			{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
+			// scaled_softmax
+			{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
+			// flash_attention
+			{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
+			{"flash_attention_decode_f32", &k.launchFlashAttentionDecodeF32},
+			// flash_attention2
+			{"flash_attention2_forward_f32", &k.launchFlashAttention2F32},
+			{"flash_attention2_decode_f32", &k.launchFlashAttention2DecodeF32},
+			// FP16 elementwise
+			{"launch_add_fp16", &k.launchAddFP16},
+			{"launch_sub_fp16", &k.launchSubFP16},
+			{"launch_mul_fp16", &k.launchMulFP16},
+			{"launch_div_fp16", &k.launchDivFP16},
+			// FP16 rmsnorm
+			{"launch_rmsnorm_fp16", &k.launchRMSNormFP16},
+			// FP16 scaled_softmax
+			{"launch_scaled_softmax_fp16", &k.launchScaledSoftmaxFP16},
+			// FP16 conversion
+			{"launch_f32_to_fp16", &k.launchF32ToFP16},
+			{"launch_fp16_to_f32", &k.launchFP16ToF32},
+			// bf16 elementwise
+			{"launch_add_bf16", &k.launchAddBF16},
+			{"launch_sub_bf16", &k.launchSubBF16},
+			{"launch_mul_bf16", &k.launchMulBF16},
+			{"launch_div_bf16", &k.launchDivBF16},
+			// bf16 unary (FP32 transcendental)
+			{"launch_tanh_bf16", &k.launchTanhBF16},
+			{"launch_sqrt_bf16", &k.launchSqrtBF16},
+			{"launch_exp_bf16", &k.launchExpBF16},
+			{"launch_log_bf16", &k.launchLogBF16},
+			// bf16 scaled_softmax
+			{"launch_scaled_softmax_bf16", &k.launchScaledSoftmaxBF16},
+			// bf16 conversion
+			{"launch_f32_to_bf16", &k.launchF32ToBF16},
+			{"launch_bf16_to_f32", &k.launchBF16ToF32},
+			// fused_adamw bf16
+			{"fused_adamw_bf16", &k.launchFusedAdamWBF16},
+			// FP8 ops
+			{"launch_dequant_fp8e4m3_to_fp16", &k.launchDequantFP8E4M3ToFP16},
+			{"launch_fp8_add", &k.launchFP8Add},
+			{"launch_fp8_mul", &k.launchFP8Mul},
+			{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
+			// FP8 GEMM (cublasLt, sm_89+)
+			{"launch_fp8_gemm", &k.launchFP8Gemm},
+			// counter
+			{"launch_increment_counter", &k.launchIncrementCounter},
+			{"launch_reset_counter", &k.launchResetCounter},
+			// offset_memcpy
+			{"launch_offset_memcpy", &k.launchOffsetMemcpy},
+			{"launch_offset_memcpy_fp16", &k.launchOffsetMemcpyFP16},
+			// rope_select
+			{"launch_rope_select", &k.launchRoPESelect},
+			// sgemv_m1
+			{"launch_sgemv_m1", &k.launchSgemvM1},
+			// selective_scan
+			{"launch_selective_scan_forward", &k.launchSelectiveScanForward},
+			// flash_decode (split-KV)
+			{"flash_decode_splitkv_f32", &k.launchFlashDecodeSplitKVF32},
+			// paged_attention
+			{"paged_attention_forward_f32", &k.launchPagedAttentionF32},
+			// ragged_attention
+			{"ragged_attention_forward_f32", &k.launchRaggedAttentionF32},
+			// fp4_gemv (NVFP4 E2M1 fused dequant+GEMV, sm_100+)
+			{"fp4_gemv_f16", &k.launchFP4GemvF16},
+			// gemv_warp (warp-specialized GEMV for decode phase)
+			{"launch_gemv_warp_f32", &k.launchGemvWarpF32},
+			{"launch_gemv_warp_f16", &k.launchGemvWarpF16},
+			// fused_softmax_vmul (fused softmax + V multiply for decode attention)
+			{"launch_fused_softmax_vmul_f32", &k.launchFusedSoftmaxVMulF32},
+			// ternary_gemv (ternary {-1,0,+1} packed 2-bit GEMV)
+			{"ternary_gemv_f32", &k.launchTernaryGemvF32},
+			// nsa_attention (fused three-path Native Sparse Attention)
+			{"nsa_attention_f32", &k.launchNSAAttentionF32},
+			// kv_dequant (Q4/Q3 KV cache dequantization)
+			{"kv_dequant_q4_f32", &k.launchKVDequantQ4F32},
+			{"kv_dequant_q3_f32", &k.launchKVDequantQ3F32},
+			// iq_dequant (importance-weighted quantization)
+			{"iq_dequant_nl_f32", &k.launchIQDequantNLF32},
+			{"iq_dequant_3s_f32", &k.launchIQDequant3SF32},
+			{"iq_dequant_2xxs_f32", &k.launchIQDequant2XXSF32},
+			// fused_encoder (PatchTST encoder layer orchestrator)
+			{"fused_encoder_fwd_f32", &k.launchFusedEncoderFwdF32},
+			{"fused_encoder_fwd_scratch_bytes", &k.launchFusedEncoderFwdScratch},
+			{"fused_encoder_bwd_f32", &k.launchFusedEncoderBwdF32},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
-			"gemv_q4k_dp4a_f32":              true,
-			"gemv_q4k_sm121_f32":             true, // sm_121 optimized; requires Blackwell
-			"gemv_q4k_check_sm121":           true, // capability probe; may be absent on older builds
+			"gemv_q4k_dp4a_f32":               true,
+			"gemv_q4k_sm121_f32":              true, // sm_121 optimized; requires Blackwell
+			"gemv_q4k_check_sm121":            true, // capability probe; may be absent on older builds
 			"gemv_q5k_f32":                    true,
 			"gemv_q6k_f32":                    true,
 			"gemv_q5_0_f32":                   true,
 			"flash_attention_decode_f32":      true,
-			"flash_attention2_forward_f32":   true,
-			"flash_attention2_decode_f32":    true,
+			"flash_attention2_forward_f32":    true,
+			"flash_attention2_decode_f32":     true,
 			"launch_f32_to_fp16":              true,
 			"launch_fp16_to_f32":              true,
 			"launch_dequant_fp8e4m3_to_fp16":  true,
 			"launch_fp8_add":                  true,
 			"launch_fp8_mul":                  true,
 			"launch_fp8_rmsnorm":              true,
-			"launch_fp8_gemm":                true,
+			"launch_fp8_gemm":                 true,
 			"launch_increment_counter":        true,
 			"launch_reset_counter":            true,
 			"launch_offset_memcpy":            true,
@@ -398,13 +431,13 @@ func openKernelLib() (*KernelLib, error) {
 			"paged_attention_forward_f32":     true,
 			"ragged_attention_forward_f32":    true,
 			"fp4_gemv_f16":                    true,
-			"launch_gemv_warp_f32":             true,
-			"launch_gemv_warp_f16":             true,
+			"launch_gemv_warp_f32":            true,
+			"launch_gemv_warp_f16":            true,
 			"launch_repeat_interleave_f32":    true,
 			"launch_gather_q8_f32":            true,
-			"dequant_q5k_f32":                true,
-			"dequant_q6k_f32":                true,
-			"dequant_q5_0_f32":               true,
+			"dequant_q5k_f32":                 true,
+			"dequant_q6k_f32":                 true,
+			"dequant_q5_0_f32":                true,
 			"launch_fused_softmax_vmul_f32":   true,
 			"ternary_gemv_f32":                true,
 			"nsa_attention_f32":               true,
@@ -416,6 +449,18 @@ func openKernelLib() (*KernelLib, error) {
 			"fused_encoder_fwd_f32":           true,
 			"fused_encoder_fwd_scratch_bytes": true,
 			"fused_encoder_bwd_f32":           true,
+			"launch_add_bf16":                 true,
+			"launch_sub_bf16":                 true,
+			"launch_mul_bf16":                 true,
+			"launch_div_bf16":                 true,
+			"launch_tanh_bf16":                true,
+			"launch_sqrt_bf16":                true,
+			"launch_exp_bf16":                 true,
+			"launch_log_bf16":                 true,
+			"launch_scaled_softmax_bf16":      true,
+			"launch_f32_to_bf16":              true,
+			"launch_bf16_to_f32":              true,
+			"fused_adamw_bf16":                true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
