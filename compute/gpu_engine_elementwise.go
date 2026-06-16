@@ -276,6 +276,16 @@ func (e *GPUEngine[T]) GPUFusedAdamW(
 	lrWd := lr * weightDecay
 
 	e.setDevice()
+	// bf16 params use the bf16 AdamW kernel (param/grad bf16, m f32, v f64).
+	// The f32/f64 moment sidecars are identical to the f32 path, so the same
+	// adamwDeviceState applies; only the in-place param/grad element type differs.
+	if isBFloat16[T]() {
+		return e.kernels.FusedAdamWBF16(
+			paramPtr, st.m, st.v, gradPtr,
+			beta1, beta2, 1.0-beta1, 1.0-beta2,
+			eps, alpha, lrWd,
+			n, e.stream)
+	}
 	return e.kernels.FusedAdamWF32(
 		paramPtr, st.m, st.v, gradPtr,
 		beta1, beta2, 1.0-beta1, 1.0-beta2,
