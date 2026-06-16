@@ -88,6 +88,9 @@ type KernelLib struct {
 	// fused_adamw (on-device AdamW mixed-precision optimizer step)
 	launchFusedAdamWF32 uintptr
 
+	// tiny_batched_gemm (small-matrix strided-batched GEMM, ADR 075 L3)
+	launchTinyBatchedGemmF32 uintptr
+
 	// fused_repeat_interleave (GQA KV head expansion)
 	launchRepeatInterleaveF32 uintptr
 
@@ -288,6 +291,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
 			// fused_adamw
 			{"fused_adamw_f32", &k.launchFusedAdamWF32},
+			// tiny_batched_gemm (ADR 075 L3)
+			{"tiny_batched_gemm_f32", &k.launchTinyBatchedGemmF32},
 			// fused_repeat_interleave (GQA KV head expansion)
 			{"launch_repeat_interleave_f32", &k.launchRepeatInterleaveF32},
 		// fused_add_rmsnorm
