@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/zerfoo/ztensor/compare/v1.13.0...v1.14.0) (2026-06-16)
+
+
+### Features
+
+* **graph:** bf16/fp16 cases for Parameter.AddGradient + ClearGradient ([cfa1b45](https://github.com/zerfoo/ztensor/commit/cfa1b45a2dea93f081672e854da4d7c065bf1c38))
+
 ## [1.13.0](https://github.com/zerfoo/ztensor/compare/v1.12.0...v1.13.0) (2026-06-16)
 
 
