@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.0](https://github.com/zerfoo/ztensor/compare/v1.11.1...v1.12.0) (2026-06-16)
+
+
+### Features
+
+* **compute:** fused on-device AdamW kernel (ADR 070 end-state, ADR 075 L1) ([8787214](https://github.com/zerfoo/ztensor/commit/8787214f1d2b6401cb4c1945f55dcee6130b4b27))
+
+
+### Bug Fixes
+
+* **adamw kernel:** pass f64 scalars as integer-register bit patterns (purego ABI) ([17ca699](https://github.com/zerfoo/ztensor/commit/17ca699282aa9ebda04a277ac3f4c67cc2f78be5))
+
 ## [1.11.1](https://github.com/zerfoo/ztensor/compare/v1.11.0...v1.11.1) (2026-06-13)
 
 
