@@ -198,6 +198,7 @@ type KernelRunner interface {
 	// bf16 unary operations (FP32 transcendental, bf16 in/out).
 	TanhBF16(a, c unsafe.Pointer, n int, stream Stream) error
 	SqrtBF16(a, c unsafe.Pointer, n int, stream Stream) error
+	RsqrtBF16(a, c unsafe.Pointer, n int, stream Stream) error
 	ExpBF16(a, c unsafe.Pointer, n int, stream Stream) error
 	LogBF16(a, c unsafe.Pointer, n int, stream Stream) error
 

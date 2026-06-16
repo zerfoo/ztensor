@@ -1009,6 +1009,9 @@ func (e *GPUEngine[T]) gpuSqrt(ctx context.Context, a *tensor.TensorNumeric[T], 
 }
 
 func (e *GPUEngine[T]) gpuRsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuUnaryOpBF16(e, a, e.kernels.RsqrtBF16, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Rsqrt(ctx, a, dst...)
 	}

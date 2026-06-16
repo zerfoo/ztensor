@@ -344,6 +344,10 @@ func (k *FPGAKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("SqrtBF16: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) RsqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("RsqrtBF16: not implemented for FPGA")
+}
+
 func (k *FPGAKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("ExpBF16: not implemented for FPGA")
 }

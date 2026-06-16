@@ -634,6 +634,10 @@ func (k *MetalKernels) SqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("SqrtBF16: not implemented for Metal")
 }
 
+func (k *MetalKernels) RsqrtBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("RsqrtBF16: not implemented for Metal")
+}
+
 func (k *MetalKernels) ExpBF16(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("ExpBF16: not implemented for Metal")
 }
