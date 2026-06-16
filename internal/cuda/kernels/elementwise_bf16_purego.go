@@ -69,6 +69,16 @@ func SqrtBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	return checkKernel(ret, "sqrt_bf16")
 }
 
+// RsqrtBF16 launches the bf16 elementwise rsqrt kernel (FP32 transcendental): c = 1/sqrt(a).
+func RsqrtBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("rsqrt_bf16 kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchRsqrtBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
+	return checkKernel(ret, "rsqrt_bf16")
+}
+
 // ExpBF16 launches the bf16 elementwise exp kernel (FP32 transcendental): c = exp(a).
 func ExpBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()

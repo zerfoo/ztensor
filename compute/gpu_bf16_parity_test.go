@@ -150,6 +150,9 @@ func TestGPUBF16_UnaryParity(t *testing.T) {
 		{"Sqrt", pos, func(in *tensor.TensorNumeric[float16.BFloat16]) (*tensor.TensorNumeric[float16.BFloat16], error) {
 			return eng.Sqrt(ctx, in)
 		}, func(v float32) float32 { return float32(math.Sqrt(float64(v))) }, 2.0},
+		{"Rsqrt", pos, func(in *tensor.TensorNumeric[float16.BFloat16]) (*tensor.TensorNumeric[float16.BFloat16], error) {
+			return eng.Rsqrt(ctx, in)
+		}, func(v float32) float32 { return float32(1.0 / math.Sqrt(float64(v))) }, 2.0},
 		{"Exp", x, func(in *tensor.TensorNumeric[float16.BFloat16]) (*tensor.TensorNumeric[float16.BFloat16], error) {
 			return eng.Exp(ctx, in)
 		}, func(v float32) float32 { return float32(math.Exp(float64(v))) }, 2.0},

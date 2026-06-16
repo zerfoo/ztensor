@@ -286,6 +286,9 @@ func (stubKernelRunner) TanhBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) er
 func (stubKernelRunner) SqrtBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) RsqrtBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) ExpBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }

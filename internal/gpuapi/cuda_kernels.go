@@ -304,6 +304,10 @@ func (k *CUDAKernels) SqrtBF16(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.SqrtBF16(a, c, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) RsqrtBF16(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.RsqrtBF16(a, c, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) ExpBF16(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.ExpBF16(a, c, n, streamPtr(s))
 }

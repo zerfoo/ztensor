@@ -86,6 +86,13 @@ __global__ void kernel_sqrt_bf16(const __nv_bfloat16* a, __nv_bfloat16* c, int n
     }
 }
 
+__global__ void kernel_rsqrt_bf16(const __nv_bfloat16* a, __nv_bfloat16* c, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        c[idx] = __float2bfloat16(rsqrtf(__bfloat162float(a[idx])));
+    }
+}
+
 __global__ void kernel_exp_bf16(const __nv_bfloat16* a, __nv_bfloat16* c, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -262,6 +269,14 @@ cudaError_t launch_sqrt_bf16(const void* a, void* c, int n, cudaStream_t stream)
     int grid, block;
     grid_config_bf16_unary(n, &grid, &block);
     kernel_sqrt_bf16<<<grid, block, 0, stream>>>(
+        (const __nv_bfloat16*)a, (__nv_bfloat16*)c, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_rsqrt_bf16(const void* a, void* c, int n, cudaStream_t stream) {
+    int grid, block;
+    grid_config_bf16_unary(n, &grid, &block);
+    kernel_rsqrt_bf16<<<grid, block, 0, stream>>>(
         (const __nv_bfloat16*)a, (__nv_bfloat16*)c, n);
     return cudaGetLastError();
 }

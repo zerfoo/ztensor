@@ -131,7 +131,7 @@ type KernelLib struct {
 	launchAddBF16, launchSubBF16, launchMulBF16, launchDivBF16 uintptr
 
 	// bf16 unary (FP32 transcendental)
-	launchTanhBF16, launchSqrtBF16, launchExpBF16, launchLogBF16 uintptr
+	launchTanhBF16, launchSqrtBF16, launchRsqrtBF16, launchExpBF16, launchLogBF16 uintptr
 
 	// bf16 scaled_softmax
 	launchScaledSoftmaxBF16 uintptr
@@ -350,6 +350,7 @@ func openKernelLib() (*KernelLib, error) {
 			// bf16 unary (FP32 transcendental)
 			{"launch_tanh_bf16", &k.launchTanhBF16},
 			{"launch_sqrt_bf16", &k.launchSqrtBF16},
+			{"launch_rsqrt_bf16", &k.launchRsqrtBF16},
 			{"launch_exp_bf16", &k.launchExpBF16},
 			{"launch_log_bf16", &k.launchLogBF16},
 			// bf16 scaled_softmax
@@ -464,6 +465,7 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_div_bf16":                 true,
 			"launch_tanh_bf16":                true,
 			"launch_sqrt_bf16":                true,
+			"launch_rsqrt_bf16":               true,
 			"launch_exp_bf16":                 true,
 			"launch_log_bf16":                 true,
 			"launch_scaled_softmax_bf16":      true,
