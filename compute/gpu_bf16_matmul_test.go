@@ -81,8 +81,8 @@ func TestGPUEngine_MatMulBF16BWeight(t *testing.T) {
 				}
 			}
 
-			if maxRelErr > 1e-3 {
-				t.Errorf("max relative error = %e, want < 1e-3", maxRelErr)
+			if maxRelErr > 5e-3 {
+				t.Errorf("max relative error = %e, want < 5e-3 (bf16 ~8-bit mantissa)", maxRelErr)
 			}
 		})
 	}
@@ -157,8 +157,8 @@ func TestGPUEngine_MatMulBF16AWeight(t *testing.T) {
 				}
 			}
 
-			if maxRelErr > 1e-3 {
-				t.Errorf("max relative error = %e, want < 1e-3", maxRelErr)
+			if maxRelErr > 5e-3 {
+				t.Errorf("max relative error = %e, want < 5e-3 (bf16 ~8-bit mantissa)", maxRelErr)
 			}
 		})
 	}
@@ -267,7 +267,7 @@ func TestGPUEngine_MatMulBF16BWeight_AfterUpload(t *testing.T) {
 		}
 	}
 
-	if maxRelErr > 1e-3 {
-		t.Errorf("max relative error = %e, want < 1e-3", maxRelErr)
+	if maxRelErr > 5e-3 {
+		t.Errorf("max relative error = %e, want < 5e-3 (bf16 ~8-bit mantissa)", maxRelErr)
 	}
 }
