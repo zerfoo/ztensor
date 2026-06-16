@@ -806,6 +806,12 @@ func toFloat32[T tensor.Numeric](v T) float32 {
 // --- GPU-accelerated method overrides ---
 
 func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if sameShape(a, b) {
+			return gpuBinaryOpBF16(e, a, b, e.kernels.AddBF16, dst...)
+		}
+		return e.cpu.Add(ctx, a, b, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Add(ctx, a, b, dst...)
 	}
@@ -825,6 +831,12 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if sameShape(a, b) {
+			return gpuBinaryOpBF16(e, a, b, e.kernels.SubBF16, dst...)
+		}
+		return e.cpu.Sub(ctx, a, b, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Sub(ctx, a, b, dst...)
 	}
@@ -844,6 +856,12 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if sameShape(a, b) {
+			return gpuBinaryOpBF16(e, a, b, e.kernels.MulBF16, dst...)
+		}
+		return e.cpu.Mul(ctx, a, b, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Mul(ctx, a, b, dst...)
 	}
@@ -863,6 +881,12 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if sameShape(a, b) {
+			return gpuBinaryOpBF16(e, a, b, e.kernels.DivBF16, dst...)
+		}
+		return e.cpu.Div(ctx, a, b, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Div(ctx, a, b, dst...)
 	}
@@ -926,6 +950,9 @@ func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.Tensor
 }
 
 func (e *GPUEngine[T]) gpuExp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuUnaryOpBF16(e, a, e.kernels.ExpBF16, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Exp(ctx, a, dst...)
 	}
@@ -956,6 +983,9 @@ func (e *GPUEngine[T]) gpuCos(ctx context.Context, a *tensor.TensorNumeric[T], d
 }
 
 func (e *GPUEngine[T]) gpuLog(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuUnaryOpBF16(e, a, e.kernels.LogBF16, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Log(ctx, a, dst...)
 	}
@@ -966,6 +996,9 @@ func (e *GPUEngine[T]) gpuLog(ctx context.Context, a *tensor.TensorNumeric[T], d
 }
 
 func (e *GPUEngine[T]) gpuSqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuUnaryOpBF16(e, a, e.kernels.SqrtBF16, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Sqrt(ctx, a, dst...)
 	}
@@ -986,6 +1019,9 @@ func (e *GPUEngine[T]) gpuRsqrt(ctx context.Context, a *tensor.TensorNumeric[T],
 }
 
 func (e *GPUEngine[T]) gpuTanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuUnaryOpBF16(e, a, e.kernels.TanhBF16, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Tanh(ctx, a, dst...)
 	}
@@ -1195,6 +1231,12 @@ func (e *GPUEngine[T]) gpuReduceMean(ctx context.Context, a *tensor.TensorNumeri
 }
 
 func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if a == nil {
+			return nil, fmt.Errorf("Softmax: input tensor must not be nil")
+		}
+		return gpuSoftmaxBF16(e, ctx, a, axis, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Softmax(ctx, a, axis, dst...)
 	}
