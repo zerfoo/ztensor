@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/zerfoo/ztensor/compare/v1.12.0...v1.13.0) (2026-06-16)
+
+
+### Features
+
+* **compute:** bf16 dispatch + parity tests for fused norm kernels (ADR 075 L4) ([4d1466a](https://github.com/zerfoo/ztensor/commit/4d1466a22808f5c557ab03f73fef21b35c43ba24))
+* **compute:** native bf16 GPU elementwise + AdamW dispatch (ADR 075 L4) ([897d1d6](https://github.com/zerfoo/ztensor/commit/897d1d6348afabb478d2d972e640ffdcd6a0aa57))
+* **compute:** tiny-matrix batched GEMM kernel for small attention shapes (ADR 075 L3) ([6554b8c](https://github.com/zerfoo/ztensor/commit/6554b8c80690adfb36ac335b87506087bebe7e15))
+* **gpuapi:** bf16 fused norm methods on KernelRunner (ADR 075 L4) ([f3db3ca](https://github.com/zerfoo/ztensor/commit/f3db3ca2271b12b57fa36af9ad62dc297e52ca79))
+* **gpuapi:** bf16 kernel methods on KernelRunner (ADR 075 L4) ([c6a4d3d](https://github.com/zerfoo/ztensor/commit/c6a4d3d25683bed270600098e494c2035e1f5190))
+* **kernels:** bf16 forward-only fused norm CUDA kernels (ADR 075 L4) ([c62c6e7](https://github.com/zerfoo/ztensor/commit/c62c6e7b1f3c7f7aacd5231250e2073dd650c079))
+* **kernels:** bf16 GPU elementwise + AdamW CUDA kernels (ADR 075 L4) ([dc3ed14](https://github.com/zerfoo/ztensor/commit/dc3ed14d506967c8a12a29ffeed26276b1cc9376))
+
 ## [1.12.0](https://github.com/zerfoo/ztensor/compare/v1.11.1...v1.12.0) (2026-06-16)
 
 
