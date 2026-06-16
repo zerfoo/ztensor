@@ -199,6 +199,10 @@ func (k *FPGAKernels) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _,
 	return fmt.Errorf("FusedAdamWF32: not implemented for FPGA")
 }
 
+func (k *FPGAKernels) TinyBatchedGemmF32(_, _, _ unsafe.Pointer, _, _, _ int, _, _, _ int64, _ int, _ Stream) error { //nolint:gocritic // interface match
+	return fmt.Errorf("TinyBatchedGemmF32: not implemented for FPGA")
+}
+
 func (k *FPGAKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for FPGA")
 }

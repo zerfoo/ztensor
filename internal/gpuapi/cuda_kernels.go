@@ -226,6 +226,12 @@ func (k *CUDAKernels) FusedAdamWF32(param, m, v, grad unsafe.Pointer, beta1, bet
 	return kernels.FusedAdamWF32(param, m, v, grad, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd, n, streamPtr(s))
 }
 
+// TinyBatchedGemmF32 dispatches the custom tiny-matrix strided-batched GEMM
+// kernel (ADR 075 L3). Strides are in elements.
+func (k *CUDAKernels) TinyBatchedGemmF32(a, b, c unsafe.Pointer, m, n, kk int, strideA, strideB, strideC int64, batch int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.TinyBatchedGemmF32(a, b, c, m, n, kk, strideA, strideB, strideC, batch, streamPtr(s))
+}
+
 func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
 }

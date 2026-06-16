@@ -1556,13 +1556,42 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// (supported by cuBLAS). This is critical for GQA attention where K/V
 	// have fewer heads than Q, replacing N individual Sgemm calls with 1.
 	if batchSize > 1 && isFloat32 {
-		if batched, ok := e.blas.(gpuapi.BLASBatched); ok {
-			strideA := int64(aMatSize)
-			strideBVal := int64(bMatSize)
-			if bBatchSize == 1 {
-				strideBVal = 0
+		strideA := int64(aMatSize)
+		strideBVal := int64(bMatSize)
+		if bBatchSize == 1 {
+			strideBVal = 0
+		}
+		strideC := int64(cMatSize)
+
+		// Tiny-matrix fast path (ADR 075 L3): when m,n,k are all small, cuBLAS
+		// SgemmStridedBatched routes through a GEMV + split-K reduction fan-out
+		// (2-3 internal kernels per logical GEMM). The custom kernel does it in
+		// one launch, one block per batch element with the tiles in shared
+		// memory. This is exactly the CrossAsset attention case (12x12 Q@K^T and
+		// 12x64 weights@V over batch=B*heads). Falls back to cuBLAS on any
+		// kernel error so correctness never depends on the fast path.
+		if !disableTinyGemm &&
+			m <= tinyGemmMaxDim && n <= tinyGemmMaxDim && k <= tinyGemmMaxDim {
+			if debugGPU {
+				e.logger.Debug("MatMul: TinyBatchedGemmF32 call",
+					"m", fmt.Sprintf("%d", m), "n", fmt.Sprintf("%d", n),
+					"k", fmt.Sprintf("%d", k), "batchSize", fmt.Sprintf("%d", batchSize))
 			}
-			strideC := int64(cMatSize)
+			if terr := e.kernels.TinyBatchedGemmF32(
+				devA, devB, devCTotal, m, n, k,
+				strideA, strideBVal, strideC, batchSize, e.stream); terr == nil {
+				if reusedC {
+					return finishReusedDst[T](dst[0], outShape), nil
+				}
+				return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
+			} else if debugGPU {
+				e.logger.Debug("MatMul: TinyBatchedGemmF32 fell back to cuBLAS",
+					"error", terr.Error())
+			}
+			// Fall through to cuBLAS on tiny-kernel error.
+		}
+
+		if batched, ok := e.blas.(gpuapi.BLASBatched); ok {
 			if debugGPU {
 				e.logger.Debug("MatMul: SgemmStridedBatched call",
 					"m", fmt.Sprintf("%d", m),

@@ -142,6 +142,14 @@ type KernelRunner interface {
 	// rounding. All buffers have n elements.
 	FusedAdamWF32(param, m, v, grad unsafe.Pointer, beta1, beta2, oneMinusBeta1, oneMinusBeta2, eps, alpha, lrWd float64, n int, stream Stream) error
 
+	// TinyBatchedGemmF32 computes batch independent small f32 GEMMs
+	// C_b = A_b * B_b (alpha=1, beta=0, row-major) in one launch -- a custom
+	// path for tiny matrices (m,n,k small, batch large) where cuBLAS
+	// SgemmStridedBatched falls back to a GEMV + split-K reduction fan-out
+	// (ADR 075 lever L3). Strides are in ELEMENTS. Returns an error when any of
+	// m,n,k exceeds the supported tiny bound so the caller falls back to cuBLAS.
+	TinyBatchedGemmF32(a, b, c unsafe.Pointer, m, n, k int, strideA, strideB, strideC int64, batch int, stream Stream) error
+
 	// FusedAddRMSNormF32 fuses residual addition and RMSNorm into one kernel launch.
 	// sum_out = input + residual, normed_out = rmsnorm(sum_out, weight, eps).
 	// input: [rows, D], residual: [rows, D], weight: [D],

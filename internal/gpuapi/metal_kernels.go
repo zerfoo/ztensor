@@ -274,6 +274,10 @@ func (k *MetalKernels) FusedAdamWF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _, _
 	return fmt.Errorf("FusedAdamWF32: not implemented for Metal")
 }
 
+func (k *MetalKernels) TinyBatchedGemmF32(_, _, _ unsafe.Pointer, _, _, _ int, _, _, _ int64, _ int, _ Stream) error { //nolint:gocritic // interface match
+	return fmt.Errorf("TinyBatchedGemmF32: not implemented for Metal")
+}
+
 func (k *MetalKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, _ Stream) error {
 	return k.dispatchPerRow("kernel_fused_add_rmsnorm", rows,
 		map[int]metal.BufferBinding{

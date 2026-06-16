@@ -24,6 +24,20 @@ const f64Size = int(unsafe.Sizeof(float64(0)))
 // Off by default to avoid any performance impact in normal operation.
 var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
+// disableTinyGemm, when ZERFOO_DISABLE_TINY_GEMM=1, forces the batched MatMul
+// path to use cuBLAS SgemmStridedBatched even for tiny matrices, bypassing the
+// custom tiny-matrix batched-GEMM kernel (ADR 075 L3). The kernel is enabled by
+// default because it is a strict win on tiny shapes (it avoids cuBLAS's
+// GEMV + split-K fan-out) and falls back to cuBLAS on any launch error; this
+// flag exists for A/B comparison and as a safety escape hatch.
+var disableTinyGemm = os.Getenv("ZERFOO_DISABLE_TINY_GEMM") == "1"
+
+// tinyGemmMaxDim mirrors the kernel's TINY_GEMM_MAX_DIM bound: the custom
+// tiny-matrix batched GEMM is dispatched only when m, n, and k are all at most
+// this value (and batch > 1). Above it, cuBLAS tiles efficiently and the custom
+// kernel offers no benefit.
+const tinyGemmMaxDim = 64
+
 // traceH2D, when ZERFOO_TRACE_H2D=1, makes getDevicePtr emit one line per
 // CPU-backed host->device upload, tagged with the operand shape. It exists to
 // attribute the per-op H2D firehose (the [256,256]/[1024,256] weight-class
