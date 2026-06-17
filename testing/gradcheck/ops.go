@@ -656,3 +656,216 @@ func (n *layerNormNode[T]) Backward(ctx context.Context, _ types.BackwardMode, g
 	}
 	return []tn[T]{dx}, nil
 }
+
+// --- groupnorm (per-group normalize + per-channel affine) ---------------------
+
+// groupNormNode normalizes a 2D input [N, C] in `groups` channel-groups and
+// then applies a trainable per-channel affine (gamma, beta of shape [1, C]).
+// It reshapes [N, C] -> [N*groups, C/groups], normalizes the last axis exactly
+// like layerNormNode (so the per-group statistics fall out of the same engine
+// reduce/elementwise ops), and reshapes back -- needing NO new engine kernel.
+// This is the canonical convolutional-VAE/UNet normalization
+// (torch.nn.functional.group_norm); landing it here extends the ADR-091
+// PyTorch-oracle harness to the GroupNorm op class (E127/T127.1.0a) and
+// unlocks the whole Stable-Diffusion-family VAE/UNet primitive set.
+type groupNormNode[T tensor.Float] struct {
+	engine compute.Engine[T]
+	gamma  *graph.Parameter[T]
+	beta   *graph.Parameter[T]
+	groups int
+	eps    float64
+
+	xhatR tn[T] // normalized input in grouped shape [N*groups, C/groups]
+	inv   tn[T] // inverse stddev per group, [N*groups, 1]
+	nRows int   // N
+	chans int   // C
+	saver graph.Saver[T]
+}
+
+func newGroupNormNode[T tensor.Float](e compute.Engine[T], dim, groups int) (*groupNormNode[T], error) {
+	if groups <= 0 || dim%groups != 0 {
+		return nil, fmt.Errorf("GroupNorm: dim %d not divisible by groups %d", dim, groups)
+	}
+	gammaData := make([]T, dim)
+	betaData := make([]T, dim)
+	for i := 0; i < dim; i++ {
+		// Deterministic, non-uniform initial values so parameter gradients
+		// are structurally informative (mirrors newLayerNormNode).
+		gammaData[i] = T(0.8 + 0.1*float64(i))
+		betaData[i] = T(-0.2 + 0.15*float64(i))
+	}
+	gv, err := newTensorOf([]int{1, dim}, gammaData)
+	if err != nil {
+		return nil, err
+	}
+	bv, err := newTensorOf([]int{1, dim}, betaData)
+	if err != nil {
+		return nil, err
+	}
+	gamma, err := graph.NewParameter[T]("gamma", gv, newTensorOf[T])
+	if err != nil {
+		return nil, err
+	}
+	beta, err := graph.NewParameter[T]("beta", bv, newTensorOf[T])
+	if err != nil {
+		return nil, err
+	}
+	return &groupNormNode[T]{engine: e, gamma: gamma, beta: beta, groups: groups, eps: 1e-5}, nil
+}
+
+func (n *groupNormNode[T]) OpType() string { return "GroupNorm" }
+func (n *groupNormNode[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"epsilon": n.eps, "groups": n.groups}
+}
+func (n *groupNormNode[T]) Parameters() []*graph.Parameter[T] {
+	return []*graph.Parameter[T]{n.gamma, n.beta}
+}
+func (n *groupNormNode[T]) SetSaver(s graph.Saver[T]) { n.saver = s }
+
+func (n *groupNormNode[T]) OutputShape() []int {
+	if n.xhatR == nil {
+		return nil
+	}
+	return []int{n.nRows, n.chans}
+}
+
+func (n *groupNormNode[T]) Forward(ctx context.Context, inputs ...tn[T]) (tn[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("GroupNorm: want 1 input, got %d", len(inputs))
+	}
+	x := inputs[0]
+	shape := x.Shape()
+	if len(shape) != 2 {
+		return nil, fmt.Errorf("GroupNorm: want 2D input [N, C], got %v", shape)
+	}
+	n.nRows, n.chans = shape[0], shape[1]
+	if n.chans%n.groups != 0 {
+		return nil, fmt.Errorf("GroupNorm: C %d not divisible by groups %d", n.chans, n.groups)
+	}
+	gw := n.chans / n.groups
+	e := n.engine
+	// Reshape [N, C] -> [N*groups, C/groups]; normalize the last axis.
+	xr, err := e.Reshape(ctx, x, []int{n.nRows * n.groups, gw})
+	if err != nil {
+		return nil, err
+	}
+	mean, err := e.ReduceMean(ctx, xr, 1, true)
+	if err != nil {
+		return nil, err
+	}
+	xc, err := e.Sub(ctx, xr, mean)
+	if err != nil {
+		return nil, err
+	}
+	sq, err := e.Mul(ctx, xc, xc)
+	if err != nil {
+		return nil, err
+	}
+	variance, err := e.ReduceMean(ctx, sq, 1, true)
+	if err != nil {
+		return nil, err
+	}
+	veps, err := e.AddScalar(ctx, variance, T(n.eps))
+	if err != nil {
+		return nil, err
+	}
+	inv, err := e.Rsqrt(ctx, veps)
+	if err != nil {
+		return nil, err
+	}
+	xhatR, err := e.Mul(ctx, xc, inv)
+	if err != nil {
+		return nil, err
+	}
+	n.xhatR = xhatR
+	n.inv = inv
+	if n.saver != nil {
+		n.saver.SaveForBackward(xhatR, inv)
+	}
+	// Reshape back to [N, C] and apply the per-channel affine.
+	xhat, err := e.Reshape(ctx, xhatR, []int{n.nRows, n.chans})
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := e.Mul(ctx, xhat, n.gamma.Value)
+	if err != nil {
+		return nil, err
+	}
+	return e.Add(ctx, scaled, n.beta.Value)
+}
+
+func (n *groupNormNode[T]) Backward(ctx context.Context, _ types.BackwardMode, g tn[T], _ ...tn[T]) ([]tn[T], error) {
+	if n.xhatR == nil || n.inv == nil {
+		return nil, errors.New("GroupNorm: Backward called before Forward")
+	}
+	e := n.engine
+	gw := n.chans / n.groups
+	// xhat in [N, C] form for the per-channel parameter gradients.
+	xhat, err := e.Reshape(ctx, n.xhatR, []int{n.nRows, n.chans})
+	if err != nil {
+		return nil, err
+	}
+	// dGamma = sum_batch(g * xhat); dBeta = sum_batch(g). Both [1, C].
+	gx, err := e.Mul(ctx, g, xhat)
+	if err != nil {
+		return nil, err
+	}
+	dgamma, err := e.ReduceSum(ctx, gx, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := n.gamma.AddGradient(dgamma); err != nil {
+		return nil, err
+	}
+	dbeta, err := e.ReduceSum(ctx, g, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := n.beta.AddGradient(dbeta); err != nil {
+		return nil, err
+	}
+	// dxhat = g * gamma in [N, C]; reshape to grouped form so the per-group
+	// normalization backward (means over the C/groups axis) reuses the exact
+	// layerNorm dX formula.
+	dxhat, err := e.Mul(ctx, g, n.gamma.Value)
+	if err != nil {
+		return nil, err
+	}
+	dxhatR, err := e.Reshape(ctx, dxhat, []int{n.nRows * n.groups, gw})
+	if err != nil {
+		return nil, err
+	}
+	m1, err := e.ReduceMean(ctx, dxhatR, 1, true)
+	if err != nil {
+		return nil, err
+	}
+	dxx, err := e.Mul(ctx, dxhatR, n.xhatR)
+	if err != nil {
+		return nil, err
+	}
+	m2, err := e.ReduceMean(ctx, dxx, 1, true)
+	if err != nil {
+		return nil, err
+	}
+	t1, err := e.Sub(ctx, dxhatR, m1)
+	if err != nil {
+		return nil, err
+	}
+	xm2, err := e.Mul(ctx, n.xhatR, m2)
+	if err != nil {
+		return nil, err
+	}
+	t2, err := e.Sub(ctx, t1, xm2)
+	if err != nil {
+		return nil, err
+	}
+	dxR, err := e.Mul(ctx, t2, n.inv)
+	if err != nil {
+		return nil, err
+	}
+	dx, err := e.Reshape(ctx, dxR, []int{n.nRows, n.chans})
+	if err != nil {
+		return nil, err
+	}
+	return []tn[T]{dx}, nil
+}
