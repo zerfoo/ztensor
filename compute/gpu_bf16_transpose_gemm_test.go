@@ -134,6 +134,65 @@ func TestGPUBF16_MatMulTransposeBBatchedParity(t *testing.T) {
 	}
 }
 
+func TestGPUBF16_TransposeParity(t *testing.T) {
+	eng := newTestGPUBF16Engine(t)
+	ctx := context.Background()
+
+	// bf16 transpose is a pure bitwise element move (no arithmetic), so the
+	// output values must match the reference EXACTLY. This exercises the native
+	// bf16 GPU transpose kernels (Transpose2DBF16/NDBF16) that keep bf16
+	// transposes on-device (CUDA-graph-capturable) instead of the CPU fallback.
+
+	// 2D: [rows, cols] -> [cols, rows] via axes [1,0].
+	t.Run("2D", func(t *testing.T) {
+		const rows, cols = 5, 7
+		vals := ramp(rows * cols)
+		x := bf16Tensor(t, []int{rows, cols}, vals)
+		got, err := eng.Transpose(ctx, x, []int{1, 0})
+		if err != nil {
+			t.Fatalf("Transpose 2D: %v", err)
+		}
+		if want := []int{cols, rows}; !shapeEq(got.Shape(), want) {
+			t.Fatalf("2D transpose shape = %v, want %v", got.Shape(), want)
+		}
+		gd := bf16ToF32(got.Data())
+		for i := 0; i < cols; i++ {
+			for j := 0; j < rows; j++ {
+				want := vals[j*cols+i] // input[j,i] -> output[i,j]
+				if gd[i*rows+j] != want {
+					t.Fatalf("2D[%d,%d] = %g, want %g", i, j, gd[i*rows+j], want)
+				}
+			}
+		}
+	})
+
+	// 3D: [d0,d1,d2] -> [d0,d2,d1] via axes [0,2,1] (the QKL2Norm-style case).
+	t.Run("3D_021", func(t *testing.T) {
+		const d0, d1, d2 = 4, 12, 64
+		vals := ramp(d0 * d1 * d2)
+		x := bf16Tensor(t, []int{d0, d1, d2}, vals)
+		got, err := eng.Transpose(ctx, x, []int{0, 2, 1})
+		if err != nil {
+			t.Fatalf("Transpose 3D: %v", err)
+		}
+		if want := []int{d0, d2, d1}; !shapeEq(got.Shape(), want) {
+			t.Fatalf("3D transpose shape = %v, want %v", got.Shape(), want)
+		}
+		gd := bf16ToF32(got.Data())
+		for a := 0; a < d0; a++ {
+			for c := 0; c < d2; c++ {
+				for b := 0; b < d1; b++ {
+					want := vals[a*d1*d2+b*d2+c] // input[a,b,c]
+					gotV := gd[a*d2*d1+c*d1+b]   // output[a,c,b]
+					if gotV != want {
+						t.Fatalf("3D[%d,%d,%d] = %g, want %g", a, c, b, gotV, want)
+					}
+				}
+			}
+		}
+	})
+}
+
 // ramp returns n small, bf16-exact values centered near zero so GEMM sums stay
 // well-conditioned (no catastrophic cancellation).
 func ramp(n int) []float32 {

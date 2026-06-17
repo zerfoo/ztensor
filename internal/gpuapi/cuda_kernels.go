@@ -190,6 +190,14 @@ func (k *CUDAKernels) TransposeND(input, output unsafe.Pointer, inStrides, outSt
 	return kernels.TransposeND(input, output, inStrides, outStrides, perm, ndim, total, streamPtr(s))
 }
 
+func (k *CUDAKernels) Transpose2DBF16(input, output unsafe.Pointer, rows, cols int, s Stream) error {
+	return kernels.Transpose2DBF16(input, output, rows, cols, streamPtr(s))
+}
+
+func (k *CUDAKernels) TransposeNDBF16(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, s Stream) error {
+	return kernels.TransposeNDBF16(input, output, inStrides, outStrides, perm, ndim, total, streamPtr(s))
+}
+
 func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.Gather(table, indices, output, N, D, V, streamPtr(s))
 }
@@ -412,3 +420,4 @@ func (k *CUDAKernels) FusedEncoderFwdAvailable() bool {
 
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)
+var _ BFloat16Transposer = (*CUDAKernels)(nil)

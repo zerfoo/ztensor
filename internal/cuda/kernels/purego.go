@@ -44,7 +44,8 @@ type KernelLib struct {
 	launchGatherQ8F32 uintptr
 
 	// transpose
-	launchTranspose2D, launchTransposeND uintptr
+	launchTranspose2D, launchTransposeND         uintptr
+	launchTranspose2DBF16, launchTransposeNDBF16 uintptr
 
 	// repeat
 	launchRepeat uintptr
@@ -284,6 +285,8 @@ func openKernelLib() (*KernelLib, error) {
 			// transpose
 			{"launch_transpose_2d", &k.launchTranspose2D},
 			{"launch_transpose_nd", &k.launchTransposeND},
+			{"launch_transpose_2d_bf16", &k.launchTranspose2DBF16},
+			{"launch_transpose_nd_bf16", &k.launchTransposeNDBF16},
 			// repeat
 			{"launch_repeat", &k.launchRepeat},
 			// gemm_q4
