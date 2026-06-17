@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.0](https://github.com/zerfoo/ztensor/compare/v1.14.0...v1.15.0) (2026-06-17)
+
+
+### Features
+
+* **compute:** generic bf16 bulk weight upload (device-residency) ([419564c](https://github.com/zerfoo/ztensor/commit/419564c50e2e5334a2d54c84f2df11380815d70e))
+* **compute:** native bf16 GPU axis reductions (Sum/ReduceSum/ReduceMean) ([98ad5e3](https://github.com/zerfoo/ztensor/commit/98ad5e394d2c992f3c3949af06bc8501a1b71892))
+* **compute:** native bf16 GPU Rsqrt (close non-f32 CPU fallback) ([45bea61](https://github.com/zerfoo/ztensor/commit/45bea614eefdfdaf26d0a5a7ab053c053a8950d1))
+
 ## [1.14.0](https://github.com/zerfoo/ztensor/compare/v1.13.0...v1.14.0) (2026-06-16)
 
 
