@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/internal/cuda"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -66,6 +67,82 @@ func TestGPUEngine_UploadWeights_BulkPath(t *testing.T) {
 		if math.Abs(float64(got[elemsPer-1]-want)) > 1e-6 {
 			t.Errorf("tensor[%d][%d] = %f, want %f", i, elemsPer-1, got[elemsPer-1], want)
 		}
+	}
+}
+
+// TestGPUEngine_UploadWeightsT_BF16 verifies the generic (T-typed) bulk upload:
+// a GPUEngine[float16.BFloat16] can make its host-backed bf16 weight tensors
+// device-resident via UploadWeightsT, so they no longer stay host-backed and
+// pay a per-op H2D firehose. Asserts the tensors become *GPUStorage[BFloat16]
+// (2-byte device elements, sized by unsafe.Sizeof, not f32Size) and that values
+// round-trip across the bulk copy. CUDA-gated; skips without a GPU.
+// GPU-UNVERIFIED until run on the GB10 verify pod.
+func TestGPUEngine_UploadWeightsT_BF16(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	gpuEng, err := NewGPUEngine[float16.BFloat16](numeric.BFloat16Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine[BFloat16]: %v", err)
+	}
+	defer func() { _ = gpuEng.Close() }()
+
+	// N must exceed bulkUploadF32MinTensors (64) to exercise the bulk path.
+	const N = 128
+	const elemsPer = 17
+
+	tensors := make([]*tensor.TensorNumeric[float16.BFloat16], N)
+	wantVals := make([][]float32, N)
+	for i := range N {
+		data := make([]float16.BFloat16, elemsPer)
+		wantVals[i] = make([]float32, elemsPer)
+		for j := range elemsPer {
+			// values exactly representable in bf16 so the round-trip is exact
+			f := float16.BFloat16FromFloat32(float32(i) + float32(j)/64.0)
+			data[j] = f
+			wantVals[i][j] = f.ToFloat32()
+		}
+		tt, errNew := tensor.New[float16.BFloat16]([]int{elemsPer}, data)
+		if errNew != nil {
+			t.Fatalf("tensor.New[BFloat16]: %v", errNew)
+		}
+		tensors[i] = tt
+	}
+
+	if got := len(gpuEng.bulkUploadBuffers); got != 0 {
+		t.Fatalf("bulkUploadBuffers before upload = %d, want 0", got)
+	}
+
+	if err := gpuEng.UploadWeightsT(tensors); err != nil {
+		t.Fatalf("UploadWeightsT: %v", err)
+	}
+
+	// Every tensor must now be device-resident as *GPUStorage[BFloat16].
+	for i, tt := range tensors {
+		if _, ok := tt.GetStorage().(*tensor.GPUStorage[float16.BFloat16]); !ok {
+			t.Fatalf("tensor[%d] storage = %T, want *GPUStorage[float16.BFloat16]", i, tt.GetStorage())
+		}
+	}
+
+	// Round-trip a sample to verify the bulk copy preserved bf16 bytes.
+	for _, i := range []int{0, 1, N / 2, N - 1} {
+		got := tensors[i].Data()
+		for j := range elemsPer {
+			if got[j].ToFloat32() != wantVals[i][j] {
+				t.Errorf("tensor[%d][%d] = %g, want %g", i, j, got[j].ToFloat32(), wantVals[i][j])
+			}
+		}
+	}
+
+	// A second UploadWeightsT must be a no-op: the tensors are already
+	// *GPUStorage[BFloat16] and must be skipped (no new bulk buffers).
+	before := len(gpuEng.bulkUploadBuffers)
+	if err := gpuEng.UploadWeightsT(tensors); err != nil {
+		t.Fatalf("UploadWeightsT (second call): %v", err)
+	}
+	if after := len(gpuEng.bulkUploadBuffers); after != before {
+		t.Errorf("second UploadWeightsT allocated %d new bulk buffers, want 0 (already-resident skip)", after-before)
 	}
 }
 
