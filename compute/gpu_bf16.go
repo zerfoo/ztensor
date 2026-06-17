@@ -309,6 +309,120 @@ func gpuFusedQKNormRoPEBF16[T tensor.Numeric](
 	return makeGPUResult[T](e, []int{totalHeads, headDim}, devOut, outElems)
 }
 
+// gpuSumAxisBF16 runs a native bf16 axis reduction (sum along `axis`) using the
+// FP32-accumulating SumAxisBF16 kernel. It is the bf16 analogue of the f32
+// gpuSum body and mirrors its axis-normalization, keepDims/squeeze output-shape
+// logic, and CPU fallbacks exactly. The kernel accumulates each axis stripe in
+// FP32 and rounds the result to bf16; for axis-sized reductions this is more
+// accurate than pairwise bf16 addition but still only carries bf16's 7-bit
+// mantissa, so callers must tolerate a few bf16 steps vs an f64 reference.
+//
+// invDivisor scales the per-stripe FP32 sum before the bf16 round: pass 1.0 for
+// a plain sum (gpuSum/gpuReduceSum) or 1/axisSize for a mean (gpuReduceMean).
+// On every CPU fallback the divide is reapplied (cpu.ReduceMean) so the contract
+// holds identically for both sum and mean.
+func gpuSumAxisBF16[T tensor.Numeric](
+	e *GPUEngine[T],
+	ctx context.Context,
+	a *tensor.TensorNumeric[T],
+	axis int,
+	keepDims bool,
+	invDivisor float32,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	if a == nil {
+		return nil, fmt.Errorf("Sum: input tensor must not be nil")
+	}
+
+	e.setDevice()
+
+	// cpuFallback computes the same reduction on the CPU engine: a plain sum when
+	// invDivisor == 1, otherwise the mean (so the divide-folding contract holds
+	// identically on every fallback path).
+	cpuFallback := func() (*tensor.TensorNumeric[T], error) {
+		if invDivisor == 1.0 {
+			return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+		}
+		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
+	}
+
+	// Negative axis falls back to CPU, matching the f32 gpuSum contract.
+	if axis < 0 {
+		return cpuFallback()
+	}
+
+	shape := a.Shape()
+	rank := len(shape)
+
+	if axis >= rank {
+		return nil, fmt.Errorf("Sum: axis %d out of bounds for %d dimensions", axis, rank)
+	}
+
+	inner := 1
+	for i := axis + 1; i < rank; i++ {
+		inner *= shape[i]
+	}
+
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	axisSize := shape[axis]
+	numStripes := outer * inner
+
+	var newShape []int
+	if keepDims {
+		newShape = make([]int, rank)
+		for i, d := range shape {
+			if i == axis {
+				newShape[i] = 1
+			} else {
+				newShape[i] = d
+			}
+		}
+	} else {
+		for i, d := range shape {
+			if i != axis {
+				newShape = append(newShape, d)
+			}
+		}
+		if len(newShape) == 0 {
+			newShape = []int{1}
+		}
+	}
+
+	devIn, cleanupIn, err := getDevicePtr(e, a)
+	if err != nil {
+		return cpuFallback()
+	}
+	defer cleanupIn()
+
+	outByteSize := numStripes * bf16Size
+
+	// Reuse dst's existing GPU memory when possible (mirrors f32 gpuSum #84).
+	devOut, reused := tryReuseDstPtr[T](numStripes, dst)
+	if !reused {
+		devOut, err = e.pool.Alloc(e.deviceID, outByteSize)
+		if err != nil {
+			return cpuFallback()
+		}
+	}
+
+	if err := e.kernels.SumAxisBF16(devIn, devOut, outer, inner, axisSize, invDivisor, e.stream); err != nil {
+		if !reused {
+			e.pool.Free(e.deviceID, devOut, outByteSize)
+		}
+
+		return nil, err
+	}
+
+	if reused {
+		return finishReusedDst[T](dst[0], newShape), nil
+	}
+	return makeGPUResult[T](e, newShape, devOut, numStripes, dst...)
+}
+
 // gpuUnaryOpBF16 runs a native bf16 unary kernel (c = op(a)).
 func gpuUnaryOpBF16[T tensor.Numeric](
 	e *GPUEngine[T],

@@ -289,6 +289,9 @@ func (stubKernelRunner) SqrtBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) er
 func (stubKernelRunner) RsqrtBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) SumAxisBF16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) ExpBF16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }

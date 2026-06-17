@@ -308,6 +308,10 @@ func (k *CUDAKernels) RsqrtBF16(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.RsqrtBF16(a, c, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) SumAxisBF16(input, output unsafe.Pointer, outer, inner, axisSize int, invDivisor float32, s Stream) error {
+	return kernels.SumAxisBF16(input, output, outer, inner, axisSize, invDivisor, streamPtr(s))
+}
+
 func (k *CUDAKernels) ExpBF16(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.ExpBF16(a, c, n, streamPtr(s))
 }

@@ -223,6 +223,107 @@ func TestGPUBF16_SoftmaxParity(t *testing.T) {
 	}
 }
 
+// TestGPUBF16_ReductionParity validates the native bf16 axis reductions (Sum,
+// ReduceSum, ReduceMean) against an f64 reference. The kernel accumulates each
+// axis stripe in FP32 and rounds the result to bf16 once at the end, while the
+// f64 reference accumulates in double precision and rounds once -- so the only
+// expected divergence is bf16's 7-bit mantissa, amplified by accumulation over
+// axisSize terms. We use a generous, axisSize-scaled tolerance: summing N bf16
+// values in FP32 then rounding can differ from the f64-then-bf16 reference by a
+// few bf16 steps as N grows, so this is an order-of-magnitude correctness gate,
+// not a bit-exact one. GPU-UNVERIFIED until run on the GB10 verify pod.
+func TestGPUBF16_ReductionParity(t *testing.T) {
+	eng := newTestGPUBF16Engine(t)
+	ctx := context.Background()
+	rng := rand.New(rand.NewSource(1234))
+
+	// 3D so the reduced axis (axis=1) has a nontrivial inner stride: this
+	// exercises the (outer, inner, axisSize) stripe addressing in the kernel.
+	const outer, axisSize, inner = 4, 24, 5
+	vals := make([]float32, outer*axisSize*inner)
+	for i := range vals {
+		// keep values modest so the FP32 partial sums stay well within bf16 range
+		vals[i] = float16.BFloat16FromFloat32(rng.Float32()*2 - 1).ToFloat32()
+	}
+	shape := []int{outer, axisSize, inner}
+
+	// f64 reference reduced along axis=1: ref[o][in] = sum_k vals[o][k][in].
+	refSum := make([]float64, outer*inner)
+	for o := 0; o < outer; o++ {
+		for in := 0; in < inner; in++ {
+			var s float64
+			for k := 0; k < axisSize; k++ {
+				s += float64(vals[o*axisSize*inner+k*inner+in])
+			}
+			refSum[o*inner+in] = s
+		}
+	}
+
+	// accumulating axisSize bf16 values in FP32 then rounding can drift a few
+	// bf16 steps from the f64 reference; scale tolerance with sqrt(axisSize).
+	tolUlps := 2.0 + math.Sqrt(float64(axisSize))
+
+	t.Run("Sum", func(t *testing.T) {
+		in := bf16Tensor(t, shape, vals)
+		got, err := eng.Sum(ctx, in, 1, false)
+		if err != nil {
+			t.Fatalf("Sum: %v", err)
+		}
+		gd := bf16ToF32(got.Data())
+		if len(gd) != outer*inner {
+			t.Fatalf("Sum produced %d elements, want %d (shape=%v)", len(gd), outer*inner, got.Shape())
+		}
+		for i := range gd {
+			want := float16.BFloat16FromFloat32(float32(refSum[i])).ToFloat32()
+			assertBF16Close(t, "Sum", i, gd[i], want, tolUlps)
+		}
+	})
+
+	t.Run("ReduceSum", func(t *testing.T) {
+		in := bf16Tensor(t, shape, vals)
+		got, err := eng.ReduceSum(ctx, in, 1, false)
+		if err != nil {
+			t.Fatalf("ReduceSum: %v", err)
+		}
+		gd := bf16ToF32(got.Data())
+		for i := range gd {
+			want := float16.BFloat16FromFloat32(float32(refSum[i])).ToFloat32()
+			assertBF16Close(t, "ReduceSum", i, gd[i], want, tolUlps)
+		}
+	})
+
+	t.Run("ReduceMean", func(t *testing.T) {
+		in := bf16Tensor(t, shape, vals)
+		got, err := eng.ReduceMean(ctx, in, 1, false)
+		if err != nil {
+			t.Fatalf("ReduceMean: %v", err)
+		}
+		gd := bf16ToF32(got.Data())
+		for i := range gd {
+			want := float16.BFloat16FromFloat32(float32(refSum[i] / float64(axisSize))).ToFloat32()
+			assertBF16Close(t, "ReduceMean", i, gd[i], want, tolUlps)
+		}
+	})
+
+	t.Run("SumKeepDims", func(t *testing.T) {
+		in := bf16Tensor(t, shape, vals)
+		got, err := eng.Sum(ctx, in, 1, true)
+		if err != nil {
+			t.Fatalf("Sum keepDims: %v", err)
+		}
+		want := []int{outer, 1, inner}
+		gs := got.Shape()
+		if len(gs) != len(want) {
+			t.Fatalf("Sum keepDims shape = %v, want %v", gs, want)
+		}
+		for i := range want {
+			if gs[i] != want[i] {
+				t.Fatalf("Sum keepDims shape = %v, want %v", gs, want)
+			}
+		}
+	})
+}
+
 // TestGPUBF16_AdamWParity validates the full gradient-consuming update path:
 // the on-device bf16 AdamW step (param/grad bf16, m f32, v f64) must match an
 // f64 reference AdamW step with the published parameter rounded to bf16. This
