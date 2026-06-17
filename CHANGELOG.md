@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/zerfoo/ztensor/compare/v1.17.0...v1.17.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **compute:** keep bf16 GPUStorage reshape on-device (capture-safe) ([508f01d](https://github.com/zerfoo/ztensor/commit/508f01d1b773ef786713a611f22c7cf617149063))
+
 ## [1.17.0](https://github.com/zerfoo/ztensor/compare/v1.16.0...v1.17.0) (2026-06-17)
 
 
