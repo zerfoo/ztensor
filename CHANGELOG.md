@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/zerfoo/ztensor/compare/v1.15.0...v1.16.0) (2026-06-17)
+
+
+### Features
+
+* **compute:** native bf16 transpose-variant GEMMs (NT/TN) for the bf16 backward ([2f63239](https://github.com/zerfoo/ztensor/commit/2f63239b0ac9e3e648629137ecbdd3c9f35c8469))
+
 ## [1.15.0](https://github.com/zerfoo/ztensor/compare/v1.14.0...v1.15.0) (2026-06-17)
 
 
