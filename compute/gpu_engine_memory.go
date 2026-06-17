@@ -16,8 +16,20 @@ import (
 
 // Transpose transposes a tensor along the given axes.
 func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	// bf16 stays on-device when the kernel backend provides native bf16 transpose
+	// kernels AND the input is GPU-resident; otherwise (and for every non-f32,
+	// non-bf16 type) fall back to the CPU engine. Keeping bf16 transposes on the
+	// device is required for CUDA-graph capture: the CPU fallback's host memcpy
+	// breaks stream capture (e.g. QKL2Norm's transpose). ADR-075 lever L4.
+	var bf16Transposer gpuapi.BFloat16Transposer
+	bf16Path := false
 	if !isFloat32[T]() {
-		return e.cpu.Transpose(ctx, a, axes, dst...)
+		bt, ok := e.kernels.(gpuapi.BFloat16Transposer)
+		_, isGPUStore := a.GetStorage().(*tensor.GPUStorage[T])
+		if !isBFloat16[T]() || !ok || !isGPUStore {
+			return e.cpu.Transpose(ctx, a, axes, dst...)
+		}
+		bf16Transposer, bf16Path = bt, true
 	}
 
 	// Only use GPU path for GPU-resident tensors (Phase 6 behavior).
@@ -131,7 +143,11 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		fmt.Fprintf(os.Stderr, "TRANSPOSE getDevicePtr OK: ptr=%p\n", devIn)
 	}
 
-	byteSize := total * f32Size
+	elemSize := f32Size
+	if bf16Path {
+		elemSize = 2 // bf16 is 16-bit
+	}
+	byteSize := total * elemSize
 
 	// Reuse dst's existing GPU memory when possible (#84).
 	devOut, reused := tryReuseDstPtr[T](total, dst)
@@ -149,11 +165,17 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 				"rows", fmt.Sprintf("%d", shape[0]),
 				"cols", fmt.Sprintf("%d", shape[1]))
 		}
-		if err := e.kernels.Transpose2D(devIn, devOut, shape[0], shape[1], e.stream); err != nil {
+		var t2dErr error
+		if bf16Path {
+			t2dErr = bf16Transposer.Transpose2DBF16(devIn, devOut, shape[0], shape[1], e.stream)
+		} else {
+			t2dErr = e.kernels.Transpose2D(devIn, devOut, shape[0], shape[1], e.stream)
+		}
+		if t2dErr != nil {
 			if !reused {
 				e.pool.Free(e.deviceID, devOut, byteSize)
 			}
-			return nil, err
+			return nil, t2dErr
 		}
 		if reused {
 			return finishReusedDst[T](dst[0], outShape), nil
@@ -208,11 +230,17 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	devOS := unsafe.Slice((*int32)(unsafe.Add(devParams, 4*rank)), rank)
 	devPerm := unsafe.Slice((*int32)(unsafe.Add(devParams, 8*rank)), rank)
 
-	if err := e.kernels.TransposeND(devIn, devOut, devIS, devOS, devPerm, rank, total, e.stream); err != nil {
+	var ndErr error
+	if bf16Path {
+		ndErr = bf16Transposer.TransposeNDBF16(devIn, devOut, devIS, devOS, devPerm, rank, total, e.stream)
+	} else {
+		ndErr = e.kernels.TransposeND(devIn, devOut, devIS, devOS, devPerm, rank, total, e.stream)
+	}
+	if ndErr != nil {
 		if !reused {
 			e.pool.Free(e.deviceID, devOut, byteSize)
 		}
-		return nil, err
+		return nil, ndErr
 	}
 
 	if reused {

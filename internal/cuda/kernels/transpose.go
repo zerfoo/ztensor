@@ -12,6 +12,12 @@ extern cudaError_t launch_transpose_nd(const float* input, float* output,
                                         const int* in_strides, const int* out_strides,
                                         const int* perm, int ndim, int total,
                                         cudaStream_t stream);
+extern cudaError_t launch_transpose_2d_bf16(const unsigned short* input, unsigned short* output,
+                                        int rows, int cols, cudaStream_t stream);
+extern cudaError_t launch_transpose_nd_bf16(const unsigned short* input, unsigned short* output,
+                                        const int* in_strides, const int* out_strides,
+                                        const int* perm, int ndim, int total,
+                                        cudaStream_t stream);
 */
 import "C"
 
@@ -42,4 +48,27 @@ func TransposeND(input, output unsafe.Pointer,
 		(*C.int)(unsafe.Pointer(&perm[0])),
 		C.int(ndim), C.int(total), stream(s),
 	), "transpose_nd")
+}
+
+// Transpose2DBF16 launches the tiled 2D transpose kernel for bf16 (16-bit)
+// elements. Input: [rows, cols] -> Output: [cols, rows].
+func Transpose2DBF16(input, output unsafe.Pointer, rows, cols int, s unsafe.Pointer) error {
+	return checkCUDA(C.launch_transpose_2d_bf16(
+		(*C.ushort)(input), (*C.ushort)(output),
+		C.int(rows), C.int(cols), stream(s),
+	), "transpose_2d_bf16")
+}
+
+// TransposeNDBF16 launches the general N-D transpose kernel for bf16 (16-bit)
+// elements.
+func TransposeNDBF16(input, output unsafe.Pointer,
+	inStrides, outStrides, perm []int32,
+	ndim, total int, s unsafe.Pointer) error {
+	return checkCUDA(C.launch_transpose_nd_bf16(
+		(*C.ushort)(input), (*C.ushort)(output),
+		(*C.int)(unsafe.Pointer(&inStrides[0])),
+		(*C.int)(unsafe.Pointer(&outStrides[0])),
+		(*C.int)(unsafe.Pointer(&perm[0])),
+		C.int(ndim), C.int(total), stream(s),
+	), "transpose_nd_bf16")
 }

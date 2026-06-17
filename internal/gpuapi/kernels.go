@@ -285,3 +285,15 @@ type KernelRunner interface {
 	// FusedEncoderFwdAvailable returns true if the fused encoder kernel is loaded.
 	FusedEncoderFwdAvailable() bool
 }
+
+// BFloat16Transposer is an optional KernelRunner extension providing on-device
+// bf16 (16-bit) transpose kernels. Without it, a GPU engine over bf16 must route
+// transposes to the CPU engine, whose host memcpy breaks CUDA-graph capture
+// (e.g. QKL2Norm's transpose). Only the CUDA backend implements it; callers
+// type-assert and fall back to the CPU transpose when it is absent. ADR-075 L4.
+type BFloat16Transposer interface {
+	// Transpose2DBF16 transposes a [rows, cols] bf16 matrix to [cols, rows].
+	Transpose2DBF16(input, output unsafe.Pointer, rows, cols int, stream Stream) error
+	// TransposeNDBF16 permutes dimensions of an N-D bf16 tensor.
+	TransposeNDBF16(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, stream Stream) error
+}
