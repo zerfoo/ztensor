@@ -390,6 +390,13 @@ func gpuBroadcast4DOp[T tensor.Numeric](
 	if !ok {
 		return nil, nil // signal: not handled
 	}
+	// The f32 4D broadcast kernel cannot run on bf16 (2-byte) device pointers.
+	// Signal "not handled" so the caller takes the CPU fallback. (The B=1
+	// CrossAsset graph uses only 2D broadcasts, handled on-device via
+	// execBroadcast2D; bf16 4D broadcast support is a follow-up.)
+	if isBFloat16[T]() {
+		return nil, nil
+	}
 
 	outShape := broadcastShape(aShape, bShape)
 	outElems := 1
@@ -485,18 +492,8 @@ func gpuBroadcastOp[T tensor.Numeric](
 			defer cleanupB()
 
 			outElems := M * D
-			byteSize := outElems * f32Size
-			devC, err := e.pool.Alloc(e.deviceID, byteSize)
-			if err != nil {
-				return nil, err
-			}
-
-			if err := kernelFn(devA, devB, devC, saRow, saCol, sbRow, sbCol, M, D, e.stream); err != nil {
-				e.pool.Free(e.deviceID, devC, byteSize)
-				return nil, err
-			}
-
-			return makeGPUResult[T](e, outShape, devC, outElems, dst...)
+			return execBroadcast2D(e, outShape, devA, aTotal, devB, bTotal,
+				outElems, saRow, saCol, sbRow, sbCol, M, D, kernelFn, dst...)
 		}
 	}
 
@@ -597,18 +594,9 @@ func gpuBroadcastOp[T tensor.Numeric](
 		return nil, err
 	}
 	defer cleanupB()
-	byteSize := outElems * f32Size
-	devC, err := e.pool.Alloc(e.deviceID, byteSize)
-	if err != nil {
-		return nil, err
-	}
 
-	if err := kernelFn(devA, devB, devC, saRow, saCol, sbRow, sbCol, M, D, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devC, byteSize)
-		return nil, err
-	}
-
-	return makeGPUResult[T](e, outShape, devC, outElems, dst...)
+	return execBroadcast2D(e, outShape, devA, totalElements(aShape), devB, totalElements(bShape),
+		outElems, saRow, saCol, sbRow, sbCol, M, D, kernelFn, dst...)
 }
 
 // flattenTo2D flattens an N-D shape to [M, D] where M = product of all dims except last, D = last dim.
@@ -810,7 +798,7 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		if sameShape(a, b) {
 			return gpuBinaryOpBF16(e, a, b, e.kernels.AddBF16, dst...)
 		}
-		return e.cpu.Add(ctx, a, b, dst...)
+		return gpuBroadcastOp(e, ctx, a, b, e.kernels.AddBroadcast, e.kernels.AddBroadcast4D, e.cpu.Add, dst...)
 	}
 	if !isFloat32[T]() {
 		return e.cpu.Add(ctx, a, b, dst...)
@@ -835,7 +823,7 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		if sameShape(a, b) {
 			return gpuBinaryOpBF16(e, a, b, e.kernels.SubBF16, dst...)
 		}
-		return e.cpu.Sub(ctx, a, b, dst...)
+		return gpuBroadcastOp(e, ctx, a, b, e.kernels.SubBroadcast, e.kernels.SubBroadcast4D, e.cpu.Sub, dst...)
 	}
 	if !isFloat32[T]() {
 		return e.cpu.Sub(ctx, a, b, dst...)
@@ -860,7 +848,7 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		if sameShape(a, b) {
 			return gpuBinaryOpBF16(e, a, b, e.kernels.MulBF16, dst...)
 		}
-		return e.cpu.Mul(ctx, a, b, dst...)
+		return gpuBroadcastOp(e, ctx, a, b, e.kernels.MulBroadcast, e.kernels.MulBroadcast4D, e.cpu.Mul, dst...)
 	}
 	if !isFloat32[T]() {
 		return e.cpu.Mul(ctx, a, b, dst...)
@@ -885,7 +873,7 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		if sameShape(a, b) {
 			return gpuBinaryOpBF16(e, a, b, e.kernels.DivBF16, dst...)
 		}
-		return e.cpu.Div(ctx, a, b, dst...)
+		return gpuBroadcastOp(e, ctx, a, b, e.kernels.DivBroadcast, e.kernels.DivBroadcast4D, e.cpu.Div, dst...)
 	}
 	if !isFloat32[T]() {
 		return e.cpu.Div(ctx, a, b, dst...)
@@ -1045,6 +1033,9 @@ func (e *GPUEngine[T]) gpuTanhPrime(ctx context.Context, a, upstream *tensor.Ten
 }
 
 func (e *GPUEngine[T]) gpuAddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuScalarOpBF16(e, a, bf16ScalarToF32(scalar), e.kernels.AddScalar, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.AddScalar(ctx, a, scalar, dst...)
 	}
@@ -1055,6 +1046,9 @@ func (e *GPUEngine[T]) gpuAddScalar(ctx context.Context, a *tensor.TensorNumeric
 }
 
 func (e *GPUEngine[T]) gpuMulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuScalarOpBF16(e, a, bf16ScalarToF32(scalar), e.kernels.MulScalar, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.MulScalar(ctx, a, scalar, dst...)
 	}
@@ -1065,6 +1059,9 @@ func (e *GPUEngine[T]) gpuMulScalar(ctx context.Context, a *tensor.TensorNumeric
 }
 
 func (e *GPUEngine[T]) gpuDivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuScalarOpBF16(e, a, bf16ScalarToF32(scalar), e.kernels.DivScalar, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.DivScalar(ctx, a, scalar, dst...)
 	}

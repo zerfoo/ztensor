@@ -233,6 +233,50 @@ func TestGPUBF16_ReshapeStaysOnDevice(t *testing.T) {
 	}
 }
 
+func TestGPUBF16_BroadcastAndScalarParity(t *testing.T) {
+	eng := newTestGPUBF16Engine(t)
+	ctx := context.Background()
+
+	// These are the QKL2Norm ops that broke CUDA-graph capture by falling to the
+	// CPU engine: a column-broadcast Mul (x[M,D] * inv[M,1]) and AddScalar.
+	const M, D = 6, 4
+	xv := ramp(M * D)
+	invv := make([]float32, M) // [M,1] column vector
+	for i := range invv {
+		invv[i] = float32((i%5)+1) * 0.25 // bf16-exact
+	}
+	x := bf16Tensor(t, []int{M, D}, xv)
+	inv := bf16Tensor(t, []int{M, 1}, invv)
+
+	// Broadcast Mul: out[i,j] = x[i,j] * inv[i].
+	got, err := eng.Mul(ctx, x, inv)
+	if err != nil {
+		t.Fatalf("broadcast Mul: %v", err)
+	}
+	if want := []int{M, D}; !shapeEq(got.Shape(), want) {
+		t.Fatalf("broadcast Mul shape = %v, want %v", got.Shape(), want)
+	}
+	gd := bf16ToF32(got.Data())
+	for i := 0; i < M; i++ {
+		for j := 0; j < D; j++ {
+			want := float16.BFloat16FromFloat32(xv[i*D+j] * invv[i]).ToFloat32()
+			assertBF16Close(t, "broadcastMul", i*D+j, gd[i*D+j], want, 2.0)
+		}
+	}
+
+	// AddScalar: out[i] = x[i] + eps.
+	eps := float16.BFloat16FromFloat32(0.125)
+	gotS, err := eng.AddScalar(ctx, x, eps)
+	if err != nil {
+		t.Fatalf("AddScalar: %v", err)
+	}
+	sd := bf16ToF32(gotS.Data())
+	for i := range xv {
+		want := float16.BFloat16FromFloat32(xv[i] + 0.125).ToFloat32()
+		assertBF16Close(t, "addScalar", i, sd[i], want, 2.0)
+	}
+}
+
 // ramp returns n small, bf16-exact values centered near zero so GEMM sums stay
 // well-conditioned (no catastrophic cancellation).
 func ramp(n int) []float32 {
