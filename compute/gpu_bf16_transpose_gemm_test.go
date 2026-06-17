@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/float16"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestGPUBF16_MatMulTransposeBParity(t *testing.T) {
@@ -191,6 +192,45 @@ func TestGPUBF16_TransposeParity(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestGPUBF16_ReshapeStaysOnDevice(t *testing.T) {
+	eng := newTestGPUBF16Engine(t)
+	ctx := context.Background()
+
+	// A GPU-resident bf16 tensor (output of a GPU op) reshaped must stay a
+	// GPUStorage view, not bounce to the CPU engine -- otherwise the next op
+	// (e.g. Transpose feeding QKL2Norm) is forced onto the CPU and breaks
+	// CUDA-graph capture.
+	vals := ramp(2 * 3 * 4)
+	x := bf16Tensor(t, []int{2, 3, 4}, vals)
+	// Mul produces a device-resident GPUStorage[bf16] result.
+	gpuRes, err := eng.Mul(ctx, x, x)
+	if err != nil {
+		t.Fatalf("Mul: %v", err)
+	}
+	if _, ok := gpuRes.GetStorage().(*tensor.GPUStorage[float16.BFloat16]); !ok {
+		t.Fatalf("precondition: Mul result storage = %T, want *GPUStorage[bf16]", gpuRes.GetStorage())
+	}
+
+	r, err := eng.Reshape(ctx, gpuRes, []int{6, 4}, nil)
+	if err != nil {
+		t.Fatalf("Reshape: %v", err)
+	}
+	if want := []int{6, 4}; !shapeEq(r.Shape(), want) {
+		t.Fatalf("Reshape shape = %v, want %v", r.Shape(), want)
+	}
+	if _, ok := r.GetStorage().(*tensor.GPUStorage[float16.BFloat16]); !ok {
+		t.Fatalf("Reshape result storage = %T, want *GPUStorage[bf16] (must stay on device)", r.GetStorage())
+	}
+	// Data preserved (x*x).
+	rd := bf16ToF32(r.Data())
+	for i := range vals {
+		want := float16.BFloat16FromFloat32(vals[i] * vals[i]).ToFloat32()
+		if rd[i] != want {
+			t.Fatalf("Reshape[%d] = %g, want %g", i, rd[i], want)
+		}
+	}
 }
 
 // ramp returns n small, bf16-exact values centered near zero so GEMM sums stay
