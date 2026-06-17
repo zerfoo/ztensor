@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.18.0](https://github.com/zerfoo/ztensor/compare/v1.17.1...v1.18.0) (2026-06-17)
+
+
+### Features
+
+* **compute:** on-device bf16 broadcast + scalar ops (capture-safe) ([d4fe1ba](https://github.com/zerfoo/ztensor/commit/d4fe1bab1eb5464ddee94f7536b4c5fc45275643))
+
+
+### Bug Fixes
+
+* **gradcheck:** pin CrossAttention fwd intermediates across arena reset ([ed96180](https://github.com/zerfoo/ztensor/commit/ed96180ee69fc5df2cbbf26eb5279ec99e11ede6))
+
 ## [1.17.1](https://github.com/zerfoo/ztensor/compare/v1.17.0...v1.17.1) (2026-06-17)
 
 
