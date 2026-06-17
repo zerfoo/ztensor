@@ -62,6 +62,11 @@ var torchMap = map[string]torchOp{
 	// expression reshapes the leaf inside the graph so torch records the
 	// gradient on the (1, dim) leaf, matching the recorded ztensor shapes.
 	"LayerNorm": {Expr: "torch.nn.functional.layer_norm(x0, (4,), weight=gamma.reshape(4), bias=beta.reshape(4), eps=1e-05)"},
+
+	// GroupNorm: 2D input [N, C] with num_groups=2 over C=4 (groups of 2),
+	// per-channel affine. Matches gradcheck.newGroupNormNode(e, 4, 2); gamma/beta
+	// leaves stay (1, 4) and reshape to (4,) inside the graph, like LayerNorm.
+	"GroupNorm": {Expr: "torch.nn.functional.group_norm(x0, 2, weight=gamma.reshape(4), bias=beta.reshape(4), eps=1e-05)"},
 }
 
 // defaultTolerance is the first-cut f32 comparison bar: ztensor CPU/GPU f32
@@ -80,6 +85,7 @@ var defaultTolerance = Tolerance{
 var toleranceOverrides = map[string]Tolerance{
 	"Softmax":   {FwdAtol: 1e-6, FwdRtol: 1e-4, GradAtol: 1e-6, GradRtol: 1e-3},
 	"LayerNorm": {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
+	"GroupNorm": {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
 	"MatMul":    {FwdAtol: 1e-6, FwdRtol: 1e-4, GradAtol: 1e-6, GradRtol: 1e-3},
 }
 

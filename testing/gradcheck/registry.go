@@ -67,6 +67,8 @@ func NewRegistryNode[T tensor.Float](name string, e compute.Engine[T]) (graph.No
 		return newReduceMaxNode(e), nil
 	case "LayerNorm":
 		return newLayerNormNode(e, 4)
+	case "GroupNorm":
+		return newGroupNormNode(e, 4, 2)
 	default:
 		return nil, fmt.Errorf("gradcheck: no registry op named %q", name)
 	}
@@ -237,6 +239,14 @@ func Registry() []OpInfo {
 		{
 			Name: "LayerNorm", Seed: 26,
 			Make:        registryMake("LayerNorm"),
+			InputShapes: [][]int{{3, 4}},
+		},
+		// GroupNorm (per-group normalize + per-channel affine); dim=4, groups=2
+		// so the [3,4] input reshapes to [6,2] groups. Canonical VAE/UNet norm
+		// (E127/T127.1.0a -- extends the oracle to the GroupNorm op class).
+		{
+			Name: "GroupNorm", Seed: 27,
+			Make:        registryMake("GroupNorm"),
 			InputShapes: [][]int{{3, 4}},
 		},
 	}
