@@ -47,6 +47,20 @@ type TransposeBMatMuler[T tensor.Numeric] interface {
 	MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }
 
+// TransposeAMatMuler is an optional interface for engines that can compute
+// C = A^T * B without explicitly transposing A. This is the dW gradient shape
+// (X^T * dY) and avoids an extra allocation and kernel launch for the transpose.
+// A is [batch, k, m], B is [batch, k, n], result is [batch, m, n].
+//
+// It exists primarily for the bf16 backward path: GPUEngine.Transpose routes all
+// non-float32 types to the CPU engine, so an explicit bf16 transpose would force
+// a D2H/H2D round trip per step (breaking CUDA-graph capture and tensor cores).
+//
+// This API is not covered by the v1 stability guarantee.
+type TransposeAMatMuler[T tensor.Numeric] interface {
+	MatMulTransposeA(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+}
+
 // StreamProvider is an optional interface for engines that expose their
 // underlying GPU stream for CUDA graph capture.
 //

@@ -19,9 +19,9 @@ func Available() bool {
 type CudaDataType int
 
 const (
-	CudaR32F    CudaDataType = 0  // CUDA_R_32F  (float32)
-	CudaR16F    CudaDataType = 2  // CUDA_R_16F  (float16)
-	CudaR16BF   CudaDataType = 14 // CUDA_R_16BF (bfloat16)
+	CudaR32F     CudaDataType = 0  // CUDA_R_32F  (float32)
+	CudaR16F     CudaDataType = 2  // CUDA_R_16F  (float16)
+	CudaR16BF    CudaDataType = 14 // CUDA_R_16BF (bfloat16)
 	CudaR8F_E4M3 CudaDataType = 28 // CUDA_R_8F_E4M3 (fp8 e4m3)
 )
 
@@ -193,10 +193,10 @@ func Sgemm(h *Handle, m, n, k int, alpha float32,
 		uintptr(m),         // cols of op(A) = rows of C
 		uintptr(k),         // inner dimension
 		uintptr(unsafe.Pointer(&cAlpha)),
-		uintptr(b),  // B first
-		uintptr(n),  // ldb
-		uintptr(a),  // A second
-		uintptr(k),  // lda
+		uintptr(b), // B first
+		uintptr(n), // ldb
+		uintptr(a), // A second
+		uintptr(k), // lda
 		uintptr(unsafe.Pointer(&cBeta)),
 		uintptr(c),
 		uintptr(n), // ldc
@@ -230,10 +230,10 @@ func SgemmNT(h *Handle, m, n, k int, alpha float32,
 		uintptr(m),         // cols of op(A) = m
 		uintptr(k),         // inner dimension
 		uintptr(unsafe.Pointer(&cAlpha)),
-		uintptr(b),  // B first (cuBLAS convention)
-		uintptr(k),  // ldb = k (B_rm row width)
-		uintptr(a),  // A second
-		uintptr(k),  // lda = k (A_rm row width)
+		uintptr(b), // B first (cuBLAS convention)
+		uintptr(k), // ldb = k (B_rm row width)
+		uintptr(a), // A second
+		uintptr(k), // lda = k (A_rm row width)
 		uintptr(unsafe.Pointer(&cBeta)),
 		uintptr(c),
 		uintptr(n), // ldc = n (C_rm row width)
@@ -281,23 +281,23 @@ func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
 	//   &alpha, B, n, strideB, A, k, strideA, &beta, C, n, strideC, batchCount)
 	status := cuda.Ccall(lib.sgemmStridedBatched,
 		h.ptr,
-		uintptr(cublasOpN),                 // transa (for B)
-		uintptr(cublasOpN),                 // transb (for A)
-		uintptr(n),                         // rows of op(B) = cols of C
-		uintptr(m),                         // cols of op(A) = rows of C
-		uintptr(k),                         // inner dimension
+		uintptr(cublasOpN), // transa (for B)
+		uintptr(cublasOpN), // transb (for A)
+		uintptr(n),         // rows of op(B) = cols of C
+		uintptr(m),         // cols of op(A) = rows of C
+		uintptr(k),         // inner dimension
 		uintptr(unsafe.Pointer(&cAlpha)),
-		uintptr(b),                         // B first
-		uintptr(n),                         // ldb
-		uintptr(strideB),                   // strideB
-		uintptr(a),                         // A second
-		uintptr(k),                         // lda
-		uintptr(strideA),                   // strideA
+		uintptr(b),       // B first
+		uintptr(n),       // ldb
+		uintptr(strideB), // strideB
+		uintptr(a),       // A second
+		uintptr(k),       // lda
+		uintptr(strideA), // strideA
 		uintptr(unsafe.Pointer(&cBeta)),
 		uintptr(c),
-		uintptr(n),                         // ldc
-		uintptr(strideC),                   // strideC
-		uintptr(batch),                     // batchCount
+		uintptr(n),       // ldc
+		uintptr(strideC), // strideC
+		uintptr(batch),   // batchCount
 	)
 	if status != cublasStatusSuccess {
 		return fmt.Errorf("cublasSgemmStridedBatched failed with status %d", status)
@@ -325,23 +325,23 @@ func SgemmNTStridedBatched(h *Handle, m, n, k int, alpha float32,
 	// Row-major to column-major: B with OP_T first, A with OP_N second.
 	status := cuda.Ccall(lib.sgemmStridedBatched,
 		h.ptr,
-		uintptr(cublasOpT),                 // transpose B (cuBLAS first arg)
-		uintptr(cublasOpN),                 // no-transpose A (cuBLAS second arg)
-		uintptr(n),                         // rows of op(B) = n
-		uintptr(m),                         // cols of op(A) = m
-		uintptr(k),                         // inner dimension
+		uintptr(cublasOpT), // transpose B (cuBLAS first arg)
+		uintptr(cublasOpN), // no-transpose A (cuBLAS second arg)
+		uintptr(n),         // rows of op(B) = n
+		uintptr(m),         // cols of op(A) = m
+		uintptr(k),         // inner dimension
 		uintptr(unsafe.Pointer(&cAlpha)),
-		uintptr(b),                         // B first
-		uintptr(k),                         // ldb = k (B_rm row width)
-		uintptr(strideB),                   // strideB
-		uintptr(a),                         // A second
-		uintptr(k),                         // lda = k (A_rm row width)
-		uintptr(strideA),                   // strideA
+		uintptr(b),       // B first
+		uintptr(k),       // ldb = k (B_rm row width)
+		uintptr(strideB), // strideB
+		uintptr(a),       // A second
+		uintptr(k),       // lda = k (A_rm row width)
+		uintptr(strideA), // strideA
 		uintptr(unsafe.Pointer(&cBeta)),
 		uintptr(c),
-		uintptr(n),                         // ldc = n (C_rm row width)
-		uintptr(strideC),                   // strideC
-		uintptr(batch),                     // batchCount
+		uintptr(n),       // ldc = n (C_rm row width)
+		uintptr(strideC), // strideC
+		uintptr(batch),   // batchCount
 	)
 	if status != cublasStatusSuccess {
 		return fmt.Errorf("cublasSgemmNTStridedBatched failed with status %d", status)
@@ -389,27 +389,109 @@ func GemmEx(h *Handle, m, n, k int, alpha float32,
 	//   beta, C, Ctype, ldc, computeType, algo)
 	status := cuda.Ccall(lib.gemmEx,
 		h.ptr,
-		uintptr(cublasOpN),                  // transa (for B)
-		uintptr(cublasOpN),                  // transb (for A)
-		uintptr(n),                          // rows of op(B) = cols of C
-		uintptr(m),                          // cols of op(A) = rows of C
-		uintptr(k),                          // inner dimension
+		uintptr(cublasOpN), // transa (for B)
+		uintptr(cublasOpN), // transb (for A)
+		uintptr(n),         // rows of op(B) = cols of C
+		uintptr(m),         // cols of op(A) = rows of C
+		uintptr(k),         // inner dimension
 		uintptr(unsafe.Pointer(&cAlpha)),
-		uintptr(b),                          // B first
-		uintptr(bType),                      // Btype
-		uintptr(n),                          // ldb
-		uintptr(a),                          // A second
-		uintptr(aType),                      // Atype
-		uintptr(k),                          // lda
+		uintptr(b),     // B first
+		uintptr(bType), // Btype
+		uintptr(n),     // ldb
+		uintptr(a),     // A second
+		uintptr(aType), // Atype
+		uintptr(k),     // lda
 		uintptr(unsafe.Pointer(&cBeta)),
 		uintptr(c),
-		uintptr(cType),                      // Ctype
-		uintptr(n),                          // ldc
-		uintptr(computeType),                // computeType
-		cublasGemmDefault,                   // algo
+		uintptr(cType),       // Ctype
+		uintptr(n),           // ldc
+		uintptr(computeType), // computeType
+		cublasGemmDefault,    // algo
 	)
 	if status != cublasStatusSuccess {
 		return fmt.Errorf("cublasGemmEx failed with status %d", status)
 	}
 	return nil
+}
+
+// bf16GemmEx is the shared core for the bf16 transpose-variant GEMMs. It issues
+// a single cublasGemmEx with bf16 A/B/C operands and FP32 accumulation
+// (CUBLAS_COMPUTE_32F), using the row-major->column-major swap convention of the
+// other GEMMs in this file (B is the first cuBLAS operand, A the second).
+//
+// transFirst/transSecond are the cuBLAS ops applied to the first (B) and second
+// (A) operands respectively; ldFirst/ldSecond/ldC are the leading dimensions of
+// the stored buffers. dim1/dim2/dim3 are the cuBLAS (rows-of-Ccm, cols-of-Ccm,
+// inner) triple, which equal (n, m, k) for every variant here.
+func bf16GemmEx(h *Handle, transFirst, transSecond uintptr,
+	dim1, dim2, dim3 int, alpha float32,
+	first unsafe.Pointer, ldFirst int,
+	second unsafe.Pointer, ldSecond int,
+	beta float32, c unsafe.Pointer, ldC int,
+	errLabel string,
+) error {
+	if h == nil {
+		return fmt.Errorf("%s: nil handle", errLabel)
+	}
+	if first == nil || second == nil || c == nil {
+		return fmt.Errorf("%s: nil matrix pointer", errLabel)
+	}
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+	cAlpha := alpha
+	cBeta := beta
+	status := cuda.Ccall(lib.gemmEx,
+		h.ptr,
+		transFirst,  // op on first operand (B)
+		transSecond, // op on second operand (A)
+		uintptr(dim1),
+		uintptr(dim2),
+		uintptr(dim3),
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(first),
+		uintptr(CudaR16BF),
+		uintptr(ldFirst),
+		uintptr(second),
+		uintptr(CudaR16BF),
+		uintptr(ldSecond),
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(CudaR16BF),
+		uintptr(ldC),
+		uintptr(CublasCompute32F),
+		cublasGemmDefault,
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("%s failed with status %d", errLabel, status)
+	}
+	return nil
+}
+
+// BFloat16GemmNT performs bf16 C = alpha * A * B^T + beta * C where A is [m, k]
+// and B is [n, k] (row-major), accumulating in FP32. Mirrors SgemmNT: B is the
+// first cuBLAS operand with CUBLAS_OP_T (ldb=k), A the second with CUBLAS_OP_N
+// (lda=k), output dims (n, m, k), ldc=n. Avoids an explicit transpose of B.
+func BFloat16GemmNT(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, b unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	// first=B OP_T ldb=k, second=A OP_N lda=k, dims (n, m, k), ldc=n.
+	return bf16GemmEx(h, cublasOpT, cublasOpN, n, m, k, alpha,
+		b, k, a, k, beta, c, n, "cublasGemmEx(bf16 NT)")
+}
+
+// BFloat16GemmTN performs bf16 C = alpha * A^T * B + beta * C where A is [k, m]
+// and B is [k, n] (row-major), accumulating in FP32. This is the dW gradient
+// shape (X^T * dY). B is the first cuBLAS operand with CUBLAS_OP_N (ldb=n), A
+// the second with CUBLAS_OP_T (lda=m), output dims (n, m, k), ldc=n. Avoids an
+// explicit transpose of A.
+func BFloat16GemmTN(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, b unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	// first=B OP_N ldb=n, second=A OP_T lda=m, dims (n, m, k), ldc=n.
+	return bf16GemmEx(h, cublasOpN, cublasOpT, n, m, k, alpha,
+		b, n, a, m, beta, c, n, "cublasGemmEx(bf16 TN)")
 }

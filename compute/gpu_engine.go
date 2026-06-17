@@ -1788,21 +1788,20 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 		return nil, fmt.Errorf("MatMulTransposeB: input tensors must not be nil")
 	}
 
-	// Check for SgemmNT support.
-	ntBLAS, ok := e.blas.(gpuapi.BLASTransposeB)
-	if !ok {
-		// Fall back: explicit transpose + standard MatMul.
-		kT, err := e.Transpose(ctx, b, []int{0, 2, 1})
-		if err != nil {
-			return nil, err
-		}
-		return e.MatMul(ctx, a, kT, dst...)
-	}
-
 	var zero T
 	_, isFloat32 := any(zero).(float32)
-	if !isFloat32 {
-		kT, err := e.Transpose(ctx, b, []int{0, 2, 1})
+	_, isBFloat16 := any(zero).(float16.BFloat16)
+
+	// Native transpose-B GEMM: cuBLAS SgemmNT for f32, GemmEx bf16-NT for bf16.
+	// bf16 MUST use the native path -- GPUEngine.Transpose routes all non-float32
+	// types to the CPU engine, so the explicit-transpose fallback would force a
+	// D2H/H2D round trip per backward step (breaking CUDA-graph capture and
+	// tensor-core throughput). Any other element type uses the fallback.
+	ntBLAS, hasF32NT := e.blas.(gpuapi.BLASTransposeB)
+	bf16NT, hasBF16NT := e.blas.(gpuapi.BLASBFloat16TransposeB)
+	if (isFloat32 && !hasF32NT) || (isBFloat16 && !hasBF16NT) || (!isFloat32 && !isBFloat16) {
+		// Fall back: explicit (rank-aware) transpose of B + standard MatMul.
+		kT, err := e.Transpose(ctx, b, transposeLastTwoAxes(len(b.Shape())))
 		if err != nil {
 			return nil, err
 		}
@@ -1851,7 +1850,7 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 
 	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
-		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		kT, tErr := e.Transpose(ctx, b, transposeLastTwoAxes(len(b.Shape())))
 		if tErr != nil {
 			return nil, tErr
 		}
@@ -1861,7 +1860,7 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 
 	devB, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
-		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		kT, tErr := e.Transpose(ctx, b, transposeLastTwoAxes(len(b.Shape())))
 		if tErr != nil {
 			return nil, tErr
 		}
@@ -1882,18 +1881,19 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 
 	devC, err := e.pool.Alloc(e.deviceID, outputBytes)
 	if err != nil {
-		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		kT, tErr := e.Transpose(ctx, b, transposeLastTwoAxes(len(b.Shape())))
 		if tErr != nil {
 			return nil, tErr
 		}
 		return e.MatMul(ctx, a, kT, dst...)
 	}
 
-	// Use strided batched NT GEMM when available for batch > 1.
+	// Use strided batched NT GEMM when available for batch > 1 (f32 only; the
+	// bf16 NT path has no strided-batched variant yet and loops per batch below).
 	// This replaces N sequential SgemmNT calls with a single cuBLAS call.
 	// When bBatchSize == 1, strideB = 0 broadcasts B across all batches
 	// (supported by cuBLAS). Critical for GQA attention decode performance.
-	if batchSize > 1 {
+	if isFloat32 && batchSize > 1 {
 		if batchedNT, ok := e.blas.(gpuapi.BLASBatchedTransposeB); ok {
 			strideBVal := int64(bMatSize)
 			if bBatchSize == 1 {
@@ -1917,14 +1917,159 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 		}
 		cOff := batch * cMatSize * elemSize
 
-		if err := ntBLAS.SgemmNT(m, n, k, 1.0,
+		var gemmErr error
+		if isBFloat16 {
+			gemmErr = bf16NT.BFloat16GemmNT(m, n, k, 1.0,
+				unsafe.Add(devA, aOff),
+				unsafe.Add(devB, bOff),
+				0.0,
+				unsafe.Add(devC, cOff),
+			)
+		} else {
+			gemmErr = ntBLAS.SgemmNT(m, n, k, 1.0,
+				unsafe.Add(devA, aOff),
+				unsafe.Add(devB, bOff),
+				0.0,
+				unsafe.Add(devC, cOff),
+			)
+		}
+		if gemmErr != nil {
+			e.pool.Free(e.deviceID, devC, batchSize*cMatSize*elemSize)
+			return nil, fmt.Errorf("MatMulTransposeB: BLAS batch %d: %w", batch, gemmErr)
+		}
+	}
+
+	return makeGPUResult[T](e, outShape, devC, batchSize*cMatSize, dst...)
+}
+
+// transposeLastTwoAxes returns the axis permutation that swaps the last two
+// dimensions of a rank-`rank` tensor and leaves the leading (batch) axes in
+// place: [0,1,...,rank-3, rank-1, rank-2]. For rank 2 this is [1,0]; for rank 3,
+// [0,2,1]. The MatMulTranspose{A,B} fallbacks use it so a 2D weight is never
+// handed rank-3 axes (the "number of axes 3 must match tensor dimensions 2"
+// bug, ztensor graph/cuda_graph.go).
+func transposeLastTwoAxes(rank int) []int {
+	if rank < 2 {
+		return []int{0}
+	}
+	axes := make([]int, rank)
+	for i := range axes {
+		axes[i] = i
+	}
+	axes[rank-2], axes[rank-1] = rank-1, rank-2
+	return axes
+}
+
+// MatMulTransposeA computes C = A^T * B without an explicit transpose of A.
+// This is the dW gradient shape (X^T * dY). A is [...batch, k, m], B is
+// [...batch, k, n], result is [...batch, m, n]. Supports batch broadcasting
+// (bBatch=1 broadcasts B across A's batch).
+//
+// For bf16 it uses the native BFloat16GemmTN GEMM to stay on-device; for every
+// other element type (and when the BLAS lacks bf16 TN support) it falls back to
+// an explicit (rank-aware) Transpose of A + MatMul, preserving the prior f32
+// behavior.
+func (e *GPUEngine[T]) MatMulTransposeA(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if a == nil || b == nil {
+		return nil, fmt.Errorf("MatMulTransposeA: input tensors must not be nil")
+	}
+
+	var zero T
+	_, isBFloat16 := any(zero).(float16.BFloat16)
+	bf16TN, hasBF16TN := e.blas.(gpuapi.BLASBFloat16TransposeB)
+
+	transposeAFallback := func() (*tensor.TensorNumeric[T], error) {
+		aT, err := e.Transpose(ctx, a, transposeLastTwoAxes(len(a.Shape())))
+		if err != nil {
+			return nil, err
+		}
+		return e.MatMul(ctx, aT, b, dst...)
+	}
+
+	if !isBFloat16 || !hasBF16TN {
+		return transposeAFallback()
+	}
+
+	e.setDevice()
+
+	aShape := a.Shape()
+	bShape := b.Shape()
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return nil, fmt.Errorf("MatMulTransposeA: tensors must have at least 2 dimensions")
+	}
+
+	// A: [..., k, m], B: [..., k, n] → C: [..., m, n]
+	k := aShape[len(aShape)-2]
+	m := aShape[len(aShape)-1]
+	bk := bShape[len(bShape)-2]
+	n := bShape[len(bShape)-1]
+	if k != bk {
+		return nil, fmt.Errorf("MatMulTransposeA: k dimensions must match: A[..., %d, ...] vs B[..., %d, ...]", k, bk)
+	}
+
+	aBatchSize := 1
+	for _, d := range aShape[:len(aShape)-2] {
+		aBatchSize *= d
+	}
+	bBatchSize := 1
+	for _, d := range bShape[:len(bShape)-2] {
+		bBatchSize *= d
+	}
+	if bBatchSize != 1 && aBatchSize != bBatchSize {
+		return nil, fmt.Errorf("MatMulTransposeA: batch dimensions %v and %v are incompatible", aShape[:len(aShape)-2], bShape[:len(bShape)-2])
+	}
+	batchSize := aBatchSize
+	if bBatchSize > batchSize {
+		batchSize = bBatchSize
+	}
+
+	outShape := make([]int, 0, len(aShape))
+	outShape = append(outShape, aShape[:len(aShape)-2]...)
+	outShape = append(outShape, m, n)
+
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return transposeAFallback()
+	}
+	defer cleanupA()
+
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		return transposeAFallback()
+	}
+	defer cleanupB()
+
+	elemSize := int(unsafe.Sizeof(zero))
+	aMatSize := k * m
+	bMatSize := k * n
+	cMatSize := m * n
+
+	outputBytes := batchSize * cMatSize * elemSize
+	if err := e.checkVRAMBounds("MatMulTransposeA", outputBytes); err != nil {
+		return nil, err
+	}
+
+	devC, err := e.pool.Alloc(e.deviceID, outputBytes)
+	if err != nil {
+		return transposeAFallback()
+	}
+
+	for batch := range batchSize {
+		aOff := batch * aMatSize * elemSize
+		bOff := 0
+		if bBatchSize > 1 {
+			bOff = batch * bMatSize * elemSize
+		}
+		cOff := batch * cMatSize * elemSize
+
+		if err := bf16TN.BFloat16GemmTN(m, n, k, 1.0,
 			unsafe.Add(devA, aOff),
 			unsafe.Add(devB, bOff),
 			0.0,
 			unsafe.Add(devC, cOff),
 		); err != nil {
 			e.pool.Free(e.deviceID, devC, batchSize*cMatSize*elemSize)
-			return nil, fmt.Errorf("MatMulTransposeB: BLAS batch %d: %w", batch, err)
+			return nil, fmt.Errorf("MatMulTransposeA: bf16 TN GEMM batch %d: %w", batch, err)
 		}
 	}
 

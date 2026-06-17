@@ -70,6 +70,28 @@ type BLASTransposeB interface {
 	) error
 }
 
+// BLASBFloat16TransposeB is an optional extension that supports the two bf16
+// transpose-variant GEMMs needed by a fully on-device bf16 backward pass,
+// accumulating in FP32:
+//
+//	BFloat16GemmNT: C = A * B^T   (dX = dY * W),  A=[m,k], B=[n,k], C=[m,n]
+//	BFloat16GemmTN: C = A^T * B   (dW = X^T * dY), A=[k,m], B=[k,n], C=[m,n]
+//
+// These avoid the bf16 CPU-transpose fallback (GPUEngine.Transpose routes all
+// non-float32 types to the CPU engine), which would otherwise force a D2H/H2D
+// round trip per matmul-backward -- breaking CUDA-graph capture and tensor-core
+// throughput. See zerfoo bf16 GPU training path (ADR-075 lever L4).
+type BLASBFloat16TransposeB interface {
+	BFloat16GemmNT(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+	BFloat16GemmTN(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+}
+
 // BLASBatched is an optional extension that supports strided batched GEMM.
 // All batch elements share the same m, n, k dimensions and alpha/beta scalars.
 // Matrices are accessed at base + i*stride for batch element i.
