@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/zerfoo/ztensor/compare/v1.16.0...v1.17.0) (2026-06-17)
+
+
+### Features
+
+* **compute:** native bf16 GPU transpose kernels (capture-safe) ([25f5981](https://github.com/zerfoo/ztensor/commit/25f5981c75ac7f12f72bc0083c080920a95938bb))
+
 ## [1.16.0](https://github.com/zerfoo/ztensor/compare/v1.15.0...v1.16.0) (2026-06-17)
 
 
