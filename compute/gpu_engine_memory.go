@@ -712,8 +712,12 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 		}
 	}
 
-	// GPUStorage[T]: zero-copy reshape.
-	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && isFloat32[T]() && newSize == currentSize {
+	// GPUStorage[T]: zero-copy reshape. Reshape is a pure metadata/view operation
+	// (no data movement), so it is valid for any element type whose data lives in
+	// a GPUStorage[T]. bf16 must stay on this GPU view path: routing it to the CPU
+	// reshape produces a host tensor that then forces the next op (e.g. Transpose
+	// feeding QKL2Norm) onto the CPU engine, breaking CUDA-graph capture. ADR-075 L4.
+	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && (isFloat32[T]() || isBFloat16[T]()) && newSize == currentSize {
 		view := gs.View(gs.Len())
 		if len(dst) > 0 && dst[0] != nil {
 			aliasReshapeDst(dst[0], inferredShape, view)
