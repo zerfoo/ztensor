@@ -41,6 +41,13 @@ type opNode[T tensor.Float] struct {
 	bwd    func(ctx context.Context, g tn[T], inputs []tn[T], out tn[T]) ([]tn[T], error)
 	out    tn[T] // cached forward output, saved for backward
 	saver  graph.Saver[T]
+	// extraSaves, when set, returns forward intermediates (beyond the output)
+	// that Backward reads via closure capture. They are registered with the
+	// Saver so they survive an arena Reset between Forward and Backward (the
+	// testing/parity reset-between-fwd-bwd schedule); without this they are
+	// arena-freed and Backward reads garbage (max_abs=+Inf). Evaluated after
+	// fwd has populated the captured variables.
+	extraSaves func() []tn[T]
 }
 
 func (n *opNode[T]) OpType() string                     { return n.opType }
@@ -61,6 +68,9 @@ func (n *opNode[T]) Forward(ctx context.Context, inputs ...tn[T]) (tn[T], error)
 	n.out = y
 	if n.saver != nil {
 		n.saver.SaveForBackward(y)
+		if n.extraSaves != nil {
+			n.saver.SaveForBackward(n.extraSaves()...)
+		}
 	}
 	return y, nil
 }
@@ -886,9 +896,12 @@ func (n *groupNormNode[T]) Backward(ctx context.Context, _ types.BackwardMode, g
 // 1/sqrt(E), E = query last dim = d -- matches). No trainable parameters; the
 // three inputs are Q, K, V and the gradient flows to all three.
 func newCrossAttentionNode[T tensor.Float](e compute.Engine[T]) *opNode[T] {
-	// Intermediates captured across Forward/Backward. gradcheck builds a fresh
-	// node per evaluation and never resets an arena between the passes, so
-	// closure capture is sufficient (no Saver needed -- see the file header).
+	// Intermediates captured across Forward/Backward via closure. Backward reads
+	// attn (softmax weights) and the Q/K/V inputs; under the testing/parity
+	// reset-between-fwd-bwd schedule the arena is Reset between the passes, so
+	// these must be pinned via the Saver (extraSaves below) -- otherwise they are
+	// arena-freed and Backward reads garbage (max_abs=+Inf). gradcheck itself
+	// never resets between passes, so it is unaffected either way.
 	var (
 		attn  tn[T] // softmax weights A [Lq, Lk]
 		qIn   tn[T]
@@ -898,6 +911,9 @@ func newCrossAttentionNode[T tensor.Float](e compute.Engine[T]) *opNode[T] {
 	)
 	return &opNode[T]{
 		opType: "CrossAttention",
+		extraSaves: func() []tn[T] {
+			return []tn[T]{attn, qIn, kIn, vIn}
+		},
 		fwd: func(ctx context.Context, in []tn[T]) (tn[T], error) {
 			if len(in) != 3 {
 				return nil, fmt.Errorf("CrossAttention: want 3 inputs (Q,K,V), got %d", len(in))
@@ -1151,9 +1167,9 @@ type timestepEmbedNode[T tensor.Float] struct {
 	freqs  *graph.Parameter[T] // [1, H]
 	half   int                 // H
 
-	sinv tn[T] // sin(arg) [N, H]
-	cosv tn[T] // cos(arg) [N, H]
-	tIn  tn[T]
+	sinv  tn[T] // sin(arg) [N, H]
+	cosv  tn[T] // cos(arg) [N, H]
+	tIn   tn[T]
 	saver graph.Saver[T]
 }
 
