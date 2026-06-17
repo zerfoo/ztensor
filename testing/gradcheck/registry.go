@@ -69,6 +69,12 @@ func NewRegistryNode[T tensor.Float](name string, e compute.Engine[T]) (graph.No
 		return newLayerNormNode(e, 4)
 	case "GroupNorm":
 		return newGroupNormNode(e, 4, 2)
+	case "CrossAttention":
+		return newCrossAttentionNode(e), nil
+	case "AdaLN":
+		return newAdaLNNode(e, 4, 3)
+	case "TimestepEmbed":
+		return newTimestepEmbedNode(e, 4)
 	default:
 		return nil, fmt.Errorf("gradcheck: no registry op named %q", name)
 	}
@@ -248,6 +254,27 @@ func Registry() []OpInfo {
 			Name: "GroupNorm", Seed: 27,
 			Make:        registryMake("GroupNorm"),
 			InputShapes: [][]int{{3, 4}},
+		},
+		// Cross-attention (scaled dot-product attention): Q[2,4], K[3,4], V[3,4]
+		// -> [2,4]. Three inputs, no params (E127/T127.1.0a cross-attention).
+		{
+			Name: "CrossAttention", Seed: 28,
+			Make:        registryMake("CrossAttention"),
+			InputShapes: [][]int{{2, 4}, {3, 4}, {3, 4}},
+		},
+		// AdaLN modulation: x[2,4], c[2,3]; params Ws,Wsh [3,4]. Two inputs +
+		// two params (E127/T127.1.0a AdaLN-Zero modulation core).
+		{
+			Name: "AdaLN", Seed: 29,
+			Make:        registryMake("AdaLN"),
+			InputShapes: [][]int{{2, 4}, {2, 3}},
+		},
+		// Timestep sinusoidal embedding: t[3,1] -> [3,8]; freqs [1,4] leaf
+		// (E127/T127.1.0a timestep-embedding op class).
+		{
+			Name: "TimestepEmbed", Seed: 30,
+			Make:        registryMake("TimestepEmbed"),
+			InputShapes: [][]int{{3, 1}},
 		},
 	}
 }

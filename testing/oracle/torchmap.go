@@ -67,6 +67,19 @@ var torchMap = map[string]torchOp{
 	// per-channel affine. Matches gradcheck.newGroupNormNode(e, 4, 2); gamma/beta
 	// leaves stay (1, 4) and reshape to (4,) inside the graph, like LayerNorm.
 	"GroupNorm": {Expr: "torch.nn.functional.group_norm(x0, 2, weight=gamma.reshape(4), bias=beta.reshape(4), eps=1e-05)"},
+
+	// CrossAttention: single-head scaled dot-product attention over Q=x0, K=x1,
+	// V=x2. torch's default scale is 1/sqrt(E) with E the query last dim, which
+	// matches gradcheck.newCrossAttentionNode's 1/sqrt(d).
+	"CrossAttention": {Expr: "torch.nn.functional.scaled_dot_product_attention(x0, x1, x2)"},
+
+	// AdaLN: out = x*(1+scale)+shift with scale = c@Ws, shift = c@Wsh. x0=x,
+	// x1=c; Ws,Wsh are the named [cond,dim] projection leaves.
+	"AdaLN": {Expr: "x0 * (1 + x1 @ Ws) + (x1 @ Wsh)"},
+
+	// TimestepEmbed: sinusoidal embedding concat(sin(t@freqs), cos(t@freqs)).
+	// x0 = t [N,1]; freqs is the named [1,H] leaf.
+	"TimestepEmbed": {Expr: "torch.cat([torch.sin(x0 @ freqs), torch.cos(x0 @ freqs)], dim=1)"},
 }
 
 // defaultTolerance is the first-cut f32 comparison bar: ztensor CPU/GPU f32
@@ -85,8 +98,9 @@ var defaultTolerance = Tolerance{
 var toleranceOverrides = map[string]Tolerance{
 	"Softmax":   {FwdAtol: 1e-6, FwdRtol: 1e-4, GradAtol: 1e-6, GradRtol: 1e-3},
 	"LayerNorm": {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
-	"GroupNorm": {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
-	"MatMul":    {FwdAtol: 1e-6, FwdRtol: 1e-4, GradAtol: 1e-6, GradRtol: 1e-3},
+	"GroupNorm":      {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
+	"MatMul":         {FwdAtol: 1e-6, FwdRtol: 1e-4, GradAtol: 1e-6, GradRtol: 1e-3},
+	"CrossAttention": {FwdAtol: 1e-5, FwdRtol: 1e-4, GradAtol: 1e-5, GradRtol: 1e-3},
 }
 
 // toleranceFor returns the per-op tolerance, falling back to the default.
