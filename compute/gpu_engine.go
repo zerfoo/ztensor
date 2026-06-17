@@ -659,6 +659,122 @@ func (e *GPUEngine[T]) bulkUploadF32(tensors []*tensor.TensorNumeric[float32]) (
 	return len(eligible), nil
 }
 
+// bulkUploadT is the generic (T-typed) analogue of bulkUploadF32: it makes a
+// GPUEngine[T]'s own host-backed weight tensors device-resident in bounded
+// chunks, so a non-f32 engine (e.g. GPUEngine[float16.BFloat16]) no longer
+// leaves its weights host-backed and pays a per-op H2D firehose. It mirrors
+// bulkUploadF32 exactly -- capture-skip, MinTensors threshold, chunk bounds via
+// bulkUploadChunkRanges, managedMem direct-copy vs staged Memcpy, non-owning
+// views via NewGPUStorageViewFromPtr -- but sizes everything by the actual
+// element size of T (unsafe.Sizeof) instead of f32Size, and skips tensors that
+// are already *tensor.GPUStorage[T] (already on device). The f32 fast path
+// keeps its dedicated bulkUploadF32 (and its quantized-storage skip set); this
+// path is the universal fallback for any other element type.
+//
+// Returns the number of tensors that were bulk-uploaded.
+func (e *GPUEngine[T]) bulkUploadT(tensors []*tensor.TensorNumeric[T]) (int, error) {
+	if cap, ok := e.pool.(gpuapi.CaptureAwareAllocator); ok && cap.IsCapturing() {
+		return 0, nil
+	}
+
+	elemSize := int(unsafe.Sizeof(*new(T)))
+
+	type entry struct {
+		t     *tensor.TensorNumeric[T]
+		nelem int
+	}
+	eligible := make([]entry, 0, len(tensors))
+	for _, t := range tensors {
+		if t == nil {
+			continue
+		}
+		// Skip tensors already device-resident as GPUStorage[T].
+		if _, ok := any(t.GetStorage()).(*tensor.GPUStorage[T]); ok {
+			continue
+		}
+		n := len(t.Data())
+		if n == 0 {
+			continue
+		}
+		eligible = append(eligible, entry{t: t, nelem: n})
+	}
+	if len(eligible) < bulkUploadF32MinTensors {
+		return 0, nil
+	}
+	if err := e.ensureNotCapturing(); err != nil {
+		return 0, err
+	}
+
+	nelems := make([]int, len(eligible))
+	for i, en := range eligible {
+		nelems[i] = en.nelem
+	}
+	for _, r := range bulkUploadChunkRanges(nelems, elemSize,
+		bulkUploadF32MaxChunkBytes, bulkUploadF32MaxChunkTensors) {
+		chunk := eligible[r[0]:r[1]]
+		chunkBytes := 0
+		for _, en := range chunk {
+			chunkBytes += en.nelem * elemSize
+		}
+
+		var devPtr unsafe.Pointer
+		var err error
+		if e.managedMem {
+			devPtr, err = mallocManagedFn(chunkBytes)
+		} else {
+			devPtr, err = e.runtime.Malloc(chunkBytes)
+		}
+		if err != nil {
+			return 0, fmt.Errorf("bulk alloc T chunk (%d tensors, %d bytes): %w",
+				len(chunk), chunkBytes, err)
+		}
+
+		if e.managedMem {
+			dst := unsafe.Slice((*byte)(devPtr), chunkBytes)
+			off := 0
+			for _, en := range chunk {
+				src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*elemSize)
+				copy(dst[off:off+en.nelem*elemSize], src)
+				off += en.nelem * elemSize
+			}
+		} else {
+			host := make([]byte, chunkBytes)
+			off := 0
+			for _, en := range chunk {
+				src := unsafe.Slice((*byte)(unsafe.Pointer(&en.t.Data()[0])), en.nelem*elemSize)
+				copy(host[off:off+en.nelem*elemSize], src)
+				off += en.nelem * elemSize
+			}
+			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&host[0]), chunkBytes, gpuapi.MemcpyHostToDevice); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return 0, fmt.Errorf("bulk H2D T chunk (%d bytes): %w", chunkBytes, err)
+			}
+		}
+
+		e.bulkUploadBuffers = append(e.bulkUploadBuffers, devPtr)
+		off := 0
+		for _, en := range chunk {
+			sub := unsafe.Add(devPtr, off)
+			view := tensor.NewGPUStorageViewFromPtr[T](sub, en.nelem, e.deviceID)
+			en.t.SetStorage(view)
+			off += en.nelem * elemSize
+		}
+	}
+	return len(eligible), nil
+}
+
+// UploadWeightsT is the T-typed analogue of UploadWeights: it makes this
+// engine's own bf16 (or any-T) weight tensors device-resident via bulkUploadT.
+// Unlike UploadWeights it does NOT handle the float32 quantized-storage paths
+// (Q4/Q4_K/...); those remain the f32 inference engine's responsibility. Use
+// this from a GPUEngine[T] (e.g. T == float16.BFloat16) to lift host-backed
+// weights onto the device once at load time and avoid the per-op H2D firehose.
+func (e *GPUEngine[T]) UploadWeightsT(tensors []*tensor.TensorNumeric[T]) error {
+	e.setDevice()
+	_, err := e.bulkUploadT(tensors)
+	return err
+}
+
 func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) error {
 	e.setDevice()
 	uploaded, err := e.bulkUploadF32(tensors)
