@@ -119,6 +119,24 @@ func BF16ToF32(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
 	return checkKernel(ret, "bf16_to_f32")
 }
 
+// SumAxisBF16 reduces bf16 data along one axis with FP32 accumulation:
+// output[outer][inner] = sum(input[outer][k][inner], k=0..axisSize-1) * invDivisor,
+// rounded to bf16. invDivisor is 1.0 for a plain sum and 1/axisSize for a mean
+// (folding the divide into the FP32 accumulation so the mean stays on-device and
+// rounds exactly once).
+func SumAxisBF16(input, output unsafe.Pointer, outer, inner, axisSize int, invDivisor float32, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("sum_axis_bf16 kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchSumAxisBF16,
+		uintptr(input), uintptr(output),
+		uintptr(outer), uintptr(inner), uintptr(axisSize),
+		floatBits(invDivisor),
+		uintptr(s))
+	return checkKernel(ret, "sum_axis_bf16")
+}
+
 // ScaledSoftmaxBF16 applies fused scaled softmax on bf16 data with FP32 accumulation.
 func ScaledSoftmaxBF16(
 	input, output unsafe.Pointer,

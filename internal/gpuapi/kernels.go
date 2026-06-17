@@ -202,6 +202,12 @@ type KernelRunner interface {
 	ExpBF16(a, c unsafe.Pointer, n int, stream Stream) error
 	LogBF16(a, c unsafe.Pointer, n int, stream Stream) error
 
+	// SumAxisBF16 reduces bf16 data along one axis with FP32 accumulation:
+	// output[outer][inner] = sum(input[outer][k][inner], k=0..axisSize-1) * invDivisor.
+	// invDivisor is 1.0 for a plain sum and 1/axisSize for a mean (the divide is
+	// folded into the FP32 accumulation, keeping the mean on-device).
+	SumAxisBF16(input, output unsafe.Pointer, outer, inner, axisSize int, invDivisor float32, stream Stream) error
+
 	// ScaledSoftmaxBF16 computes softmax(input * scale) on bf16 data with FP32 accumulation.
 	ScaledSoftmaxBF16(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
 

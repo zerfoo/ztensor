@@ -1108,6 +1108,9 @@ func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], 
 }
 
 func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		return gpuSumAxisBF16(e, ctx, a, axis, keepDims, 1.0, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 	}
@@ -1206,6 +1209,26 @@ func (e *GPUEngine[T]) gpuReduceSum(ctx context.Context, a *tensor.TensorNumeric
 }
 
 func (e *GPUEngine[T]) gpuReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if isBFloat16[T]() {
+		if a == nil {
+			return nil, fmt.Errorf("ReduceMean: input tensor must not be nil")
+		}
+		// Negative axis falls back to CPU ReduceMean (matches the f32 contract and
+		// avoids gpuSumAxisBF16's sum-only negative-axis fallback).
+		if axis < 0 {
+			return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
+		}
+		// Native bf16 mean: fold 1/axisSize into the FP32-accumulating sum kernel
+		// so the result stays on-device and rounds to bf16 exactly once. axis >=
+		// rank surfaces gpuSumAxisBF16's "axis out of bounds" error (matches f32).
+		shape := a.Shape()
+		rank := len(shape)
+		invDivisor := float32(1.0)
+		if axis < rank && shape[axis] != 0 {
+			invDivisor = 1.0 / float32(shape[axis])
+		}
+		return gpuSumAxisBF16(e, ctx, a, axis, keepDims, invDivisor, dst...)
+	}
 	if !isFloat32[T]() {
 		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
 	}

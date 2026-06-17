@@ -186,6 +186,53 @@ __global__ void kernel_scaled_softmax_bf16(const __nv_bfloat16* input, __nv_bflo
     }
 }
 
+// ---------- Sum along an axis bf16 ----------
+// output[outer][inner] = sum(input[outer][k][inner], k=0..axisSize-1) * invDivisor.
+// Each block handles one (outer,inner) stripe; the per-axis sum is accumulated
+// in FP32 (matching SumAxis f32 semantics and the no-fast-math convention) and
+// the final FP32 result is rounded to bf16. invDivisor scales the sum before
+// rounding: pass 1.0f for a plain sum or 1/axisSize for a mean (folding the
+// divide into the FP32 accumulation keeps the mean on-device and rounds exactly
+// once). A sum of N bf16 values accumulated in FP32 is more accurate than
+// pairwise bf16 addition, so the result equals round_to_bf16(sum_fp32(input) *
+// invDivisor) -- the parity oracle the gate checks (with a generous tolerance,
+// since the f64 reference rounds only once at the end).
+
+__global__ void kernel_sum_axis_bf16(const __nv_bfloat16* input, __nv_bfloat16* output,
+                                     int outer, int inner, int axisSize,
+                                     float invDivisor) {
+    int stripe = blockIdx.x;
+    int o = stripe / inner;
+    int in_ = stripe % inner;
+    int base = o * axisSize * inner + in_;
+    int step = inner;
+
+    extern __shared__ float sdata[];
+
+    float local_sum = 0.0f;
+    for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
+        local_sum += __bfloat162float(input[base + k * step]);
+    }
+    sdata[threadIdx.x] = local_sum;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s >= 32; s >>= 1) {
+        if (threadIdx.x < s) {
+            sdata[threadIdx.x] += sdata[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x < 32) {
+        float val = sdata[threadIdx.x];
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        }
+        if (threadIdx.x == 0) {
+            output[stripe] = __float2bfloat16(val * invDivisor);
+        }
+    }
+}
+
 // ---------- F32 <-> BF16 conversion kernels ----------
 
 __global__ void kernel_f32_to_bf16(const float* src, __nv_bfloat16* dst, int n) {
@@ -308,6 +355,23 @@ cudaError_t launch_scaled_softmax_bf16(const void* input, void* output,
     size_t smem = block * sizeof(float);
     kernel_scaled_softmax_bf16<<<numStripes, block, smem, stream>>>(
         (const __nv_bfloat16*)input, (__nv_bfloat16*)output, outer, inner, axisSize, scale);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_sum_axis_bf16(const void* input, void* output,
+                                 int outer, int inner, int axisSize,
+                                 unsigned int inv_divisor_bits,
+                                 cudaStream_t stream) {
+    float invDivisor = bits_to_float_bf16(inv_divisor_bits);
+    // Mirror launch_scaled_softmax_bf16's launch config but floor the block at
+    // one warp: the reduction ends with a full-warp __shfl_down_sync, so every
+    // launched lane (incl. those past axisSize, which contribute 0) must exist.
+    int block = 32;
+    while (block < axisSize && block < 256) block <<= 1;
+    int numStripes = outer * inner;
+    size_t smem = block * sizeof(float);
+    kernel_sum_axis_bf16<<<numStripes, block, smem, stream>>>(
+        (const __nv_bfloat16*)input, (__nv_bfloat16*)output, outer, inner, axisSize, invDivisor);
     return cudaGetLastError();
 }
 
