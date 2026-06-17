@@ -82,6 +82,122 @@ func gpuBinaryOpBF16[T tensor.Numeric](
 	return makeGPUResult[T](e, a.Shape(), devC, n, dst...)
 }
 
+// execBroadcast2D runs a 2D broadcast binary kernel and builds the result.
+//
+// For f32 it calls the kernel directly (prior behavior). For bf16 -- which has
+// no native broadcast kernel -- it converts both operands to f32 on-device,
+// runs the existing f32 broadcast kernel, then converts the result back to bf16,
+// all on the engine stream. This keeps bf16 broadcast ops on the GPU and
+// CUDA-graph-capturable, instead of the host CPU fallback whose D2H/H2D copies
+// break stream capture (e.g. QKL2Norm's Mul(x, inv)). Computing in f32 also
+// matches the bf16 GEMM/reduction convention (f32 accumulation, bf16 storage).
+// devA/devB are T-typed device pointers; nA/nB are the element counts of a/b.
+func execBroadcast2D[T tensor.Numeric](
+	e *GPUEngine[T], outShape []int,
+	devA unsafe.Pointer, nA int, devB unsafe.Pointer, nB int, outElems int,
+	saRow, saCol, sbRow, sbCol, mDim, dDim int,
+	kernelFn func(devA, devB, devC unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, stream gpuapi.Stream) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	if !isBFloat16[T]() {
+		devC, err := e.pool.Alloc(e.deviceID, outElems*f32Size)
+		if err != nil {
+			return nil, err
+		}
+		if err := kernelFn(devA, devB, devC, saRow, saCol, sbRow, sbCol, mDim, dDim, e.stream); err != nil {
+			e.pool.Free(e.deviceID, devC, outElems*f32Size)
+			return nil, err
+		}
+		return makeGPUResult[T](e, outShape, devC, outElems, dst...)
+	}
+
+	// bf16: a,b -> f32 scratch, f32 broadcast, result -> bf16. Scratch is freed
+	// after the kernels are enqueued on the engine stream (arena frees are
+	// stream-ordered, matching the getDevicePtr FP16->F32 scratch pattern).
+	aF, err := e.pool.Alloc(e.deviceID, nA*f32Size)
+	if err != nil {
+		return nil, err
+	}
+	defer e.pool.Free(e.deviceID, aF, nA*f32Size)
+	if err := e.kernels.BF16ToF32(devA, aF, nA, e.stream); err != nil {
+		return nil, err
+	}
+	bF, err := e.pool.Alloc(e.deviceID, nB*f32Size)
+	if err != nil {
+		return nil, err
+	}
+	defer e.pool.Free(e.deviceID, bF, nB*f32Size)
+	if err := e.kernels.BF16ToF32(devB, bF, nB, e.stream); err != nil {
+		return nil, err
+	}
+	cF, err := e.pool.Alloc(e.deviceID, outElems*f32Size)
+	if err != nil {
+		return nil, err
+	}
+	defer e.pool.Free(e.deviceID, cF, outElems*f32Size)
+	if err := kernelFn(aF, bF, cF, saRow, saCol, sbRow, sbCol, mDim, dDim, e.stream); err != nil {
+		return nil, err
+	}
+	cB, err := e.pool.Alloc(e.deviceID, outElems*bf16Size)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.kernels.F32ToBF16(cF, cB, outElems, e.stream); err != nil {
+		e.pool.Free(e.deviceID, cB, outElems*bf16Size)
+		return nil, err
+	}
+	return makeGPUResult[T](e, outShape, cB, outElems, dst...)
+}
+
+// bf16ScalarToF32 converts a bf16 scalar (carried as T) to float32. Used by the
+// bf16 scalar-op path, where toFloat32 (an any.(float32) assertion) would panic.
+func bf16ScalarToF32[T tensor.Numeric](v T) float32 {
+	return any(v).(float16.BFloat16).ToFloat32()
+}
+
+// gpuScalarOpBF16 runs a scalar kernel (c = op(a, scalar)) for bf16 by converting
+// a to f32 on-device, running the f32 scalar kernel, and converting the result
+// back to bf16 -- keeping the op on the GPU and capture-safe (the CPU fallback's
+// host copies break CUDA-graph capture, e.g. QKL2Norm's AddScalar(eps)).
+func gpuScalarOpBF16[T tensor.Numeric](
+	e *GPUEngine[T], a *tensor.TensorNumeric[T], scalar float32,
+	kernelFn func(devA unsafe.Pointer, scalar float32, devC unsafe.Pointer, n int, stream gpuapi.Stream) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	e.setDevice()
+	n := a.GetStorage().Len()
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupA()
+	aF, err := e.pool.Alloc(e.deviceID, n*f32Size)
+	if err != nil {
+		return nil, err
+	}
+	defer e.pool.Free(e.deviceID, aF, n*f32Size)
+	if err := e.kernels.BF16ToF32(devA, aF, n, e.stream); err != nil {
+		return nil, err
+	}
+	cF, err := e.pool.Alloc(e.deviceID, n*f32Size)
+	if err != nil {
+		return nil, err
+	}
+	defer e.pool.Free(e.deviceID, cF, n*f32Size)
+	if err := kernelFn(aF, scalar, cF, n, e.stream); err != nil {
+		return nil, err
+	}
+	cB, err := e.pool.Alloc(e.deviceID, n*bf16Size)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.kernels.F32ToBF16(cF, cB, n, e.stream); err != nil {
+		e.pool.Free(e.deviceID, cB, n*bf16Size)
+		return nil, err
+	}
+	return makeGPUResult[T](e, a.Shape(), cB, n, dst...)
+}
+
 // gpuSoftmaxBF16 runs a native bf16 softmax along the given axis using the
 // fused scaled-softmax kernel (scale = 1.0) with FP32 max/sum accumulation.
 func gpuSoftmaxBF16[T tensor.Numeric](
