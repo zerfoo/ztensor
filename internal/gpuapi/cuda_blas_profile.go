@@ -36,10 +36,10 @@ type callRecord struct {
 // When ZERFOO_PROFILE_CUBLAS=1, each Sgemm/SgemmNT/batched call is timed
 // and recorded. Call PrintSummary to dump stats.
 type CUDABlasProfiler struct {
-	inner   *CUDABlas
-	mu      sync.Mutex
-	records []callRecord
-	enabled bool
+	inner      *CUDABlas
+	mu         sync.Mutex
+	records    []callRecord
+	enabled    bool
 	generation atomic.Int64
 }
 
@@ -88,6 +88,32 @@ func (p *CUDABlasProfiler) BFloat16Gemm(m, n, k int, alpha float32,
 	start := time.Now()
 	err := p.inner.BFloat16Gemm(m, n, k, alpha, a, bPtr, beta, c)
 	p.record("BFloat16Gemm", m, n, k, 1, time.Since(start))
+	return err
+}
+
+func (p *CUDABlasProfiler) BFloat16GemmNT(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	if !p.enabled {
+		return p.inner.BFloat16GemmNT(m, n, k, alpha, a, bPtr, beta, c)
+	}
+	start := time.Now()
+	err := p.inner.BFloat16GemmNT(m, n, k, alpha, a, bPtr, beta, c)
+	p.record("BFloat16GemmNT", m, n, k, 1, time.Since(start))
+	return err
+}
+
+func (p *CUDABlasProfiler) BFloat16GemmTN(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	if !p.enabled {
+		return p.inner.BFloat16GemmTN(m, n, k, alpha, a, bPtr, beta, c)
+	}
+	start := time.Now()
+	err := p.inner.BFloat16GemmTN(m, n, k, alpha, a, bPtr, beta, c)
+	p.record("BFloat16GemmTN", m, n, k, 1, time.Since(start))
 	return err
 }
 
@@ -204,12 +230,12 @@ type ProfileSummary struct {
 
 // OpSummary holds per-operation stats.
 type OpSummary struct {
-	Op          string
-	M, N, K     int
-	Batch       int
-	Calls       int
-	TotalTime   time.Duration
-	AvgTime     time.Duration
+	Op        string
+	M, N, K   int
+	Batch     int
+	Calls     int
+	TotalTime time.Duration
+	AvgTime   time.Duration
 }
 
 // Summary returns aggregated profiling statistics.
@@ -284,3 +310,4 @@ var _ BLAS = (*CUDABlasProfiler)(nil)
 var _ BLASTransposeB = (*CUDABlasProfiler)(nil)
 var _ BLASBatched = (*CUDABlasProfiler)(nil)
 var _ BLASBatchedTransposeB = (*CUDABlasProfiler)(nil)
+var _ BLASBFloat16TransposeB = (*CUDABlasProfiler)(nil)

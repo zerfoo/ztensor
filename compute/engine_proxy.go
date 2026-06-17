@@ -427,6 +427,31 @@ func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tens
 	return p.MatMul(ctx, a, kT, dst...)
 }
 
+// MatMulTransposeA delegates to the underlying engine if it implements
+// TransposeAMatMuler (C = A^T * B, the dW shape). Otherwise it falls back to an
+// explicit (rank-aware) Transpose of A + MatMul.
+func (p *EngineProxy[T]) MatMulTransposeA(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if ta, ok := p.real.(TransposeAMatMuler[T]); ok {
+		result, err := ta.MatMulTransposeA(ctx, a, b, dst...)
+		if err == nil {
+			p.record("MatMulTransposeA", []*tensor.TensorNumeric[T]{a, b}, result, nil)
+		}
+		return result, err
+	}
+	// Fall back to Transpose(A) + MatMul with dimensionality-appropriate axes.
+	var axes []int
+	if len(a.Shape()) == 2 {
+		axes = []int{1, 0}
+	} else {
+		axes = []int{0, 2, 1}
+	}
+	aT, err := p.Transpose(ctx, a, axes)
+	if err != nil {
+		return nil, err
+	}
+	return p.MatMul(ctx, aT, b, dst...)
+}
+
 // ResetPool delegates to the underlying engine if it implements PoolResetter.
 func (p *EngineProxy[T]) ResetPool() {
 	if resetter, ok := p.real.(PoolResetter); ok {

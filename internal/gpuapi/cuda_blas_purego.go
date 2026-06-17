@@ -95,6 +95,24 @@ func (b *CUDABlas) SgemmNT(m, n, k int, alpha float32,
 	return cublas.SgemmNT(b.handle, m, n, k, alpha, a, bPtr, beta, c)
 }
 
+// BFloat16GemmNT performs bf16 C = alpha * A * B^T + beta * C (FP32 accum),
+// A=[m,k], B=[n,k] (row-major). Avoids an explicit bf16 transpose of B.
+func (b *CUDABlas) BFloat16GemmNT(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.BFloat16GemmNT(b.handle, m, n, k, alpha, a, bPtr, beta, c)
+}
+
+// BFloat16GemmTN performs bf16 C = alpha * A^T * B + beta * C (FP32 accum),
+// A=[k,m], B=[k,n] (row-major). This is the dW gradient shape (X^T * dY).
+func (b *CUDABlas) BFloat16GemmTN(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.BFloat16GemmTN(b.handle, m, n, k, alpha, a, bPtr, beta, c)
+}
+
 // SgemmStridedBatched performs batched C = alpha * A * B + beta * C using
 // cublasSgemmStridedBatched. All batch elements share the same m, n, k.
 func (b *CUDABlas) SgemmStridedBatched(m, n, k int, alpha float32,
@@ -150,5 +168,8 @@ func init() {
 	}
 }
 
-// Compile-time interface assertion.
-var _ BLAS = (*CUDABlas)(nil)
+// Compile-time interface assertions.
+var (
+	_ BLAS                   = (*CUDABlas)(nil)
+	_ BLASBFloat16TransposeB = (*CUDABlas)(nil)
+)
