@@ -367,6 +367,27 @@ func newMulScalarNode[T tensor.Float](e compute.Engine[T], c float64) *opNode[T]
 		func(ctx context.Context, g, _, _ tn[T]) (tn[T], error) { return e.MulScalar(ctx, g, T(c)) })
 }
 
+// newDropoutNode builds an inverted-dropout op with a fixed drop probability p
+// and seed in training mode. The mask is deterministic (Philox keyed by (seed,
+// offset)), so with p and seed held constant the op is a fixed element-wise
+// linear map y = x * mask/(1-p): finite differences and the analytic backward
+// (the same masked scale applied to the upstream gradient) agree exactly. The
+// engine must implement the Dropouter capability (CPU and GPU both do); the
+// gradcheck/oracle harnesses run on the CPU engine.
+func newDropoutNode[T tensor.Float](e compute.Engine[T], p float64, seed uint64) *opNode[T] {
+	d, ok := e.(compute.Dropouter[T])
+	return unary("Dropout",
+		func(ctx context.Context, x tn[T]) (tn[T], error) {
+			if !ok {
+				return nil, fmt.Errorf("Dropout: engine %T does not implement Dropouter", e)
+			}
+			return d.Dropout(ctx, x, p, seed, true)
+		},
+		func(ctx context.Context, g, _, _ tn[T]) (tn[T], error) {
+			return d.DropoutBackward(ctx, g, p, seed, true)
+		})
+}
+
 // --- matmul-like and shape ops ----------------------------------------------
 
 func newMatMulNode[T tensor.Float](e compute.Engine[T]) *opNode[T] {

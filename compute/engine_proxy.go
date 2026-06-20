@@ -402,6 +402,34 @@ func (p *EngineProxy[T]) GPUFusedAddRMSNorm(input, residual, weight *tensor.Tens
 	return
 }
 
+// Dropout delegates to the underlying engine's Dropouter capability. The proxy
+// implements Dropouter[T] so consumers can type-assert it on a wrapped engine;
+// it returns an error if the real engine does not provide the capability.
+func (p *EngineProxy[T]) Dropout(ctx context.Context, a *tensor.TensorNumeric[T], prob float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	d, ok := p.real.(Dropouter[T])
+	if !ok {
+		return nil, fmt.Errorf("engine %T does not implement Dropouter", p.real)
+	}
+	result, err := d.Dropout(ctx, a, prob, seed, training, dst...)
+	if err == nil {
+		p.record("Dropout", []*tensor.TensorNumeric[T]{a}, result, nil)
+	}
+	return result, err
+}
+
+// DropoutBackward delegates to the underlying engine's Dropouter capability.
+func (p *EngineProxy[T]) DropoutBackward(ctx context.Context, g *tensor.TensorNumeric[T], prob float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	d, ok := p.real.(Dropouter[T])
+	if !ok {
+		return nil, fmt.Errorf("engine %T does not implement Dropouter", p.real)
+	}
+	result, err := d.DropoutBackward(ctx, g, prob, seed, training, dst...)
+	if err == nil {
+		p.record("DropoutBackward", []*tensor.TensorNumeric[T]{g}, result, nil)
+	}
+	return result, err
+}
+
 // MatMulTransposeB delegates to the underlying engine if it implements TransposeBMatMuler.
 func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if tb, ok := p.real.(TransposeBMatMuler[T]); ok {

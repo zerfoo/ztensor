@@ -49,6 +49,9 @@ var torchMap = map[string]torchOp{
 	"HadamardTransform": {
 		SkipReason: "torch has no built-in normalized Walsh-Hadamard transform; replaying it would mean hand-building the H matrix in the runner, i.e. testing our own reimplementation rather than torch",
 	},
+	"Dropout": {
+		SkipReason: "dropout's training-mode output depends on the RNG mask, and torch.nn.functional.dropout draws from its own (Philox) generator whose word-to-element mapping is not the one ztensor uses; matching masks would mean reimplementing ztensor's Philox in the torch runner (testing our own reimplementation, like HadamardTransform). The mask-vs-input math is instead pinned by gradcheck (the deterministic mask makes dropout an exact linear map y=x*mask/(1-p), so finite-diff == analytic backward) and by CPU-GPU parity (the same Philox produces bit-identical masks on CPU and GB10). Eval-mode dropout is exact identity, already covered by unit tests.",
+	},
 
 	// Softmax and reductions. ReduceMax uses amax; torch.amax splits the
 	// gradient among tied maxima while ztensor routes it to the first argmax,

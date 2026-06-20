@@ -51,8 +51,17 @@ func TestGenerateAll(t *testing.T) {
 	if got := len(sum.Written) + len(sum.Skipped); got != wantTotal {
 		t.Fatalf("summary covers %d ops, registry has %d", got, wantTotal)
 	}
-	if len(sum.Skipped) != 1 || sum.Skipped[0].Op != "HadamardTransform" {
-		t.Fatalf("skipped = %+v, want exactly HadamardTransform", sum.Skipped)
+	// Ops with no clean torch equivalent are skipped with a reason: the
+	// Walsh-Hadamard transform (no torch builtin) and Dropout (training-mode
+	// mask uses ztensor's own Philox, not torch's; see torchmap.go).
+	wantSkipped := map[string]bool{"HadamardTransform": true, "Dropout": true}
+	if len(sum.Skipped) != len(wantSkipped) {
+		t.Fatalf("skipped = %+v, want exactly %v", sum.Skipped, wantSkipped)
+	}
+	for _, s := range sum.Skipped {
+		if !wantSkipped[s.Op] {
+			t.Fatalf("unexpected skipped op %q (skipped=%+v)", s.Op, sum.Skipped)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "generation.json")); err != nil {
 		t.Fatalf("generation.json missing: %v", err)

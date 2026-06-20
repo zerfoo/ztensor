@@ -49,6 +49,8 @@ func NewRegistryNode[T tensor.Float](name string, e compute.Engine[T]) (graph.No
 		return newAddScalarNode(e, 0.7), nil
 	case "MulScalar":
 		return newMulScalarNode(e, -1.3), nil
+	case "Dropout":
+		return newDropoutNode(e, 0.3, 0x9e3779b97f4a7c15), nil
 	case "MatMul":
 		return newMatMulNode(e), nil
 	case "Transpose":
@@ -195,6 +197,15 @@ func Registry() []OpInfo {
 			Name: "MulScalar", Seed: 17,
 			Make:        registryMake("MulScalar"),
 			InputShapes: [][]int{{2, 3}},
+		},
+		// Inverted dropout with a fixed mask (p=0.3, fixed seed): a deterministic
+		// element-wise linear map y = x * mask/(1-p). A larger [4,8] input gives
+		// the fixed-seed mask both kept and dropped lanes so the masked-and-zero
+		// gradient structure is actually exercised.
+		{
+			Name: "Dropout", Seed: 31,
+			Make:        registryMake("Dropout"),
+			InputShapes: [][]int{{4, 8}},
 		},
 
 		// MatMul-like and shape ops.
