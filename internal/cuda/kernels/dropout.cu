@@ -74,13 +74,23 @@ extern "C" {
 
 // dropout_f32 applies inverted dropout to in[0..n-1], writing out[0..n-1].
 // training != 0 and p > 0 => masked-and-scaled; otherwise exact identity copy.
-// invKeep must be 1/(1-p) (computed host-side to match the CPU path bit-for-bit).
+//
+// p and invKeep (= 1/(1-p)) are passed as their 32-bit IEEE-754 BIT PATTERNS in
+// integer parameters, not as `float`. The purego/dlopen launch path (no CGO)
+// loads every argument into integer registers only (the AAPCS64 trampoline
+// never populates the V float registers), so a `float` parameter would read
+// garbage and shift every following argument. Passing the bits as uint32 and
+// reinterpreting here with __uint_as_float keeps the ABI integer-only and
+// identical between the CGO and purego paths. invKeep is computed host-side so
+// the scale matches the CPU path bit-for-bit.
 cudaError_t dropout_f32(const float* in, float* out, int n,
-                        float p, uint64_t seed, int training, float invKeep,
+                        uint32_t pBits, uint64_t seed, int training, uint32_t invKeepBits,
                         cudaStream_t stream) {
     const int BLOCK = 256;
     int grid = (n + BLOCK - 1) / BLOCK;
     if (grid < 1) grid = 1;
+    float p = __uint_as_float(pBits);
+    float invKeep = __uint_as_float(invKeepBits);
     if (training == 0 || p == 0.0f) {
         kernel_identity_copy<<<grid, BLOCK, 0, stream>>>(in, out, n);
         return cudaGetLastError();

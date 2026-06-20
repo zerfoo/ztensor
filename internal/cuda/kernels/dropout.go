@@ -8,12 +8,15 @@ package kernels
 #include <stdint.h>
 
 extern cudaError_t dropout_f32(const float* in, float* out, int n,
-                               float p, uint64_t seed, int training, float invKeep,
+                               uint32_t pBits, uint64_t seed, int training, uint32_t invKeepBits,
                                cudaStream_t stream);
 */
 import "C"
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 // DropoutF32 launches the GPU inverted-dropout kernel with a deterministic
 // Philox mask keyed by (seed, element offset). in/out are [n] float32 device
@@ -27,9 +30,11 @@ func DropoutF32(in unsafe.Pointer, out unsafe.Pointer, n int,
 	if training {
 		tr = 1
 	}
+	// Pass p and invKeep as float32 bit patterns in integer params so the ABI
+	// is identical to the purego launch path (which cannot use float registers).
 	return checkCUDA(C.dropout_f32(
 		(*C.float)(in), (*C.float)(out), C.int(n),
-		C.float(p), C.uint64_t(seed), tr, C.float(invKeep),
+		C.uint32_t(math.Float32bits(p)), C.uint64_t(seed), tr, C.uint32_t(math.Float32bits(invKeep)),
 		stream(s),
 	), "dropout_f32")
 }

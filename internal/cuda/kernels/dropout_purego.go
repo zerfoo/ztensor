@@ -4,6 +4,7 @@ package kernels
 
 import (
 	"fmt"
+	"math"
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cuda"
@@ -25,9 +26,12 @@ func DropoutF32(in unsafe.Pointer, out unsafe.Pointer, n int,
 	if training {
 		tr = 1
 	}
+	// p and invKeep are passed as their float32 bit patterns in INTEGER
+	// registers (the purego AAPCS64 trampoline never populates the V float
+	// registers); the kernel reinterprets them with __uint_as_float.
 	ret := cuda.Ccall(k.launchDropoutF32,
 		uintptr(in), uintptr(out), uintptr(n),
-		uintptr(floatBits(p)), uintptr(seed), tr,
-		uintptr(floatBits(invKeep)), uintptr(s))
+		uintptr(math.Float32bits(p)), uintptr(seed), tr,
+		uintptr(math.Float32bits(invKeep)), uintptr(s))
 	return checkKernel(ret, "dropout_f32")
 }
