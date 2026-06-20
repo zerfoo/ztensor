@@ -61,6 +61,31 @@ type TransposeAMatMuler[T tensor.Numeric] interface {
 	MatMulTransposeA(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }
 
+// Dropouter is an optional interface for engines that provide a dropout op
+// with a deterministic, seedable mask. The mask is drawn from a counter-based
+// Philox RNG keyed by (seed, element offset), so it is bit-identical on the CPU
+// engine and the GPU engine for the same (seed, p) -- which is what makes the
+// CPU-GPU parity and PyTorch-oracle gates pass. Inverted-dropout semantics
+// match torch.nn.functional.dropout: in training mode the kept elements are
+// scaled by 1/(1-p); in eval mode (or p==0) the op is exact identity.
+//
+// The mask is NOT cached for backward; DropoutBackward recomputes it from the
+// same (seed, p), keeping the op capture-safe and avoiding a pinned save across
+// arena resets (ztensor ADR 006).
+//
+// This API is not covered by the v1 stability guarantee.
+type Dropouter[T tensor.Numeric] interface {
+	// Dropout applies inverted dropout to `a`. When training is false or p==0
+	// the result is an exact copy of `a`. Otherwise each element is kept with
+	// probability (1-p) and scaled by 1/(1-p); dropped elements become zero.
+	// p must be in [0, 1).
+	Dropout(ctx context.Context, a *tensor.TensorNumeric[T], p float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+	// DropoutBackward propagates the upstream gradient through the same mask
+	// used by Dropout for the identical (p, seed, training): dx = g * mask/(1-p)
+	// in training mode, dx = g in eval mode. The mask is recomputed, not cached.
+	DropoutBackward(ctx context.Context, g *tensor.TensorNumeric[T], p float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+}
+
 // StreamProvider is an optional interface for engines that expose their
 // underlying GPU stream for CUDA graph capture.
 //

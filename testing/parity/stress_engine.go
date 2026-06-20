@@ -273,6 +273,28 @@ func (e *StressEngine) Repeat(ctx context.Context, a *t32, axis, repetitions int
 	return e.relocate(e.Engine.Repeat(ctx, a, axis, repetitions))
 }
 
+// Dropout / DropoutBackward delegate to the inner engine's Dropouter
+// capability and relocate the result into the arena, so the parity harness
+// exercises the dropout op under the same reset-between-fwd-bwd schedules as
+// every other op. The masked output is a pure function of (seed, offset, p) --
+// it survives a relocate intact, and (per the recompute-in-backward design) no
+// mask is saved across resets.
+func (e *StressEngine) Dropout(ctx context.Context, a *t32, p float64, seed uint64, training bool, dst ...*t32) (*t32, error) {
+	d := e.Engine.(compute.Dropouter[float32]) //nolint:errcheck // inner CPU engine implements Dropouter
+	if len(dst) > 0 {
+		return d.Dropout(ctx, a, p, seed, training, dst...)
+	}
+	return e.relocate(d.Dropout(ctx, a, p, seed, training))
+}
+
+func (e *StressEngine) DropoutBackward(ctx context.Context, g *t32, p float64, seed uint64, training bool, dst ...*t32) (*t32, error) {
+	d := e.Engine.(compute.Dropouter[float32]) //nolint:errcheck // inner CPU engine implements Dropouter
+	if len(dst) > 0 {
+		return d.DropoutBackward(ctx, g, p, seed, training, dst...)
+	}
+	return e.relocate(d.DropoutBackward(ctx, g, p, seed, training))
+}
+
 func (e *StressEngine) HadamardTransform(ctx context.Context, a *t32, dst ...*t32) (*t32, error) {
 	if len(dst) > 0 {
 		return e.Engine.HadamardTransform(ctx, a, dst...)

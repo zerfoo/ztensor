@@ -966,6 +966,67 @@ func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[
 	return nil
 }
 
+// Dropout applies inverted dropout to a with a deterministic Philox mask keyed
+// by (seed, element offset). In training mode each element is kept with
+// probability (1-p) and scaled by 1/(1-p); dropped elements become zero. In
+// eval mode (training==false) or when p==0 the op is an exact identity copy.
+// The mask is a pure function of (seed, offset, p) and is recomputed in
+// DropoutBackward rather than cached, so no save survives across arena resets.
+func (e *CPUEngine[T]) Dropout(ctx context.Context, a *tensor.TensorNumeric[T], p float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.dropoutMasked(ctx, a, p, seed, training, dst...)
+}
+
+// DropoutBackward propagates g through the same mask Dropout used for the
+// identical (p, seed, training). Because dropout is element-wise linear in its
+// input with the mask fixed, the backward is the same masked-and-scaled map
+// applied to the upstream gradient.
+func (e *CPUEngine[T]) DropoutBackward(ctx context.Context, g *tensor.TensorNumeric[T], p float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.dropoutMasked(ctx, g, p, seed, training, dst...)
+}
+
+// dropoutMasked is the shared forward/backward kernel: out[i] = keep(i) ?
+// in[i]/(1-p) : 0 in training mode, out[i] = in[i] in eval mode. Forward and
+// backward are identical because dropout is linear in its input given the mask.
+func (e *CPUEngine[T]) dropoutMasked(ctx context.Context, a *tensor.TensorNumeric[T], p float64, seed uint64, training bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
+	if p < 0 || p >= 1 {
+		return nil, fmt.Errorf("dropout: p must be in [0, 1), got %g", p)
+	}
+	result, err := e.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+	aData := a.Data()
+	rData := result.Data()
+	// Eval mode or p==0: exact identity copy (no RNG, no scaling).
+	if !training || p == 0 {
+		if err := parallelForCtx(ctx, len(aData), func(start, end int) {
+			for i := start; i < end; i++ { //nolint:intrange
+				rData[i] = aData[i]
+			}
+		}); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	scale := e.ops.FromFloat64(1.0 / (1.0 - p))
+	zero := e.ops.FromFloat64(0)
+	if err := parallelForCtx(ctx, len(aData), func(start, end int) {
+		for i := start; i < end; i++ { //nolint:intrange
+			if dropoutKeep(seed, uint64(i), p) {
+				rData[i] = e.ops.Mul(aData[i], scale)
+			} else {
+				rData[i] = zero
+			}
+		}
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // Fill sets all elements of t to value.
 func (e *CPUEngine[T]) Fill(_ context.Context, t *tensor.TensorNumeric[T], value T) error {
 	if t == nil {
