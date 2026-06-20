@@ -18,6 +18,15 @@
 
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <string.h>
+
+// host_uint_as_float reinterprets a 32-bit pattern as a float on the HOST
+// (the device intrinsic __uint_as_float is not callable from host code).
+static inline float host_uint_as_float(uint32_t bits) {
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
 
 #define PHILOX_M0 0xD2511F53u
 #define PHILOX_M1 0xCD9E8D57u
@@ -89,8 +98,8 @@ cudaError_t dropout_f32(const float* in, float* out, int n,
     const int BLOCK = 256;
     int grid = (n + BLOCK - 1) / BLOCK;
     if (grid < 1) grid = 1;
-    float p = __uint_as_float(pBits);
-    float invKeep = __uint_as_float(invKeepBits);
+    float p = host_uint_as_float(pBits);
+    float invKeep = host_uint_as_float(invKeepBits);
     if (training == 0 || p == 0.0f) {
         kernel_identity_copy<<<grid, BLOCK, 0, stream>>>(in, out, n);
         return cudaGetLastError();
