@@ -418,6 +418,14 @@ func (k *CUDAKernels) FusedEncoderFwdAvailable() bool {
 	return kernels.FusedEncoderAvailable()
 }
 
+// DropoutF32 launches the on-device inverted-dropout kernel (deterministic
+// Philox mask). Forward and backward both call this; backward passes the
+// upstream gradient as in.
+func (k *CUDAKernels) DropoutF32(in, out unsafe.Pointer, n int, p float32, seed uint64, training bool, invKeep float32, s Stream) error {
+	return kernels.DropoutF32(in, out, n, p, seed, training, invKeep, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)
 var _ BFloat16Transposer = (*CUDAKernels)(nil)
+var _ Dropouter = (*CUDAKernels)(nil)
