@@ -1,0 +1,56 @@
+# GB10 verification for the dropout op (BPB.3a).
+#
+# One pod that (1) clones the bpb3a-dropout branch, (2) builds libkernels.so for
+# sm_121 with the host CUDA toolkit (nvcc on /usr/local/cuda, mounted read-only),
+# and (3) runs the CUDA-gated dropout CPU-GPU parity tests (TestGPUDropout_*) plus
+# the full-registry GB10 parity run (-run _GPU, which now includes Dropout) on the
+# GB10.
+#
+# Submit (token injected at submit time, never persisted in the manifest):
+#   TOKEN=$(gh auth token)
+#   sed "s#__GH_TOKEN__#$TOKEN#; s#__TAG__#$(git rev-parse --short=8 HEAD)#" \
+#     deploy/spark/dropout-verify-gb10.yaml \
+#     | curl -X POST http://192.168.86.250:8080/api/v1/pods \
+#         --data-binary @- -H 'Content-Type: application/yaml'
+#
+# memory limit set per lore L-0005 (cmd/lint-manifests).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ztensor-dropout-verify-__TAG__
+  labels:
+    app: ztensor
+    role: gpu-verify
+spec:
+  restartPolicy: Never
+  containers:
+    - name: verify
+      image: docker.io/library/golang:1.26
+      command:
+        - /bin/sh
+        - -c
+        - "set -ex; export PATH=/usr/local/cuda/bin:$PATH; export LD_LIBRARY_PATH=/usr/local/cuda/lib64; git clone --depth 1 -b bpb3a-dropout https://__GH_TOKEN__@github.com/zerfoo/ztensor.git /work/zt; cd /work/zt; make -C internal/cuda/kernels shared CUDA_ARCH=sm_121; LD_LIBRARY_PATH=/work/zt/internal/cuda/kernels:/usr/local/cuda/lib64 go test ./compute/ -run GPUDropout -v -count=1; LD_LIBRARY_PATH=/work/zt/internal/cuda/kernels:/usr/local/cuda/lib64 go test ./testing/parity/ -run _GPU -v -count=1"
+      env:
+        - name: GOFLAGS
+          value: "-mod=mod"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          cpu: "4"
+          memory: "24Gi"
+        requests:
+          cpu: "1"
+          memory: "8Gi"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: work
+          mountPath: /work
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: work
+      emptyDir: {}
