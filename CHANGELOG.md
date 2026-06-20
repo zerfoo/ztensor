@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.19.0](https://github.com/zerfoo/ztensor/compare/v1.18.0...v1.19.0) (2026-06-20)
+
+
+### Features
+
+* **compute:** CPU dropout op with deterministic Philox mask (BPB.3a) ([d82e8aa](https://github.com/zerfoo/ztensor/commit/d82e8aad7ac2810d1c65dee19d955207f67e6741))
+* **cuda:** GB10 GPU dropout kernel mirroring the CPU Philox mask (BPB.3a) ([611772b](https://github.com/zerfoo/ztensor/commit/611772b4631c3c9fe45f47115a2ab72a27e1b932))
+
+
+### Bug Fixes
+
+* **cuda:** pass dropout p/invKeep as int bit patterns (purego ABI) ([a25e902](https://github.com/zerfoo/ztensor/commit/a25e902a7e20911e67f154b47ad3d47da66d7d7b))
+* **cuda:** reinterpret dropout p/invKeep bits host-side (not __uint_as_float) ([d00cc0c](https://github.com/zerfoo/ztensor/commit/d00cc0cc2efdc2d340e8c987664a73a49a43ba88))
+
 ## [1.18.0](https://github.com/zerfoo/ztensor/compare/v1.17.1...v1.18.0) (2026-06-17)
 
 
