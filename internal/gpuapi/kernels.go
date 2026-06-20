@@ -286,6 +286,20 @@ type KernelRunner interface {
 	FusedEncoderFwdAvailable() bool
 }
 
+// Dropouter is an optional KernelRunner extension providing an on-device
+// inverted-dropout kernel with a deterministic Philox mask keyed by (seed,
+// element offset). The mask is bit-identical to the CPU reference, so dropout
+// passes the CPU-GPU parity gate; invKeep is supplied host-side as 1/(1-p) so
+// the scale matches the CPU path exactly. The same entry serves forward and
+// backward (backward passes the upstream gradient as `in`) because dropout is
+// linear in its input given the mask. Only the CUDA backend implements it;
+// callers type-assert and report unavailability when it is absent.
+type Dropouter interface {
+	// DropoutF32 writes out[i] = (philox(seed,i) >= p) ? in[i]*invKeep : 0 in
+	// training mode; in eval mode (training==false) or p==0 it copies in->out.
+	DropoutF32(in, out unsafe.Pointer, n int, p float32, seed uint64, training bool, invKeep float32, stream Stream) error
+}
+
 // BFloat16Transposer is an optional KernelRunner extension providing on-device
 // bf16 (16-bit) transpose kernels. Without it, a GPU engine over bf16 must route
 // transposes to the CPU engine, whose host memcpy breaks CUDA-graph capture

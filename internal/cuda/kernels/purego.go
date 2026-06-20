@@ -80,6 +80,9 @@ type KernelLib struct {
 	// argmax
 	launchArgmax uintptr
 
+	// dropout (deterministic Philox mask, inverted-dropout f32)
+	launchDropoutF32 uintptr
+
 	// fused_rope
 	launchFusedRoPEF32 uintptr
 
@@ -312,6 +315,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
 			{"launch_argmax", &k.launchArgmax},
+			// dropout (deterministic Philox mask)
+			{"dropout_f32", &k.launchDropoutF32},
 			// fused_rope
 			{"fused_rope_f32", &k.launchFusedRoPEF32},
 			// fused_swiglu
