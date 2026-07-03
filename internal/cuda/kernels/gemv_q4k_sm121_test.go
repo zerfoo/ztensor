@@ -277,27 +277,8 @@ func TestQ4KGEMVOptimized(t *testing.T) {
 				t.Fatalf("Memcpy y: %v", err)
 			}
 
-			maxRelErr := 0.0
-			for i := range got {
-				absRef := math.Abs(float64(ref[i]))
-				diff := math.Abs(float64(got[i] - ref[i]))
-				var relErr float64
-				if absRef > 1e-6 {
-					relErr = diff / absRef
-				} else {
-					relErr = diff
-				}
-				if relErr > maxRelErr {
-					maxRelErr = relErr
-				}
-				if relErr > 1e-4 {
-					t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
-					if t.Failed() {
-						break
-					}
-				}
-			}
-			t.Logf("max relative error: %e (sm_121=%v)", maxRelErr, IsQ4KSm121Supported())
+			checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
+			t.Logf("sm_121=%v", IsQ4KSm121Supported())
 		})
 	}
 }
