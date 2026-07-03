@@ -114,6 +114,13 @@ All methods accept a `context.Context` and an optional variadic `dst` tensor for
 
 **dst-form accumulation policy:** when a `dst` is supplied, the result is written into `dst`'s *existing* storage — an op never re-homes `dst` onto a fresh pool allocation. This storage-identity guarantee is what makes dst-form accumulation safe for persistent tensors (gradient accumulators, optimizer state): a caller that repeatedly issues `Add(ctx, acc, g, acc)` keeps the same device buffer for `acc`, outside the arena's per-step reuse, instead of being silently converted into an arena tensor that the next `Reset` recycles behind the live reference. On GPU, when `dst` carries a same-size GPUStorage the result is copied device-to-device into `dst`'s buffer and the temporary returns to the pool (skipped during CUDA graph capture, where the synchronous copy is not capturable).
 
+**Reduction accumulation policy:** every CPU reduction accumulates in a **fixed, worker-independent order** rather than a naive left-to-right fold. `Sum`/`ReduceSum`/`ReduceMean`, the `Softmax` denominator, RMSNorm's mean-of-squares, and `numeric.Arithmetic.Sum` all use a recursive **pairwise (tree) reduction** whose split points are a pure function of the reduced length (recursive halving snapped to a 128-element base block, matching numpy's pairwise blocksize). Two guarantees follow:
+
+- **Determinism.** The tree shape depends only on length, never on `GOMAXPROCS`, chunk boundaries, or goroutine scheduling, so a reduction is bitwise-identical run to run. Parallelism is confined to *independent* output stripes; the accumulation along each reduced axis is sequential-in-tree-order within one goroutine.
+- **Accuracy.** Pairwise accumulation bounds the rounding error at ~O(log n) versus O(n) for a naive fold, which tightens agreement with the PyTorch oracle without changing the accumulation dtype (float32 stays float32 — the acc-type is never *narrowed*). Measured tightening on ill-conditioned float32 inputs: 16–940× lower relative error for `ReduceSum` at n=1k–64k, 4–24× for RMSNorm's sum-of-squares, up to 52× for the softmax denominator; no input regresses.
+
+Accumulation dtype is preserved per site (float32 data reduces in float32, float64 in float64). Widening reduced-precision element types (float16/bfloat16) to a float32 accumulator, and a fixed-order rewrite of the GPU reduction kernels and the arm64 NEON RMSNorm SIMD path (both currently deterministic-but-SIMD-strided), are deferred to the deterministic-reductions mode (`ZTENSOR_DETERMINISTIC`, plan-gpu-training-hardening T4.1).
+
 ### Optional Engine Capabilities
 
 Beyond the core interface, engines may implement optional capability interfaces discovered via type assertion:
