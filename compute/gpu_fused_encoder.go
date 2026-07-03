@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/ztensor/internal/cublas"
+	"github.com/zerfoo/ztensor/internal/cuda"
 	"github.com/zerfoo/ztensor/internal/gpuapi"
 )
 
@@ -46,6 +47,12 @@ func (e *GPUEngine[T]) FusedEncoderForward(
 }
 
 // FusedEncoderBackward computes all gradients for one fused encoder layer.
+//
+// dScale/dBias accumulate via atomicAdd across row blocks in
+// fused_encoder_bwd.cu (order-dependent, no deterministic variant exists).
+// Under ZTENSOR_DETERMINISTIC=1 this refuses to run rather than silently
+// return order-dependent gradients -- see docs/design.md "ZTENSOR_DETERMINISTIC
+// scope" (plan-gpu-training-hardening.md T4.1) and zerfoo docs/lore.md.
 func (e *GPUEngine[T]) FusedEncoderBackward(
 	weights *[16]unsafe.Pointer,
 	weightT *[6]unsafe.Pointer,
@@ -55,6 +62,12 @@ func (e *GPUEngine[T]) FusedEncoderBackward(
 	dOutput, dInput, input unsafe.Pointer,
 	totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int,
 ) error {
+	if cuda.DeterministicEnabled() {
+		return fmt.Errorf("FusedEncoderBackward: dScale/dBias gradient accumulation uses " +
+			"order-dependent atomicAdd across row blocks (fused_encoder_bwd.cu) with no " +
+			"deterministic variant; refusing under ZTENSOR_DETERMINISTIC=1 (unset it, or use " +
+			"the unfused per-op backward path)")
+	}
 	h := blasHandlePtr(e.blas)
 	if h == nil {
 		return fmt.Errorf("FusedEncoderBackward: cuBLAS handle not available")
