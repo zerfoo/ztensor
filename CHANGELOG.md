@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.19.2](https://github.com/zerfoo/ztensor/compare/v1.19.1...v1.19.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **compute:** fixed-order pairwise reductions in CPU Sum/Softmax (zerfoo T135.2) ([a465e6c](https://github.com/zerfoo/ztensor/commit/a465e6cec2207b1daa97c04f781e7fb6b032eaba))
+* **numeric:** fixed-order pairwise fp32 Sum accumulation (zerfoo T135.2) ([825090d](https://github.com/zerfoo/ztensor/commit/825090d1decd641a7a1bb0b6b0c1679cda329318))
+* **xblas:** pairwise fp32 sum-of-squares in generic RMSNorm (zerfoo T135.2) ([7d179c3](https://github.com/zerfoo/ztensor/commit/7d179c30bdfd7115b9fccfe6d8f891d05a5bc089))
+
 ## [1.19.1](https://github.com/zerfoo/ztensor/compare/v1.19.0...v1.19.1) (2026-07-03)
 
 
