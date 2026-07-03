@@ -1557,10 +1557,12 @@ func (e *CPUEngine[T]) Sum(
 
 	// A negative axis means sum over all axes.
 	if axis < 0 {
-		var sum T
-		for _, v := range a.Data() {
-			sum = e.ops.Add(sum, v)
-		}
+		data := a.Data()
+		// Fixed-order pairwise accumulation: order depends only on len(data),
+		// so the result is bitwise-stable run to run and tighter than a naive
+		// left-to-right fold. See compute/reduce_pairwise.go.
+		sum := pairwiseReduce(len(data), e.ops.FromFloat64(0),
+			func(i int) T { return data[i] }, e.ops.Add)
 		shape := []int{1}
 		if keepDims {
 			shape = make([]int, a.Dims())
@@ -1661,12 +1663,10 @@ func (e *CPUEngine[T]) Sum(
 				}
 			}
 
-			// Reduce along the axis for this stripe
-			sum := e.ops.FromFloat64(0)
-			for k := 0; k < axisSize; k++ { //nolint:intrange
-				idx := base + k*step
-				sum = e.ops.Add(sum, aData[idx])
-			}
+			// Reduce along the axis for this stripe using fixed-order pairwise
+			// accumulation (order depends only on axisSize, not on worker count).
+			sum := pairwiseReduce(axisSize, e.ops.FromFloat64(0),
+				func(k int) T { return aData[base+k*step] }, e.ops.Add)
 			rData[rIndex] = sum
 		}
 	})
@@ -2251,15 +2251,15 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 				}
 			}
 
-			// 2) Compute exponentials and sum
-			sum := e.ops.FromFloat64(0)
+			// 2) Compute exponentials, then sum the denominator in fixed-order
+			// pairwise order (order depends only on axisSize) for run-to-run
+			// stability and tighter agreement with the oracle.
 			for k := 0; k < axisSize; k++ { //nolint:intrange
 				idx := base + k*step
-				shifted := e.ops.Sub(aData[idx], maxVal)
-				ex := e.ops.Exp(shifted)
-				oData[idx] = ex
-				sum = e.ops.Add(sum, ex)
+				oData[idx] = e.ops.Exp(e.ops.Sub(aData[idx], maxVal))
 			}
+			sum := pairwiseReduce(axisSize, e.ops.FromFloat64(0),
+				func(k int) T { return oData[base+k*step] }, e.ops.Add)
 
 			// 3) Normalize
 			for k := 0; k < axisSize; k++ { //nolint:intrange
