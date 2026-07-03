@@ -121,6 +121,43 @@ All methods accept a `context.Context` and an optional variadic `dst` tensor for
 
 Accumulation dtype is preserved per site (float32 data reduces in float32, float64 in float64). Widening reduced-precision element types (float16/bfloat16) to a float32 accumulator, and a fixed-order rewrite of the GPU reduction kernels and the arm64 NEON RMSNorm SIMD path (both currently deterministic-but-SIMD-strided), are deferred to the deterministic-reductions mode (`ZTENSOR_DETERMINISTIC`, plan-gpu-training-hardening T4.1).
 
+#### `ZTENSOR_DETERMINISTIC` scope (T4.1)
+
+`ZTENSOR_DETERMINISTIC=1` is an env-gated debug/verification mode for
+bit-reproducible GPU training runs: the same seed, model, and data must
+produce bitwise-identical per-epoch losses across repeated runs. It is read
+once at process init (`internal/cuda.DeterministicEnabled`), off by default,
+and is a scope statement, not a rewrite of the numerics -- the T135.2
+nondeterminism inventory (below) found that most of the training path was
+already deterministic run-to-run; the flag closes the two remaining gaps and
+gives the rest an honest, checked-in disposition instead of an implicit
+assumption.
+
+**Nondeterminism inventory and disposition:**
+
+| Source | Status under `ZTENSOR_DETERMINISTIC=1` | Notes |
+|---|---|---|
+| CPU fp32 reductions (`numeric.Sum`, `compute.CPUEngine` Sum/ReduceSum/ReduceMean/Softmax, xblas RMSNorm sum-of-squares, arm64 NEON SIMD path) | **Deterministic already, unconditionally** (T135.2) | Fixed-order pairwise/tree accumulation; a pure function of length, not `GOMAXPROCS` or goroutine scheduling. The flag changes nothing here. |
+| GPU custom kernels: softmax, RMSNorm, GEMV family (`sgemv_m1`, `gemv_warp`, `gemv_q4k*`), flash attention/decode, `fused_adamw` | **Deterministic already** | Warp-shuffle/tree reductions inside a launch configuration that is a pure function of input shape; audited across the full kernel inventory (`internal/cuda/kernels/*.cu`) and found free of cross-block atomics in the reduction path. The flag changes nothing here. |
+| cuBLAS `Sgemm`/`SgemmStridedBatched`/`GemmEx` (the dense f32/bf16/fp16 GEMM path) | **Routed to a deterministic configuration** | `internal/cublas.CreateHandle` sets `CUBLAS_WORKSPACE_CONFIG` (if unset) and calls `cublasSetMathMode(CUBLAS_PEDANTIC_MATH)` on the handle -- the two documented NVIDIA/PyTorch levers that disable TF32 tensor-core downcasting and any workspace-dependent split-K/atomics reduction algorithm cuBLAS's heuristic might otherwise select. Best-effort: a workspace env var set after an earlier cuBLAS handle already exists in the process, or a cuBLAS build missing `cublasSetMathMode`, only warns (stderr), never fails handle creation. |
+| `fused_encoder_bwd.cu` `dScale`/`dBias` (LayerNorm/RMSNorm-style bias-gradient accumulation across rows) | **NOT covered -- refuses to run** | Uses `atomicAdd` across row blocks; the addition order depends on block-completion order, which is not fixed. No deterministic variant exists. `compute.GPUEngine.FusedEncoderBackward` checks the flag first and returns an error instead of silently producing order-dependent gradients. As of T135.4, this path is not reachable from zerfoo's PatchTST training (the Go-side wiring is a stub that always falls back to the unfused per-op path -- #522), so this exclusion does not block the GB10 bitwise-identity proof on that model; it would block any future consumer that wires the fused path in. |
+| `counter.cu`'s `atomicAdd` (GPU-resident decode-position counter) | **Not a determinism concern** | Single-thread kernel (`<<<1,1>>>`); atomicity is for correctness under concurrent access, not a multi-thread reduction order. |
+| Arena reuse / stream ordering (host-access sync, reset-epoch frees) | **Out of scope for T4.1** | These are correctness invariants (L-0002/L-0003/L-0004 in zerfoo's lore), not reduction-order nondeterminism; already enforced unconditionally, independent of this flag. |
+
+**What this mode does NOT guarantee:** bitwise identity across different GPUs,
+driver versions, or cuBLAS versions (cuBLAS's chosen algorithm is a function
+of all three, even under `CUBLAS_PEDANTIC_MATH`); bitwise identity for any
+code path that reaches `FusedEncoderBackward` (it errors instead); bitwise
+identity against the CPU engine (CPU pairwise order and GPU warp-shuffle
+order are different, equally valid parenthesizations of the same sum -- see
+`docs/kernel-tolerances.md` for the accuracy gap, which is a separate
+concern from run-to-run determinism).
+
+**Cost:** `CUBLAS_PEDANTIC_MATH` forgoes TF32 tensor-core paths for f32
+GEMMs, so expect a GEMM slowdown when the flag is set; it is a debug/
+verification tool, off by default, not intended for production training
+throughput. See devlog for the measured GB10 double-run proof.
+
 ### Optional Engine Capabilities
 
 Beyond the core interface, engines may implement optional capability interfaces discovered via type assertion:
