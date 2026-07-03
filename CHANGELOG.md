@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/zerfoo/ztensor/compare/v1.19.0...v1.19.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **cuda:** guard darwin dlopen probe against SIGSEGV (zerfoo T137.1) ([b62b5e0](https://github.com/zerfoo/ztensor/commit/b62b5e0a53da5e572fd14e41296083aee8352159)), closes [#171](https://github.com/zerfoo/ztensor/issues/171)
+
 ## [1.19.0](https://github.com/zerfoo/ztensor/compare/v1.18.0...v1.19.0) (2026-06-20)
 
 
