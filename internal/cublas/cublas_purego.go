@@ -2,6 +2,7 @@ package cublas
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -32,6 +33,20 @@ const (
 	CublasCompute32F CublasComputeType = 68 // CUBLAS_COMPUTE_32F
 )
 
+// cuBLAS math-mode constants (cublasMath_t). Only the modes this package
+// uses are declared; see NVIDIA cuBLAS docs for the full enum.
+const (
+	// CublasDefaultMath is cuBLAS's default: on Ampere+ GPUs (including the
+	// GB10) this permits TF32 tensor-core downcasting for float32 GEMMs.
+	CublasDefaultMath = 0 // CUBLAS_DEFAULT_MATH
+	// CublasPedanticMath disables TF32 downcasting and other
+	// reduced-precision/algorithm-selection paths; NVIDIA's cuBLAS
+	// documentation describes it as producing reproducible results for a
+	// fixed problem size and GPU. Used by ZTENSOR_DETERMINISTIC=1
+	// (internal/cuda.DeterministicEnabled).
+	CublasPedanticMath = 2 // CUBLAS_PEDANTIC_MATH
+)
+
 // cuBLAS status codes.
 const cublasStatusSuccess = 0
 
@@ -43,6 +58,7 @@ type cublasLib struct {
 	sgemm               uintptr // cublasSgemm_v2
 	gemmEx              uintptr // cublasGemmEx
 	sgemmStridedBatched uintptr // cublasSgemmStridedBatched
+	setMathMode         uintptr // cublasSetMathMode (optional, best-effort)
 }
 
 var (
@@ -92,6 +108,16 @@ func loadCublas() (*cublasLib, error) {
 		}
 		*s.ptr = addr
 	}
+
+	// cublasSetMathMode is resolved best-effort: it backs the debug-only
+	// ZTENSOR_DETERMINISTIC mode (T4.1), so a cuBLAS build stripped of it
+	// must not break BLAS loading for everyone else. lib.setMathMode stays
+	// zero if the symbol is unavailable; SetMathMode reports that as an
+	// error at call time.
+	if addr, err := cuda.Dlsym(handle, "cublasSetMathMode"); err == nil {
+		lib.setMathMode = addr
+	}
+
 	return lib, nil
 }
 
@@ -108,21 +134,100 @@ type Handle struct {
 }
 
 // Ptr returns the raw cuBLAS handle pointer for passing to C functions
-// (e.g., the fused encoder kernel orchestrator).
-func (h *Handle) Ptr() unsafe.Pointer { return unsafe.Pointer(h.ptr) }
+// (e.g., the fused encoder kernel orchestrator). Same pre-existing
+// uintptr<->unsafe.Pointer wrapping pattern used throughout the purego
+// bindings (internal/cuda/runtime_purego.go and siblings); not specific to
+// T4.1, just newly visible once package-scoped linting was fixed to load
+// full packages instead of individual staged files.
+func (h *Handle) Ptr() unsafe.Pointer { return unsafe.Pointer(h.ptr) } //nolint:govet
 
 // CreateHandle creates a new cuBLAS context handle.
+//
+// Under ZTENSOR_DETERMINISTIC=1 (internal/cuda.DeterministicEnabled), this
+// also sets CUBLAS_WORKSPACE_CONFIG (if the process has not already set one)
+// before creating the handle, and CUBLAS_PEDANTIC_MATH on the handle after
+// creation -- the two documented levers for bit-reproducible cuBLAS GEMMs.
+// Both are best-effort: a workspace-config env var set too late (cuBLAS
+// reads it once, at the FIRST handle creation in the process) or a cuBLAS
+// build missing cublasSetMathMode only degrades determinism guarantees and
+// is reported via a stderr warning, never a hard failure -- this handle is
+// still needed for ordinary (non-deterministic-mode) training and inference.
 func CreateHandle() (*Handle, error) {
 	lib, err := getCublasLib()
 	if err != nil {
 		return nil, err
+	}
+	if cuda.DeterministicEnabled() {
+		ensureDeterministicWorkspaceConfig()
 	}
 	var h uintptr
 	status := cuda.Ccall(lib.create, uintptr(unsafe.Pointer(&h)))
 	if status != cublasStatusSuccess {
 		return nil, fmt.Errorf("cublasCreate failed with status %d", status)
 	}
-	return &Handle{ptr: h}, nil
+	handle := &Handle{ptr: h}
+	if cuda.DeterministicEnabled() {
+		if merr := SetMathMode(handle, CublasPedanticMath); merr != nil {
+			determinismWarnFn("cublasSetMathMode(CUBLAS_PEDANTIC_MATH) unavailable: %v -- "+
+				"this handle's GEMM determinism relies on CUBLAS_WORKSPACE_CONFIG alone", merr)
+		}
+	}
+	return handle, nil
+}
+
+// determinismWarnFn sinks ZTENSOR_DETERMINISTIC setup warnings (workspace
+// config set late, math mode unavailable). Tests swap it to capture output;
+// mirrors internal/cuda's arenaPoisonWarnFn pattern.
+var determinismWarnFn = func(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "ztensor cublas determinism: "+format+"\n", args...)
+}
+
+var workspaceConfigOnce sync.Once
+
+// ensureDeterministicWorkspaceConfig sets CUBLAS_WORKSPACE_CONFIG to a fixed,
+// bounded value if the process has not already set one. cuBLAS reads this
+// variable once, the first time a cuBLAS context is created in the process,
+// to restrict the workspace it may allocate for a GEMM -- which forecloses
+// certain heuristically-chosen, workspace-dependent split-K/atomics
+// reduction algorithms for large-K problems. This is the same variable
+// PyTorch's determinism docs require for cuBLAS. Setting it here (at first
+// CreateHandle, rather than at process start) is a best-effort convenience:
+// it is NOT guaranteed to take effect if any other code path created a
+// cuBLAS handle earlier in the process. Prefer setting
+// CUBLAS_WORKSPACE_CONFIG in the environment before the process starts for
+// a guaranteed effect.
+func ensureDeterministicWorkspaceConfig() {
+	workspaceConfigOnce.Do(func() {
+		if os.Getenv("CUBLAS_WORKSPACE_CONFIG") == "" {
+			_ = os.Setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+			determinismWarnFn("ZTENSOR_DETERMINISTIC=1: CUBLAS_WORKSPACE_CONFIG was unset; " +
+				"set :4096:8 for this process. For a guaranteed effect, set it in the " +
+				"environment before the process starts instead.")
+		}
+	})
+}
+
+// SetMathMode sets the cuBLAS math mode for handle h (cublasSetMathMode).
+// ZTENSOR_DETERMINISTIC=1 uses this to request CUBLAS_PEDANTIC_MATH. Returns
+// an error if the loaded cuBLAS build does not export cublasSetMathMode
+// (very old builds) or the call itself fails; callers treat that as
+// best-effort and warn rather than fail handle creation.
+func SetMathMode(h *Handle, mode int) error {
+	if h == nil {
+		return fmt.Errorf("cublasSetMathMode: nil handle")
+	}
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+	if lib.setMathMode == 0 {
+		return fmt.Errorf("cublasSetMathMode: symbol not available in loaded cuBLAS")
+	}
+	status := cuda.Ccall(lib.setMathMode, h.ptr, uintptr(mode))
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSetMathMode failed with status %d", status)
+	}
+	return nil
 }
 
 // Destroy releases the cuBLAS handle resources.
