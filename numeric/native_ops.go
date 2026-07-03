@@ -132,14 +132,11 @@ func (ops Float32Ops) Abs(x float32) float32 {
 	return x
 }
 
-// Sum computes the sum of elements in a slice.
+// Sum computes the sum of elements in a slice using fixed-order pairwise
+// accumulation (see numeric/reduce_pairwise.go): order-stable run to run and
+// tighter than a naive fold.
 func (ops Float32Ops) Sum(s []float32) float32 {
-	var sum float32
-	for _, v := range s {
-		sum += v
-	}
-
-	return sum
+	return pairwiseSum(s)
 }
 
 // GreaterThan checks if a is greater than b.
@@ -282,14 +279,11 @@ func (ops Float64Ops) Abs(x float64) float64 {
 	return x
 }
 
-// Sum computes the sum of elements in a slice.
+// Sum computes the sum of elements in a slice using fixed-order pairwise
+// accumulation (see numeric/reduce_pairwise.go): order-stable run to run and
+// tighter than a naive fold.
 func (ops Float64Ops) Sum(s []float64) float64 {
-	var sum float64
-	for _, v := range s {
-		sum += v
-	}
-
-	return sum
+	return pairwiseSum(s)
 }
 
 // GreaterThan checks if a is greater than b.
