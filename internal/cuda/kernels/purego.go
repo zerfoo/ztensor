@@ -425,7 +425,18 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_encoder_fwd_scratch_bytes", &k.launchFusedEncoderFwdScratch},
 			{"fused_encoder_bwd_f32", &k.launchFusedEncoderBwdF32},
 		}
-		// Optional symbols: missing is non-fatal (kernel not compiled yet).
+		// Optional symbols: missing is non-fatal (kernel not compiled yet, or --
+		// the common case -- the DEPLOYED libkernels.so predates it; the GB10
+		// loads a prebuilt /opt/zerfoo/lib/libkernels.so, not a build of this
+		// tree).
+		//
+		// A missing optional symbol leaves its function pointer at 0. Every
+		// wrapper MUST compare its pointer to 0 before cuda.Ccall: calling
+		// through 0 is a jump to address 0, i.e. SIGSEGV with PC=0x0 inside
+		// cgo, which kills the process instead of returning an error a caller
+		// could fall back from. That is exactly how ztensor#180 took down every
+		// GQA model on GPU. TestOptionalKernelSymbolsAreGuarded enforces this
+		// across the package.
 		optionalSyms := map[string]bool{
 			"gemv_q4k_dp4a_f32":               true,
 			"gemv_q4k_sm121_f32":              true, // sm_121 optimized; requires Blackwell

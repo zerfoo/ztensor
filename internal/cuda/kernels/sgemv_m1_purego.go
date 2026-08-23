@@ -16,6 +16,9 @@ func SgemvM1(y, A, x unsafe.Pointer, M, N int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("sgemv_m1 kernel: kernels not available")
 	}
+	if k.launchSgemvM1 == 0 {
+		return fmt.Errorf("sgemv_m1 kernel: launch_sgemv_m1 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchSgemvM1,
 		uintptr(y), uintptr(A), uintptr(x),
 		uintptr(M), uintptr(N), uintptr(s))

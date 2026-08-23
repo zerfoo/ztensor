@@ -15,6 +15,9 @@ func AddBF16(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("add_bf16 kernel: kernels not available")
 	}
+	if k.launchAddBF16 == 0 {
+		return fmt.Errorf("add_bf16 kernel: launch_add_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchAddBF16, uintptr(a), uintptr(b), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "add_bf16")
 }
@@ -24,6 +27,9 @@ func SubBF16(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("sub_bf16 kernel: kernels not available")
+	}
+	if k.launchSubBF16 == 0 {
+		return fmt.Errorf("sub_bf16 kernel: launch_sub_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchSubBF16, uintptr(a), uintptr(b), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "sub_bf16")
@@ -35,6 +41,9 @@ func MulBF16(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("mul_bf16 kernel: kernels not available")
 	}
+	if k.launchMulBF16 == 0 {
+		return fmt.Errorf("mul_bf16 kernel: launch_mul_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchMulBF16, uintptr(a), uintptr(b), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "mul_bf16")
 }
@@ -44,6 +53,9 @@ func DivBF16(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("div_bf16 kernel: kernels not available")
+	}
+	if k.launchDivBF16 == 0 {
+		return fmt.Errorf("div_bf16 kernel: launch_div_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchDivBF16, uintptr(a), uintptr(b), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "div_bf16")
@@ -55,6 +67,9 @@ func TanhBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("tanh_bf16 kernel: kernels not available")
 	}
+	if k.launchTanhBF16 == 0 {
+		return fmt.Errorf("tanh_bf16 kernel: launch_tanh_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchTanhBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "tanh_bf16")
 }
@@ -64,6 +79,9 @@ func SqrtBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("sqrt_bf16 kernel: kernels not available")
+	}
+	if k.launchSqrtBF16 == 0 {
+		return fmt.Errorf("sqrt_bf16 kernel: launch_sqrt_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchSqrtBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "sqrt_bf16")
@@ -75,6 +93,9 @@ func RsqrtBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("rsqrt_bf16 kernel: kernels not available")
 	}
+	if k.launchRsqrtBF16 == 0 {
+		return fmt.Errorf("rsqrt_bf16 kernel: launch_rsqrt_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchRsqrtBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "rsqrt_bf16")
 }
@@ -84,6 +105,9 @@ func ExpBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("exp_bf16 kernel: kernels not available")
+	}
+	if k.launchExpBF16 == 0 {
+		return fmt.Errorf("exp_bf16 kernel: launch_exp_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchExpBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "exp_bf16")
@@ -95,6 +119,9 @@ func LogBF16(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("log_bf16 kernel: kernels not available")
 	}
+	if k.launchLogBF16 == 0 {
+		return fmt.Errorf("log_bf16 kernel: launch_log_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchLogBF16, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
 	return checkKernel(ret, "log_bf16")
 }
@@ -105,6 +132,9 @@ func F32ToBF16(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("f32_to_bf16 kernel: kernels not available")
 	}
+	if k.launchF32ToBF16 == 0 {
+		return fmt.Errorf("f32_to_bf16 kernel: launch_f32_to_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchF32ToBF16, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
 	return checkKernel(ret, "f32_to_bf16")
 }
@@ -114,6 +144,9 @@ func BF16ToF32(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("bf16_to_f32 kernel: kernels not available")
+	}
+	if k.launchBF16ToF32 == 0 {
+		return fmt.Errorf("bf16_to_f32 kernel: launch_bf16_to_f32 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchBF16ToF32, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
 	return checkKernel(ret, "bf16_to_f32")
@@ -128,6 +161,9 @@ func SumAxisBF16(input, output unsafe.Pointer, outer, inner, axisSize int, invDi
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("sum_axis_bf16 kernel: kernels not available")
+	}
+	if k.launchSumAxisBF16 == 0 {
+		return fmt.Errorf("sum_axis_bf16 kernel: launch_sum_axis_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchSumAxisBF16,
 		uintptr(input), uintptr(output),
@@ -147,6 +183,9 @@ func ScaledSoftmaxBF16(
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("scaled_softmax_bf16 kernel: kernels not available")
+	}
+	if k.launchScaledSoftmaxBF16 == 0 {
+		return fmt.Errorf("scaled_softmax_bf16 kernel: launch_scaled_softmax_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchScaledSoftmaxBF16,
 		uintptr(input), uintptr(output),

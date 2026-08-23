@@ -20,6 +20,9 @@ func GemvQ6KF32(
 	if k == nil {
 		return fmt.Errorf("gemv_q6k_f32 kernel: kernels not available")
 	}
+	if k.launchGemvQ6KF32 == 0 {
+		return fmt.Errorf("gemv_q6k_f32 kernel: gemv_q6k_f32 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchGemvQ6KF32,
 		uintptr(W_q6k), uintptr(x), uintptr(y),
 		uintptr(M), uintptr(K), uintptr(stream))

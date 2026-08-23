@@ -16,6 +16,9 @@ func OffsetMemcpy(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, s unsafe
 	if k == nil {
 		return fmt.Errorf("offset_memcpy kernel: kernels not available")
 	}
+	if k.launchOffsetMemcpy == 0 {
+		return fmt.Errorf("offset_memcpy kernel: launch_offset_memcpy not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchOffsetMemcpy,
 		uintptr(dst), uintptr(src), uintptr(counter),
 		uintptr(dim), uintptr(maxSeqLen), uintptr(s))
@@ -28,6 +31,9 @@ func OffsetMemcpyFP16(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, s un
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("offset_memcpy_fp16 kernel: kernels not available")
+	}
+	if k.launchOffsetMemcpyFP16 == 0 {
+		return fmt.Errorf("offset_memcpy_fp16 kernel: launch_offset_memcpy_fp16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchOffsetMemcpyFP16,
 		uintptr(dst), uintptr(src), uintptr(counter),

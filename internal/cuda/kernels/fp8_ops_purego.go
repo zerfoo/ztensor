@@ -14,6 +14,9 @@ func DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, s 
 	if k == nil {
 		return fmt.Errorf("dequant_fp8e4m3_to_fp16 kernel: kernels not available")
 	}
+	if k.launchDequantFP8E4M3ToFP16 == 0 {
+		return fmt.Errorf("dequant_fp8e4m3_to_fp16 kernel: launch_dequant_fp8e4m3_to_fp16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchDequantFP8E4M3ToFP16,
 		uintptr(input), uintptr(output), floatBits(scale), uintptr(n), uintptr(s))
 	return checkKernel(ret, "dequant_fp8e4m3_to_fp16")
@@ -25,6 +28,9 @@ func FP8Add(a, b, c unsafe.Pointer, scaleA, scaleB float32, n int, s unsafe.Poin
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fp8_add kernel: kernels not available")
+	}
+	if k.launchFP8Add == 0 {
+		return fmt.Errorf("fp8_add kernel: launch_fp8_add not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchFP8Add,
 		uintptr(a), uintptr(b), uintptr(c),
@@ -39,6 +45,9 @@ func FP8Mul(a, b, c unsafe.Pointer, scaleA, scaleB float32, n int, s unsafe.Poin
 	if k == nil {
 		return fmt.Errorf("fp8_mul kernel: kernels not available")
 	}
+	if k.launchFP8Mul == 0 {
+		return fmt.Errorf("fp8_mul kernel: launch_fp8_mul not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchFP8Mul,
 		uintptr(a), uintptr(b), uintptr(c),
 		floatBits(scaleA), floatBits(scaleB), uintptr(n), uintptr(s))
@@ -52,6 +61,9 @@ func FP8RMSNorm(input, weight, output unsafe.Pointer, scale, eps float32, rows, 
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fp8_rmsnorm kernel: kernels not available")
+	}
+	if k.launchFP8RMSNorm == 0 {
+		return fmt.Errorf("fp8_rmsnorm kernel: launch_fp8_rmsnorm not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchFP8RMSNorm,
 		uintptr(input), uintptr(weight), uintptr(output),
