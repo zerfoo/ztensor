@@ -10,6 +10,7 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/zerfoo/ztensor/internal/cuda/kernels"
 	"github.com/zerfoo/ztensor/internal/gpuapi"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -631,6 +632,19 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	}
 
 	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)
+}
+
+// FusedRepeatInterleaveAvailable reports whether RepeatInterleave can actually
+// use the fused kernel, as opposed to silently degrading to the generic
+// Reshape -> Repeat -> Reshape chain.
+//
+// RepeatInterleave falls back on ANY failure and returns a correct result
+// either way, so a caller (or a test) that only inspects its output cannot
+// tell the two apart. Anything that claims the fused path is in use -- a
+// benchmark, a parity gate -- must consult this, or it is measuring something
+// it cannot name. See ztensor#180.
+func (e *GPUEngine[T]) FusedRepeatInterleaveAvailable() bool {
+	return isFloat32[T]() && kernels.IsRepeatInterleaveF32Supported()
 }
 
 // RepeatInterleave expands a 4D tensor from [B, numKV, S, D] to [B, numQ, S, D]
