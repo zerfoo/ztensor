@@ -55,6 +55,9 @@ func F32ToFP16(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
 	if k == nil {
 		return fmt.Errorf("f32_to_fp16 kernel: kernels not available")
 	}
+	if k.launchF32ToFP16 == 0 {
+		return fmt.Errorf("f32_to_fp16 kernel: launch_f32_to_fp16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchF32ToFP16, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
 	return checkKernel(ret, "f32_to_fp16")
 }
@@ -64,6 +67,9 @@ func FP16ToF32(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fp16_to_f32 kernel: kernels not available")
+	}
+	if k.launchFP16ToF32 == 0 {
+		return fmt.Errorf("fp16_to_f32 kernel: launch_fp16_to_f32 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchFP16ToF32, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
 	return checkKernel(ret, "fp16_to_f32")

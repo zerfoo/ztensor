@@ -13,6 +13,12 @@ import (
 	"unsafe"
 )
 
+// IsRepeatInterleaveF32Supported reports whether the fused GQA head-expansion
+// kernel is available. Under the cuda build tag the launcher is resolved by the
+// linker at build time, so it is always present. The purego build resolves it
+// with dlsym and can legitimately answer false (ztensor#180).
+func IsRepeatInterleaveF32Supported() bool { return true }
+
 // RepeatInterleaveF32 expands [B, numKV, S, D] to [B, numQ, S, D] for GQA head expansion.
 func RepeatInterleaveF32(
 	input, output unsafe.Pointer,

@@ -23,6 +23,9 @@ func FusedAdamWBF16(
 	if k == nil {
 		return fmt.Errorf("fused_adamw_bf16 kernel: kernels not available")
 	}
+	if k.launchFusedAdamWBF16 == 0 {
+		return fmt.Errorf("fused_adamw_bf16 kernel: fused_adamw_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchFusedAdamWBF16,
 		uintptr(param), uintptr(m), uintptr(v), uintptr(grad),
 		floatBitsF64(beta1), floatBitsF64(beta2),

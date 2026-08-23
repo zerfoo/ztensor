@@ -20,6 +20,9 @@ func FusedAddRMSNormBF16(input, residual, weight, normedOut, sumOut unsafe.Point
 	if k == nil {
 		return fmt.Errorf("fused_add_rmsnorm_bf16 kernel: kernels not available")
 	}
+	if k.launchFusedAddRMSNormBF16 == 0 {
+		return fmt.Errorf("fused_add_rmsnorm_bf16 kernel: fused_add_rmsnorm_bf16 not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchFusedAddRMSNormBF16,
 		uintptr(input), uintptr(residual), uintptr(weight), uintptr(normedOut),
 		uintptr(sumOut), floatBits(eps), uintptr(rows), uintptr(D), uintptr(s))
@@ -34,6 +37,9 @@ func FusedNormAddBF16(input, weight, residual, output unsafe.Pointer, eps float3
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fused_norm_add_bf16 kernel: kernels not available")
+	}
+	if k.launchFusedNormAddBF16 == 0 {
+		return fmt.Errorf("fused_norm_add_bf16 kernel: fused_norm_add_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchFusedNormAddBF16,
 		uintptr(input), uintptr(weight), uintptr(residual), uintptr(output),
@@ -51,6 +57,9 @@ func FusedQKNormRoPEBF16(input, weightQ, weightK, cosAngles, sinAngles, output u
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fused_qk_norm_rope_bf16 kernel: kernels not available")
+	}
+	if k.launchFusedQKNormRoPEBF16 == 0 {
+		return fmt.Errorf("fused_qk_norm_rope_bf16 kernel: fused_qk_norm_rope_bf16 not present in libkernels.so")
 	}
 	ret := cuda.Ccall(k.launchFusedQKNormRoPEBF16,
 		uintptr(input), uintptr(weightQ), uintptr(weightK), uintptr(cosAngles),

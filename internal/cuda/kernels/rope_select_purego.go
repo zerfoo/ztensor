@@ -17,6 +17,9 @@ func RoPESelect(cosTable, sinTable, cosOut, sinOut, counter unsafe.Pointer,
 	if k == nil {
 		return fmt.Errorf("rope_select kernel: kernels not available")
 	}
+	if k.launchRoPESelect == 0 {
+		return fmt.Errorf("rope_select kernel: launch_rope_select not present in libkernels.so")
+	}
 	ret := cuda.Ccall(k.launchRoPESelect,
 		uintptr(cosTable), uintptr(sinTable),
 		uintptr(cosOut), uintptr(sinOut),
