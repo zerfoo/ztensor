@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.20.0](https://github.com/zerfoo/ztensor/compare/v1.19.2...v1.20.0) (2026-08-24)
+
+
+### Features
+
+* **compute:** expose FusedRepeatInterleaveAvailable ([a119a47](https://github.com/zerfoo/ztensor/commit/a119a47bbb334823ed2487ee2024620b98df1e22))
+
+
+### Bug Fixes
+
+* **kernels:** guard sgemv_m1 float4 path on row alignment; add missing cooperative_groups include ([81f4a08](https://github.com/zerfoo/ztensor/commit/81f4a08b90c63ee6faffc3b6654e785272ff7295))
+* **kernels:** never launch an unresolved optional kernel symbol ([68ce09a](https://github.com/zerfoo/ztensor/commit/68ce09af23f645ca6b5823e4c46b33081ccc49fe))
+
 ## [1.19.2](https://github.com/zerfoo/ztensor/compare/v1.19.1...v1.19.2) (2026-07-03)
 
 
