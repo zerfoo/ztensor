@@ -38,3 +38,14 @@ func HostPoisonFillForTesting(ptr unsafe.Pointer, byteLen int) error {
 	fillHostPoison(unsafe.Slice((*byte)(ptr), byteLen))
 	return nil
 }
+
+// SetDeterministicEnabledForTesting flips ZTENSOR_DETERMINISTIC mode, which
+// is normally read once from the env var at process init, and returns a func
+// that restores the previous value. Lets other packages (e.g. compute's
+// FusedEncoderBackward guard test) exercise the flag without a real
+// ZTENSOR_DETERMINISTIC=1 process environment.
+func SetDeterministicEnabledForTesting(enabled bool) (restore func()) {
+	orig := deterministicEnabled
+	deterministicEnabled = enabled
+	return func() { deterministicEnabled = orig }
+}
